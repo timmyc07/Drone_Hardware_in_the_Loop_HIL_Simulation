@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+
+# Local IDE / build outputs
+.vs/
+.idea/
+Library/
+Temp/
+obj/
+bin/
+Builds/
+Logs/
