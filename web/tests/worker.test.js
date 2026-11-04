@@ -34,7 +34,39 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   await next((d) => d.type === "state");
   let reply = next((d) => d.type === "state" && d.message === "reset");
   worker.postMessage({ type: "reset", config: { seed: 18 }, scenario: "step" });
-  await reply;
+  const resetState = await reply;
+  assert.equal(resetState.config.seed, 18);
+  assert.equal(resetState.scenario, "step");
+  reply = next((d) => d.type === "apiReply" && d.requestId === 1);
+  worker.postMessage({ type: "inspect", requestId: 1 });
+  const inspected = await reply;
+  assert.equal(inspected.ok, true);
+  assert.equal(inspected.value.sensors.barometer.valid, true);
+  assert.ok(inspected.value.sensors.barometer.pressurePa > 0);
+  reply = next((d) => d.type === "apiReply" && d.requestId === 2);
+  worker.postMessage({
+    type: "sensorFault",
+    value: { sensor: "gps", failed: true },
+    requestId: 2,
+  });
+  const faulted = await reply;
+  assert.equal(faulted.ok, true);
+  assert.equal(faulted.value.sensors.gps.valid, false);
+  assert.equal(faulted.value.sensors.gps.reason, "fault");
+  reply = next((d) => d.type === "apiReply" && d.requestId === 3);
+  worker.postMessage({
+    type: "sensorFault",
+    value: { sensor: "gps", failed: false },
+    requestId: 3,
+  });
+  assert.equal((await reply).ok, true);
+  reply = next((d) => d.type === "apiReply" && d.requestId === 4);
+  worker.postMessage({
+    type: "sensorConfig",
+    value: { gpsNoiseM: 0 },
+    requestId: 4,
+  });
+  assert.equal((await reply).ok, true);
   reply = next(
     (d) => d.type === "state" && d.snapshot.navigation.waypoints.length === 1,
   );
@@ -76,7 +108,16 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   const record = validateRecording(exported.recording);
   assert.equal(record.config.seed, 18);
   assert.equal(record.scenario, "step");
-  assert.equal(record.version, 2);
+  assert.equal(record.version, 3);
+  assert.equal(record.sensorFrames.length, record.samples.length);
+  assert.equal(record.sensorFrames[0].time, record.samples[0].time);
+  assert.equal(record.setup.sensors.gpsNoiseM, 1.5);
+  assert.ok(
+    record.events.some(
+      (e) => e.type === "sensorConfig" && e.value.gpsNoiseM === 0,
+    ),
+  );
+  assert.ok(record.sensorFrames.at(-1).gps.valid);
   assert.equal(record.samples[0].navigation.waypoints.length, 1);
   assert.equal(record.samples[0].navigation.mode, "mission");
   assert.equal(record.samples[0].training.course, "hover");
@@ -98,6 +139,22 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   reply = next((d) => d.type === "error");
   worker.postMessage({ type: "targets", value: { roll: Infinity } });
   assert.match((await reply).message, /roll/);
+  reply = next((d) => d.type === "apiReply" && d.requestId === 5);
+  worker.postMessage({
+    type: "targets",
+    value: { roll: Infinity },
+    requestId: 5,
+  });
+  assert.equal((await reply).ok, false);
+  reply = next((d) => d.type === "apiReply" && d.requestId === 6);
+  worker.postMessage({ type: "gust", value: 1n, fault: 1n, requestId: 6 });
+  assert.equal((await reply).ok, true);
+  reply = next((d) => d.type === "apiReply" && d.requestId === 7);
+  worker.postMessage({ type: "apiExport", requestId: 7 });
+  const apiRecord = validateRecording((await reply).value);
+  assert.equal(apiRecord.events.at(-1).type, "gust");
+  assert.equal(Object.hasOwn(apiRecord.events.at(-1), "value"), false);
+  assert.equal(Object.hasOwn(apiRecord.events.at(-1), "fault"), false);
   reply = next((d) => d.type === "state" && d.message === "reset");
   worker.postMessage({
     type: "reset",

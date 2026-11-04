@@ -1,6 +1,11 @@
 import { createSimulation, validateConfig } from "./sim.js";
 import { createTrainer } from "./training.js";
 import {
+  createSensorSuite,
+  validateSensorConfig,
+  lidarPoints,
+} from "./sensors.js";
+import {
   RECORDING_VERSION,
   compactSnapshot,
   validateSetup,
@@ -8,12 +13,19 @@ import {
 
 const DT = 0.005;
 const LIMIT = 1800;
+const DATA_LIMIT = 96 * 1024 * 1024;
 let config = validateConfig();
 let setup = validateSetup(undefined, config);
 let initialSetup = structuredClone(setup);
 let sim = createSimulation(config);
 let trainer = createTrainer(setup.training);
 let training = trainer.update(sim.snapshot());
+let sensorSuite = createSensorSuite(
+  setup.sensors,
+  (config.seed ^ 0x9e3779b9) >>> 0,
+);
+sensorSuite.setObstacles(setup.obstacles);
+let sensorState = sensorSuite.update(sim.snapshot());
 let scenario = "hover";
 let running = false;
 let speed = 1;
@@ -26,6 +38,10 @@ let skippedWallSeconds = 0;
 let lateness = [];
 let lateTicks = 0;
 let samples = [compactSnapshot(snapshot())];
+let sensorFrames = [sensorState];
+let recordBytes =
+  JSON.stringify(samples[0]).length + JSON.stringify(sensorState).length;
+let storageLimited = false;
 let pending = [...samples];
 let events = [];
 let createdAt = new Date().toISOString();
@@ -54,14 +70,18 @@ function publish(message) {
     type: "state",
     running,
     snapshot: state,
+    sensors: sensorState,
     samples: pending,
     sampleCount: samples.length,
+    config,
+    scenario,
     setup,
     timing: {
       ...runtime(),
       realTimeFactor: wallSeconds ? state.time / wallSeconds : 0,
     },
-    message,
+    storageLimited,
+    message: storageLimited ? "storage-limit" : message,
   });
   pending = [];
   lastPublish = performance.now();
@@ -83,6 +103,12 @@ function reset(
   next.setMode(validatedSetup.mode);
   const nextTrainer = createTrainer(validatedSetup.training);
   const nextTraining = nextTrainer.update(next.snapshot());
+  const nextSensors = createSensorSuite(
+    validatedSetup.sensors,
+    (validated.seed ^ 0x9e3779b9) >>> 0,
+  );
+  nextSensors.setObstacles(validatedSetup.obstacles);
+  const nextSensorState = nextSensors.update(next.snapshot());
   config = validated;
   setup = validatedSetup;
   initialSetup = structuredClone(setup);
@@ -90,6 +116,8 @@ function reset(
   sim = next;
   trainer = nextTrainer;
   training = nextTraining;
+  sensorSuite = nextSensors;
+  sensorState = nextSensorState;
   running = false;
   accumulator = 0;
   wallSeconds = 0;
@@ -97,6 +125,10 @@ function reset(
   lateness = [];
   lateTicks = 0;
   samples = [compactSnapshot(snapshot())];
+  sensorFrames = [sensorState];
+  recordBytes =
+    JSON.stringify(samples[0]).length + JSON.stringify(sensorState).length;
+  storageLimited = false;
   pending = [...samples];
   events = [];
   createdAt = new Date().toISOString();
@@ -106,16 +138,68 @@ function reset(
 
 function recordEvent(data) {
   const event = { time: sim.snapshot().time, type: data.type };
-  if (Object.hasOwn(data, "value")) event.value = structuredClone(data.value);
-  if (Object.hasOwn(data, "fault")) event.fault = data.fault;
+  if (!["gust", "clearFaults", "takeoff", "arm", "disarm"].includes(data.type))
+    event.value = structuredClone(data.value);
+  if (data.type === "fault") event.fault = data.fault;
   events.push(event);
+  recordBytes += JSON.stringify(event).length + 1;
   const current = compactSnapshot(snapshot());
   if (Math.abs(samples.at(-1).time - current.time) < 1e-9) {
+    recordBytes +=
+      JSON.stringify(current).length +
+      JSON.stringify(sensorState).length -
+      JSON.stringify(samples.at(-1)).length -
+      JSON.stringify(sensorFrames.at(-1)).length;
     samples[samples.length - 1] = current;
+    sensorFrames[sensorFrames.length - 1] = sensorState;
     if (pending.length && Math.abs(pending.at(-1).time - current.time) < 1e-9)
       pending[pending.length - 1] = current;
     else pending.push(current);
   }
+  if (recordBytes >= DATA_LIMIT) {
+    running = false;
+    storageLimited = true;
+  }
+}
+
+function recording() {
+  const final = compactSnapshot(snapshot());
+  const exported = [...samples];
+  const exportedSensors = [...sensorFrames];
+  if (final.time > exported.at(-1).time + 1e-8) {
+    exported.push(final);
+    exportedSensors.push(sensorState);
+  } else {
+    exported[exported.length - 1] = final;
+    exportedSensors[exportedSensors.length - 1] = sensorState;
+  }
+  return {
+    format: "flight-lab",
+    version: RECORDING_VERSION,
+    modelVersion: "0.3.0",
+    createdAt,
+    config,
+    scenario,
+    dt: DT,
+    setup: initialSetup,
+    runtime: runtime(),
+    events,
+    samples: exported,
+    sensorFrames: exportedSensors,
+  };
+}
+
+function inspectedState() {
+  return {
+    snapshot: snapshot(),
+    sensors: sensorState,
+    setup,
+    running,
+    timing: {
+      ...runtime(),
+      realTimeFactor: wallSeconds ? sim.snapshot().time / wallSeconds : 0,
+    },
+  };
 }
 
 onmessage = ({ data }) => {
@@ -123,13 +207,30 @@ onmessage = ({ data }) => {
     if (!data || typeof data.type !== "string")
       throw new Error("無效的模擬操作");
     if (
-      events.length >= 100000 &&
-      !["reset", "pause", "export"].includes(data.type)
+      data.requestId !== undefined &&
+      (!Number.isSafeInteger(data.requestId) || data.requestId < 1)
     )
+      throw new Error("無效的程式介面請求編號");
+    const readCommands = [
+      "reset",
+      "pause",
+      "export",
+      "sensorExport",
+      "inspect",
+      "inspectSensors",
+      "apiExport",
+    ];
+    if (storageLimited && !readCommands.includes(data.type))
+      throw new Error("紀錄資料已達容量上限，請匯出後重設");
+    if (events.length >= 100000 && !readCommands.includes(data.type))
       throw new Error("事件紀錄已達上限，請先匯出再重設");
     switch (data.type) {
       case "reset":
-        reset(data.config, data.scenario, data.setup);
+        reset(
+          data.config === undefined ? config : data.config,
+          data.scenario === undefined ? scenario : data.scenario,
+          data.setup,
+        );
         break;
       case "play":
         if (sim.snapshot().time >= LIMIT)
@@ -202,6 +303,7 @@ onmessage = ({ data }) => {
         break;
       case "obstacles":
         sim.setObstacles(data.value);
+        sensorSuite.setObstacles(data.value);
         setup.obstacles = structuredClone(data.value);
         recordEvent(data);
         publish();
@@ -230,36 +332,97 @@ onmessage = ({ data }) => {
         renderEnabled = data.value;
         recordEvent(data);
         break;
+      case "sensorConfig": {
+        const validated = validateSensorConfig(data.value);
+        const next = createSensorSuite(
+          validated,
+          (config.seed ^ 0x9e3779b9) >>> 0,
+        );
+        next.setObstacles(setup.obstacles);
+        const state = next.update(sim.snapshot());
+        sensorSuite = next;
+        sensorState = state;
+        setup.sensors = validated;
+        recordEvent({ ...data, value: validated });
+        publish();
+        break;
+      }
+      case "sensorFault":
+        if (
+          !data.value ||
+          typeof data.value !== "object" ||
+          Object.keys(data.value).some((k) => !["sensor", "failed"].includes(k))
+        )
+          throw new Error("無效的感測器故障設定");
+        sensorSuite.setFault(data.value.sensor, data.value.failed);
+        sensorState = sensorSuite.snapshot();
+        recordEvent(data);
+        publish();
+        break;
+      case "sensorExport": {
+        if (!["json", "csv"].includes(data.kind))
+          throw new Error("不支援的感測器匯出格式");
+        const text =
+          data.kind === "json"
+            ? JSON.stringify({
+                modelVersion: "0.3.0",
+                config: setup.sensors,
+                sensors: sensorState,
+              })
+            : [
+                "north_m,east_m,down_m",
+                ...lidarPoints(sensorState.lidar).map((p) => p.join(",")),
+              ].join("\n");
+        postMessage({ type: "sensorExport", kind: data.kind, text });
+        break;
+      }
+      case "inspect":
+      case "inspectSensors":
+      case "apiExport":
+        if (data.requestId === undefined)
+          throw new Error("此操作需要程式介面請求編號");
+        postMessage({
+          type: "apiReply",
+          requestId: data.requestId,
+          ok: true,
+          value:
+            data.type === "inspect"
+              ? inspectedState()
+              : data.type === "inspectSensors"
+                ? sensorState
+                : recording(),
+        });
+        return;
       case "export": {
         if (!["csv", "json"].includes(data.kind))
           throw new Error("不支援的紀錄格式");
-        const final = compactSnapshot(snapshot());
-        const exported = [...samples];
-        if (final.time > exported.at(-1).time + 1e-8) exported.push(final);
-        else exported[exported.length - 1] = final;
         postMessage({
           type: "recording",
           kind: data.kind,
-          recording: {
-            format: "flight-lab",
-            version: RECORDING_VERSION,
-            modelVersion: "0.2.0",
-            createdAt,
-            config,
-            scenario,
-            dt: DT,
-            setup: initialSetup,
-            runtime: runtime(),
-            events,
-            samples: exported,
-          },
+          recording: recording(),
         });
         break;
       }
       default:
         throw new Error("未知的模擬操作");
     }
+    if (data.requestId !== undefined)
+      postMessage({
+        type: "apiReply",
+        requestId: data.requestId,
+        ok: true,
+        value: inspectedState(),
+      });
   } catch (error) {
+    if (data?.requestId !== undefined) {
+      postMessage({
+        type: "apiReply",
+        requestId: data.requestId,
+        ok: false,
+        error: error.message,
+      });
+      return;
+    }
     running = false;
     postMessage({ type: "error", message: error.message });
     publish();
@@ -282,6 +445,7 @@ function tick() {
       while (accumulator >= DT && running) {
         const state = sim.step(DT);
         training = trainer.update(state);
+        sensorState = sensorSuite.update(state);
         accumulator -= DT;
         if (state.metrics.steps % 10 === 0) {
           const sample = compactSnapshot({
@@ -289,7 +453,17 @@ function tick() {
             training: structuredClone(training),
           });
           samples.push(sample);
+          sensorFrames.push(sensorState);
+          recordBytes +=
+            JSON.stringify(sample).length +
+            JSON.stringify(sensorState).length +
+            2;
           pending.push(sample);
+          if (recordBytes >= DATA_LIMIT) {
+            running = false;
+            storageLimited = true;
+            publish("storage-limit");
+          }
         }
         if (state.time >= LIMIT - 1e-8) {
           running = false;

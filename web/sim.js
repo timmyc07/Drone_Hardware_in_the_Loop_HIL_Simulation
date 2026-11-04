@@ -96,6 +96,8 @@ function rotation([w, x, y, z]) {
     1 - 2 * (x * x + y * y),
   ];
 }
+export { rotation as bodyToNedMatrix };
+
 function angles(q) {
   const r = rotation(q);
   return [

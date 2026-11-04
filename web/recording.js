@@ -1,10 +1,12 @@
 import { createSimulation, validateConfig } from "./sim.js";
+import { DEFAULT_SENSOR_CONFIG, validateSensorConfig } from "./sensors.js";
 import { TRAINING_COURSES } from "./training.js";
 
-export const RECORDING_VERSION = 2;
+export const RECORDING_VERSION = 3;
 const MODES = ["attitude", "position", "mission", "rtl", "land"];
 const COURSES = Object.keys(TRAINING_COURSES);
 export const DEFAULT_SETUP = Object.freeze({
+  sensors: DEFAULT_SENSOR_CONFIG,
   mode: "attitude",
   mission: Object.freeze([]),
   obstacles: Object.freeze([]),
@@ -71,6 +73,7 @@ export function validateSetup(value, config = {}) {
     obstacles,
     training: choice(merged.training, COURSES),
     environment: environment(merged.environment),
+    sensors: validateSensorConfig(merged.sensors),
   };
 }
 function targets(value, partial = false, automatic = false) {
@@ -232,6 +235,19 @@ function event(input, sim) {
   object(input);
   const result = { time: number(input.time, 0, 1800.001), type: input.type };
   switch (input.type) {
+    case "sensorConfig":
+      result.value = validateSensorConfig(input.value);
+      break;
+    case "sensorFault": {
+      const fault = object(input.value);
+      if (Object.keys(fault).some((key) => !["sensor", "failed"].includes(key)))
+        throw new Error("Unknown sensor fault field");
+      result.value = {
+        sensor: choice(fault.sensor, SENSOR_NAMES),
+        failed: boolean(fault.failed),
+      };
+      break;
+    }
     case "targets":
       result.value = targets(input.value, true);
       sim.setTargets(result.value);
@@ -291,15 +307,118 @@ export function compactSnapshot(snapshot) {
     },
   };
 }
+const SENSOR_NAMES = [
+  "gps",
+  "barometer",
+  "magnetometer",
+  "rangefinder",
+  "lidar",
+  "opticalFlow",
+];
+export function validateSensorFrame(value, sensorConfig = {}) {
+  object(value);
+  const config = validateSensorConfig(sensorConfig),
+    time = number(value.time, 0, 1800.001);
+  const result = { time },
+    faults = object(value.faults);
+  for (const name of SENSOR_NAMES) {
+    const raw = object(value[name]);
+    const valid = boolean(raw.valid),
+      reason = choice(raw.reason, [
+        "",
+        "startup",
+        "fault",
+        "dropout",
+        "no-return",
+      ]);
+    if (valid !== (reason === ""))
+      throw new Error("Sensor validity and reason disagree");
+    const channel = { time: number(raw.time, 0, time + 1e-8), valid, reason };
+    const payload = (key, parse) => {
+      if (!valid) {
+        if (raw[key] !== null)
+          throw new Error(`Invalid ${name} payload must be null`);
+        return null;
+      }
+      return parse(raw[key]);
+    };
+    if (name === "gps")
+      Object.assign(channel, {
+        latitudeDeg: payload("latitudeDeg", (v) => number(v, -90, 90)),
+        longitudeDeg: payload("longitudeDeg", (v) => number(v, -180, 180)),
+        altitudeM: payload("altitudeM", (v) => number(v, -1e6, 1e6)),
+        velocityNedMps: payload("velocityNedMps", (v) => vector(v, 3)),
+      });
+    else if (name === "barometer")
+      Object.assign(channel, {
+        pressurePa: payload("pressurePa", (v) => number(v, 1e-9, 1e9)),
+        altitudeM: payload("altitudeM", (v) => number(v, -1e6, 1e6)),
+        temperatureK: payload("temperatureK", (v) => number(v, 100, 400)),
+      });
+    else if (name === "magnetometer")
+      channel.fieldBodyMicroT = payload("fieldBodyMicroT", (v) => vector(v, 3));
+    else if (name === "rangefinder")
+      channel.distanceM = payload("distanceM", (v) =>
+        number(v, config.rangefinderMinM, config.rangefinderMaxM),
+      );
+    else if (name === "opticalFlow")
+      Object.assign(channel, {
+        flowRadS: payload("flowRadS", (v) => vector(v, 2)),
+        groundDistanceM: payload("groundDistanceM", (v) =>
+          number(v, config.rangefinderMinM, config.rangefinderMaxM),
+        ),
+      });
+    else {
+      if (
+        !Array.isArray(raw.rangesM) ||
+        raw.rangesM.length !== config.lidarRays
+      )
+        throw new Error("Invalid lidar range count");
+      channel.rangesM = Array.from(raw.rangesM, (v) =>
+        v === null ? null : number(v, config.lidarMinM, config.lidarMaxM),
+      );
+      const hasReturn = channel.rangesM.some((v) => v !== null);
+      if (valid !== hasReturn)
+        throw new Error("Lidar validity requires at least one real return");
+      if (raw.positionNed === null && raw.quaternion === null) {
+        if (valid || !["startup", "fault"].includes(reason))
+          throw new Error("Missing lidar acquisition pose");
+        channel.positionNed = null;
+        channel.quaternion = null;
+      } else {
+        if (reason === "startup")
+          throw new Error("Startup lidar cannot have an acquisition pose");
+        channel.positionNed = vector(raw.positionNed, 3);
+        channel.quaternion = vector(raw.quaternion, 4, -1, 1);
+        if (Math.abs(Math.hypot(...channel.quaternion) - 1) > 1e-6)
+          throw new Error("Invalid lidar pose quaternion");
+      }
+      channel.angleStartRad = number(raw.angleStartRad, -Math.PI, -Math.PI);
+      channel.angleStepRad = number(
+        raw.angleStepRad,
+        (2 * Math.PI) / config.lidarRays,
+        (2 * Math.PI) / config.lidarRays,
+      );
+      channel.minM = number(raw.minM, config.lidarMinM, config.lidarMinM);
+      channel.maxM = number(raw.maxM, config.lidarMaxM, config.lidarMaxM);
+    }
+    result[name] = channel;
+  }
+  result.faults = Object.fromEntries(
+    SENSOR_NAMES.map((name) => [name, boolean(faults[name])]),
+  );
+  return result;
+}
+
 export function validateRecording(value) {
   object(value);
   if (value.version !== RECORDING_VERSION)
     throw new Error(
-      "Unsupported recording version: version 2 required; legacy recordings are not supported",
+      "Unsupported recording version: version 3 required; legacy recordings are not supported",
     );
   if (
     value.format !== "flight-lab" ||
-    value.modelVersion !== "0.2.0" ||
+    value.modelVersion !== "0.3.0" ||
     typeof value.createdAt !== "string" ||
     !Number.isFinite(Date.parse(value.createdAt))
   )
@@ -325,6 +444,11 @@ export function validateRecording(value) {
     value.samples.length > 36002
   )
     throw new Error("Invalid recording length");
+  if (
+    !Array.isArray(value.sensorFrames) ||
+    value.sensorFrames.length !== value.samples.length
+  )
+    throw new Error("Sensor frames must match sample count");
   const sim = createSimulation(config);
   let lastEvent = -1;
   const events = Array.from(value.events, (input) => {
@@ -356,12 +480,37 @@ export function validateRecording(value) {
     lastTime = time;
     return result;
   });
+  let sensorConfig = setup.sensors,
+    sensorEventIndex = 0,
+    previousChannelTimes = {};
+  const sensorFrames = Array.from(value.sensorFrames, (input, index) => {
+    while (
+      sensorEventIndex < events.length &&
+      events[sensorEventIndex].time <= samples[index].time + 1e-8
+    ) {
+      if (events[sensorEventIndex].type === "sensorConfig") {
+        sensorConfig = events[sensorEventIndex].value;
+        // Recreating a sensor suite starts a new acquisition epoch; startup may legitimately be time zero.
+        previousChannelTimes = {};
+      }
+      sensorEventIndex++;
+    }
+    const result = validateSensorFrame(input, sensorConfig);
+    if (Math.abs(result.time - samples[index].time) > 1e-8)
+      throw new Error("Sensor frame time must match sample time");
+    for (const name of SENSOR_NAMES) {
+      if (result[name].time < (previousChannelTimes[name] ?? 0) - 1e-8)
+        throw new Error("Sensor acquisition time moved backwards");
+      previousChannelTimes[name] = result[name].time;
+    }
+    return result;
+  });
   if (lastEvent > lastTime + 1e-8)
     throw new Error("Event occurs after the last sample");
   return {
     format: "flight-lab",
     version: RECORDING_VERSION,
-    modelVersion: "0.2.0",
+    modelVersion: "0.3.0",
     createdAt: value.createdAt,
     config,
     scenario: value.scenario,
@@ -370,6 +519,7 @@ export function validateRecording(value) {
     runtime: cleanRuntime,
     events,
     samples,
+    sensorFrames,
   };
 }
 export function recordingToJson(record) {
@@ -382,7 +532,7 @@ export function recordingToJson(record) {
   );
 }
 export function recordingToCsv(record) {
-  const { samples } = validateRecording(record);
+  const { samples, sensorFrames } = validateRecording(record);
   const header = [
     "time_s",
     "north_m",
@@ -443,8 +593,30 @@ export function recordingToCsv(record) {
     "training_complete_boolean",
     "training_score_points",
     "training_hold_s",
+    ...SENSOR_NAMES.flatMap((name) => [
+      `${name}_sample_time_s`,
+      `${name}_valid_boolean`,
+    ]),
+    "gps_latitude_deg",
+    "gps_longitude_deg",
+    "gps_altitude_m",
+    "gps_velocity_n_m_s",
+    "gps_velocity_e_m_s",
+    "gps_velocity_d_m_s",
+    "barometer_pressure_Pa",
+    "barometer_altitude_m",
+    "barometer_temperature_K",
+    "magnetometer_x_uT",
+    "magnetometer_y_uT",
+    "magnetometer_z_uT",
+    "rangefinder_distance_m",
+    "lidar_return_count",
+    "lidar_nearest_m",
+    "optical_flow_u_rad_s",
+    "optical_flow_v_rad_s",
+    "optical_flow_ground_distance_m",
   ];
-  const rows = samples.map((s) =>
+  const rows = samples.map((s, index) =>
     [
       s.time,
       ...s.position,
@@ -488,7 +660,31 @@ export function recordingToCsv(record) {
       Number(s.training.complete),
       s.training.score,
       s.training.holdSeconds,
+      ...SENSOR_NAMES.flatMap((name) => [
+        sensorFrames[index][name].time,
+        Number(sensorFrames[index][name].valid),
+      ]),
+      ...sensorCsv(sensorFrames[index]),
     ].join(","),
   );
   return [header.join(","), ...rows].join("\n");
+}
+
+function sensorCsv(frame) {
+  const lidarRanges = frame.lidar.rangesM.filter((v) => v !== null);
+  return [
+    frame.gps.latitudeDeg,
+    frame.gps.longitudeDeg,
+    frame.gps.altitudeM,
+    ...(frame.gps.velocityNedMps ?? [null, null, null]),
+    frame.barometer.pressurePa,
+    frame.barometer.altitudeM,
+    frame.barometer.temperatureK,
+    ...(frame.magnetometer.fieldBodyMicroT ?? [null, null, null]),
+    frame.rangefinder.distanceM,
+    frame.lidar.valid ? lidarRanges.length : null,
+    frame.lidar.valid ? Math.min(...lidarRanges) : null,
+    ...(frame.opticalFlow.flowRadS ?? [null, null]),
+    frame.opticalFlow.groundDistanceM,
+  ].map((v) => v ?? "");
 }

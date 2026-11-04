@@ -61,6 +61,7 @@
         <button class="active" data-workspace="flight">飛行實驗</button
         ><button data-workspace="mission">任務規劃</button
         ><button data-workspace="training">訓練場</button
+        ><button data-workspace="sensors">感測器</button
         ><button data-workspace="catalog">功能全覽</button>
       </nav>
       <section id="mission-workspace" class="panel workspace-extra" hidden>
@@ -138,6 +139,38 @@
         /></label>
         <p>雨與霧僅影響畫面；風向與亂流可在管理參數中設定。</p>
       </section>
+      <section id="sensors-workspace" class="panel workspace-extra" hidden>
+        <h2>感測器工作台 <span>VIRTUAL SENSORS</span></h2>
+        <p>合成感測器與故障僅供觀察，不驅動理想化飛控；數值未經實機校準。</p>
+        <div id="sensor-readings" class="sensor-grid" aria-live="off"></div>
+        <h3>水平 LiDAR 掃描</h3>
+        <canvas
+          id="lidar-map"
+          width="480"
+          height="480"
+          role="img"
+          aria-label="水平雷射掃描"
+        ></canvas>
+        <div class="feature-actions">
+          <label
+            ><input type="checkbox" id="sensor-scan-visible" checked /> 顯示 3D
+            掃描點</label
+          >
+          <label
+            >感測器
+            <select id="sensor-fault-channel">
+              <option value="gps">GPS</option>
+              <option value="barometer">氣壓計</option>
+              <option value="magnetometer">磁力計</option>
+              <option value="rangefinder">測距計</option>
+              <option value="lidar">LiDAR</option>
+              <option value="opticalFlow">光流</option>
+            </select></label
+          >
+          <button id="sensor-fault-on">啟用故障</button
+          ><button id="sensor-fault-off">清除故障</button>
+        </div>
+      </section>
       <section id="catalog-workspace" class="panel workspace-extra" hidden>
         <h2>功能全覽 <span>CAPABILITY CATALOG</span></h2>
         <p>此清單整理部分公開資料與本專案狀態，並非完整市場盤點。</p>
@@ -158,6 +191,9 @@
         <p id="catalog-counts"></p>
         <div id="catalog-list" class="catalog-list"></div>
       </section>
+      <p id="recording-notice" class="recording-notice" role="status">
+        實驗紀錄暫存於此頁；請匯出 CSV 或 JSON 以保存。
+      </p>
       <div class="workspace">
         <section class="flight-column" aria-label="飛行視覺化與遙測">
           <div class="viewport-panel">
@@ -515,6 +551,10 @@
         >
         <p>預設值為通用假設，並非品牌實機校準。</p>
         <div id="settings-fields"></div>
+        <section class="settings-group">
+          <h3>虛擬感測器</h3>
+          <div id="sensor-settings" class="settings-grid"></div>
+        </section>
         <p id="settings-error" class="form-error" role="alert"></p>
         <div class="dialog-actions">
           <button type="button" id="settings-default" class="button secondary">
@@ -553,6 +593,20 @@
         關閉 3D 渲染仍可持續模擬。數值模型為 200 Hz；實驗資料每模擬秒記錄 20
         筆，最長 30 分鐘後自動暫停。
       </p>
+    </dialog>
+    <dialog
+      id="confirm-dialog"
+      aria-labelledby="confirm-title"
+      aria-describedby="confirm-message"
+    >
+      <form method="dialog">
+        <h2 id="confirm-title">確認操作</h2>
+        <p id="confirm-message"></p>
+        <div class="dialog-actions">
+          <button class="button secondary" value="cancel">取消</button
+          ><button class="button primary" value="confirm">確定</button>
+        </div>
+      </form>
     </dialog>
     <input
       type="file"

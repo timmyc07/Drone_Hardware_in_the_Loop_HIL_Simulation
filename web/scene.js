@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { lidarPoints } from "./sensors.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 export function createScene(container) {
@@ -308,6 +309,27 @@ export function createScene(container) {
     }
   }
   setEnvironment({});
+  const scanGeometry = new THREE.BufferGeometry();
+  const scanAttribute = new THREE.BufferAttribute(
+    new Float32Array(180 * 3),
+    3,
+  ).setUsage(THREE.DynamicDrawUsage);
+  scanGeometry.setAttribute("position", scanAttribute);
+  scanGeometry.setDrawRange(0, 0);
+  const scan = new THREE.Points(
+    scanGeometry,
+    new THREE.PointsMaterial({ color: 0xffc17e, size: 0.09 }),
+  );
+  scan.frustumCulled = false;
+  scene.add(scan);
+  function setSensorScan(reading) {
+    const points = reading?.valid ? lidarPoints(reading).slice(0, 180) : [];
+    points.forEach(([north, east, down], index) =>
+      scanAttribute.array.set([east, -down, -north], index * 3),
+    );
+    scanGeometry.setDrawRange(0, points.length);
+    scanAttribute.needsUpdate = true;
+  }
   let count = 0;
   let lastTime = -Infinity;
   let mode = "orbit";
@@ -415,6 +437,7 @@ export function createScene(container) {
       resetView();
     },
     resetView,
+    setSensorScan,
     setEnvironment,
     setObstacles,
     setMission,

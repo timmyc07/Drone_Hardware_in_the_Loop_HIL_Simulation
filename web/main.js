@@ -6,6 +6,8 @@ import {
   recordingToJson,
 } from "./recording.js";
 import { readPilotInput } from "./input.js";
+import { createFlightApi } from "./api.js";
+import { DEFAULT_SENSOR_CONFIG, validateSensorConfig } from "./sensors.js";
 import { TRAINING_COURSES } from "./training.js";
 import { CAPABILITIES, SOURCES } from "./capabilities.js";
 
@@ -13,9 +15,15 @@ const $ = (id) => document.getElementById(id);
 const DEG = 180 / Math.PI;
 const storageKey = "flight-lab-config-v1";
 let config = { ...DEFAULT_CONFIG };
+let sensorConfig = { ...DEFAULT_SENSOR_CONFIG };
+let sensors;
+let replaySensorIndex = 0;
 try {
   const saved = localStorage.getItem(storageKey);
   if (saved) config = validateConfig(JSON.parse(saved));
+  const savedSensors = localStorage.getItem("flight-lab-sensors-v1");
+  if (savedSensors)
+    sensorConfig = validateSensorConfig(JSON.parse(savedSensors));
 } catch {
   /* Invalid or unavailable browser storage uses model defaults. */
 }
@@ -31,10 +39,58 @@ let rendering = true;
 let scene;
 let toastTimer;
 let sampleCount = 0;
+let storageLimited = false;
+let exportedTime = 0;
+const dirty = () =>
+  !replay && sampleCount > 1 && (latest?.time || 0) > exportedTime + 1e-8;
+function confirmAction(message) {
+  const dialog = $("confirm-dialog");
+  $("confirm-message").textContent = message;
+  dialog.returnValue = "cancel";
+  return new Promise((resolve) => {
+    dialog.addEventListener(
+      "close",
+      () => resolve(dialog.returnValue === "confirm"),
+      { once: true },
+    );
+    dialog.showModal();
+  });
+}
 let timing = {};
 let firstState = true;
 const worker = new Worker(new URL("./worker.js", import.meta.url), {
   type: "module",
+});
+let requestId = 0;
+const pendingApi = new Map();
+const apiSubscribers = new Set();
+function requestApi(command) {
+  if (replay)
+    return Promise.reject(new Error("請先離開重播模式再使用程式介面"));
+  const id = ++requestId;
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pendingApi.delete(id);
+      reject(new Error("模擬器未在時間內回應"));
+    }, 10000);
+    pendingApi.set(id, { resolve, reject, timeout });
+    try {
+      worker.postMessage({ ...command, requestId: id });
+    } catch (error) {
+      clearTimeout(timeout);
+      pendingApi.delete(id);
+      reject(error);
+    }
+  });
+}
+function onStateSubscribe(callback) {
+  apiSubscribers.add(callback);
+  return () => apiSubscribers.delete(callback);
+}
+Object.defineProperty(window, "flightLab", {
+  value: createFlightApi(requestApi, onStateSubscribe),
+  writable: false,
+  configurable: false,
 });
 
 function toast(message) {
@@ -191,7 +247,7 @@ groups.push([
     ["turbulence", "亂流 (m/s)", 0, 15, 0.1, 1],
     ["geofenceRadius", "圍欄半徑 (m)", 1, 500, 1, 1],
     ["geofenceHeight", "圍欄高度 (m)", 2, 500, 1, 1],
-    ["batteryCapacityWh", "電池容量 (Wh)", 0.1, 1000, 1, 1],
+    ["batteryCapacityWh", "電池容量 (Wh)", 0.1, 1000, 0.1, 1],
     ["batteryInitialSoc", "初始電量 (0–1)", 0, 1, 0.01, 1],
     ["batteryBasePower", "基礎功率 (W)", 0, 200, 1, 1],
     ["batteryMotorPower", "馬達功率 (W)", 1, 1000, 1, 1],
@@ -215,23 +271,47 @@ function populateConfig(values) {
 }
 $("settings-open").onclick = () => {
   populateConfig(config);
+  populateSensorConfig(sensorConfig);
   $("settings-dialog").showModal();
 };
-$("settings-default").onclick = () => populateConfig(DEFAULT_CONFIG);
-$("settings-form").onsubmit = (event) => {
+$("settings-default").onclick = () => {
+  populateConfig(DEFAULT_CONFIG);
+  populateSensorConfig(DEFAULT_SENSOR_CONFIG);
+};
+$("settings-form").onsubmit = async (event) => {
   event.preventDefault();
   try {
     const next = { ...config };
     for (const [key, , , , , factor] of fields)
       next[key] = Number($(`config-${key}`).value) / factor;
-    config = validateConfig(next);
+    const validated = validateConfig(next);
+    const nextSensors = validateSensorConfig(
+      Object.fromEntries(
+        Object.keys(DEFAULT_SENSOR_CONFIG).map((key) => [
+          key,
+          Number($(`sensor-config-${key}`).value),
+        ]),
+      ),
+    );
+    if (
+      dirty() &&
+      !(await confirmAction("套用參數會清除尚未匯出的實驗紀錄。確定繼續？"))
+    )
+      return;
+    config = validated;
+    sensorConfig = nextSensors;
     try {
       localStorage.setItem(storageKey, JSON.stringify(config));
+      localStorage.setItem(
+        "flight-lab-sensors-v1",
+        JSON.stringify(sensorConfig),
+      );
     } catch {
       toast("此瀏覽器無法儲存設定，本次實驗仍會使用新參數。");
     }
     $("settings-dialog").close();
     newExperiment();
+    worker.postMessage({ type: "sensorConfig", value: sensorConfig });
     toast("參數已套用，已建立新實驗。");
   } catch (error) {
     $("settings-error").textContent = `請檢查參數：${error.message}`;
@@ -248,6 +328,8 @@ function newExperiment() {
   setReplayControls(false);
   history = [];
   sampleCount = 0;
+  exportedTime = 0;
+  storageLimited = false;
   resetTargets();
   document
     .querySelectorAll("#target-controls input, #gust")
@@ -263,20 +345,20 @@ function newExperiment() {
   setPlaying(false);
   $("reset").setAttribute("aria-label", "重設實驗");
 }
-$("reset").onclick = () => {
+$("reset").onclick = async () => {
   if (
-    latest?.time > 0 &&
-    !confirm("重設會清除目前尚未匯出的實驗紀錄。確定重設？")
+    dirty() &&
+    !(await confirmAction("重設會清除目前尚未匯出的實驗紀錄。確定重設？"))
   )
     return;
   newExperiment();
   scene?.resetView();
 };
 document.querySelectorAll("[data-scenario]").forEach((button) => {
-  button.onclick = () => {
+  button.onclick = async () => {
     if (
-      latest?.time > 0 &&
-      !confirm("切換情境會清除目前尚未匯出的實驗紀錄。確定切換？")
+      dirty() &&
+      !(await confirmAction("切換情境會清除目前尚未匯出的實驗紀錄。確定切換？"))
     )
       return;
     scenario = button.dataset.scenario;
@@ -289,6 +371,10 @@ document.querySelectorAll("[data-scenario]").forEach((button) => {
   };
 });
 $("play").onclick = () => {
+  if (storageLimited && !replay) {
+    toast("紀錄已達資料上限，請匯出後重設。");
+    return;
+  }
   if (replay) {
     if (replayIndex >= replay.samples.length - 1) {
       replayClock = replay.samples[0].time;
@@ -297,6 +383,7 @@ $("play").onclick = () => {
       history = [latest];
       restoreReplayPresentation();
       applyReplayEvents(replayClock);
+      resetReplaySensors(replayClock);
     }
     setPlaying(!running);
   } else worker.postMessage({ type: running ? "pause" : "play" });
@@ -326,11 +413,13 @@ $("render-toggle").onclick = () => {
   $("render-toggle").setAttribute("aria-pressed", String(rendering));
 };
 
-function download(text, extension, mime) {
+function download(text, extension, mime, filename) {
   const url = URL.createObjectURL(new Blob([text], { type: mime }));
   const a = document.createElement("a");
   a.href = url;
-  a.download = `flight-lab-${new Date().toISOString().replace(/[:.]/g, "-")}.${extension}`;
+  a.download =
+    filename ||
+    `flight-lab-${new Date().toISOString().replace(/[:.]/g, "-")}.${extension}`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
@@ -342,6 +431,7 @@ function exportRecording(kind, recording) {
       "text/csv;charset=utf-8",
     );
   else download(recordingToJson(recording), "json", "application/json");
+  if (!replay) exportedTime = recording.samples.at(-1)?.time || 0;
   toast("實驗紀錄已匯出。");
 }
 for (const kind of ["csv", "json"])
@@ -358,15 +448,17 @@ $("import-file").onchange = async (event) => {
   const file = event.target.files?.[0];
   event.target.value = "";
   if (!file) return;
-  if (file.size > 64 * 1024 * 1024) {
-    toast("紀錄檔案超過 64 MB 上限。");
+  if (file.size > 128 * 1024 * 1024) {
+    toast("紀錄檔案超過 128 MiB 上限。");
     return;
   }
   try {
     const record = validateRecording(JSON.parse(await file.text()));
     if (
-      latest?.time > 0 &&
-      !confirm("匯入將取代目前畫面。尚未匯出的紀錄請先匯出。繼續匯入？")
+      dirty() &&
+      !(await confirmAction(
+        "匯入將取代目前畫面。尚未匯出的紀錄請先匯出。繼續匯入？",
+      ))
     )
       return;
     worker.postMessage({ type: "pause" });
@@ -382,6 +474,7 @@ $("import-file").onchange = async (event) => {
     replayIndex = 0;
     restoreReplayPresentation();
     applyReplayEvents(replayClock);
+    resetReplaySensors(replayClock);
     history = [record.samples[0]];
     latest = record.samples[0];
     sampleCount = record.samples.length;
@@ -402,6 +495,26 @@ $("import-file").onchange = async (event) => {
 };
 
 worker.onmessage = ({ data }) => {
+  if (data.type === "apiReply") {
+    const pending = pendingApi.get(data.requestId);
+    if (pending) {
+      clearTimeout(pending.timeout);
+      pendingApi.delete(data.requestId);
+      if (data.ok) pending.resolve(data.value);
+      else pending.reject(new Error(data.error));
+    }
+    return;
+  }
+  if (data.type === "sensorExport") {
+    download(
+      data.text,
+      data.kind,
+      data.kind === "csv" ? "text/csv;charset=utf-8" : "application/json",
+      data.kind === "csv" ? "pointcloud.csv" : "sensor.json",
+    );
+    toast("感測器資料已匯出。");
+    return;
+  }
   if (data.type === "error") {
     setPlaying(false);
     toast(data.message);
@@ -414,12 +527,36 @@ worker.onmessage = ({ data }) => {
   if (replay) return;
   if (firstState) {
     firstState = false;
-    worker.postMessage({ type: "reset", config, scenario });
+    worker.postMessage({
+      type: "reset",
+      config,
+      scenario,
+      setup: { ...data.setup, sensors: sensorConfig },
+    });
+    return;
   }
   latest = data.snapshot;
+  if (data.sensors) {
+    sensors = data.sensors;
+    renderSensors();
+  }
+  if (data.setup?.sensors) sensorConfig = data.setup.sensors;
   timing = data.timing;
   sampleCount = data.sampleCount;
   if (data.message === "reset") {
+    config = data.config;
+    scenario = data.scenario;
+    exportedTime = 0;
+    $("target-roll").disabled = scenario === "step";
+    document.querySelector(".control-hint").textContent =
+      scenario === "step"
+        ? "階躍情境自動控制 Roll；其餘指令可即時調整。"
+        : "指令即時生效；更換情境會建立新實驗。";
+    document.querySelectorAll("[data-scenario]").forEach((item) => {
+      const active = item.dataset.scenario === scenario;
+      item.classList.toggle("active", active);
+      item.setAttribute("aria-pressed", String(active));
+    });
     history = [];
     if (data.setup)
       for (const key of ["environment", "obstacles", "mission", "training"])
@@ -429,11 +566,29 @@ worker.onmessage = ({ data }) => {
   }
   history.push(...data.samples);
   while (history.length > 400) history.shift();
-  $("play").disabled = false;
+  if (data.message === "reset") storageLimited = false;
+  if (data.message === "storage-limit") storageLimited = true;
+  $("play").disabled = storageLimited;
   setPlaying(data.running);
   updateTelemetry();
   if (data.message === "limit")
     toast("已完成 30 分鐘實驗並暫停，請匯出紀錄後重設。");
+  if (data.message === "storage-limit")
+    toast("紀錄接近 96 MiB 資料上限，已暫停，請匯出後重設。");
+  const state = {
+    snapshot: data.snapshot,
+    sensors: data.sensors,
+    setup: data.setup,
+    running: data.running,
+    timing: data.timing,
+  };
+  for (const callback of apiSubscribers) {
+    try {
+      callback(state);
+    } catch (error) {
+      console.error(error);
+    }
+  }
 };
 worker.onerror = (event) => {
   setPlaying(false);
@@ -444,15 +599,10 @@ worker.onerror = (event) => {
 function updateTelemetry() {
   if (!latest) return;
   const s = latest;
-  if (replay)
-    for (const t of targets) {
-      const value = s.target[t.key] * t.factor;
-      $(`target-${t.key}`).value = value;
-      $(`output-${t.key}`).textContent = `${value.toFixed(1)} ${t.unit}`;
-    }
-  else if (scenario === "step") {
-    $("target-roll").value = s.target.roll * DEG;
-    $("output-roll").textContent = `${(s.target.roll * DEG).toFixed(1)} °`;
+  for (const t of targets) {
+    const value = s.target[t.key] * t.factor;
+    $(`target-${t.key}`).value = value;
+    $(`output-${t.key}`).textContent = `${value.toFixed(1)} ${t.unit}`;
   }
   const minutes = Math.floor(s.time / 60);
   $("sim-time").textContent =
@@ -610,6 +760,7 @@ function animate(now) {
     ) {
       latest = replay.samples[++replayIndex];
       applyReplayEvents(latest.time);
+      advanceReplaySensors(latest.time);
       history.push(latest);
       if (history.length > 400) history.shift();
     }
@@ -631,12 +782,6 @@ document.addEventListener("visibilitychange", () => {
     if (replay) setPlaying(false);
     else worker.postMessage({ type: "pause" });
     toast("背景分頁已自動暫停。返回後可繼續。");
-  }
-});
-window.addEventListener("beforeunload", (event) => {
-  if (!replay && sampleCount > 20) {
-    event.preventDefault();
-    event.returnValue = "";
   }
 });
 
@@ -889,7 +1034,7 @@ for (const button of document.querySelectorAll("[data-workspace]"))
       item.classList.toggle("active", item === button);
       item.setAttribute("aria-pressed", String(item === button));
     }
-    for (const name of ["mission", "training", "catalog"])
+    for (const name of ["mission", "training", "sensors", "catalog"])
       $(`${name}-workspace`).hidden = button.dataset.workspace !== name;
     document.querySelector(".workspace").hidden =
       button.dataset.workspace === "catalog";
@@ -1043,7 +1188,7 @@ function updatePilot(now) {
 function setReplayControls(disabled) {
   document
     .querySelectorAll(
-      "#mission-workspace button:not(#mission-export), #training-workspace input, #training-workspace select, #flight-mode, [data-command], [data-mode], #position-apply, #fault-apply, #fault-link, #fault-clear, #pilot-enable",
+      "#mission-workspace button:not(#mission-export), #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #sensor-export-csv, #flight-mode, [data-command], [data-mode], #position-apply, #fault-apply, #fault-link, #fault-clear, #pilot-enable",
     )
     .forEach((element) => {
       element.disabled = disabled;
@@ -1068,6 +1213,8 @@ function showReplayEvent(type, value) {
   else if (type === "mission") {
     waypoints = structuredClone(value);
     renderWaypoints();
+  } else if (type === "sensorConfig" || type === "sensors") {
+    sensorConfig = value;
   } else if (type === "training") {
     $("training-select").value = value;
     scene?.setGates(TRAINING_COURSES[value].gates);
@@ -1075,6 +1222,7 @@ function showReplayEvent(type, value) {
 }
 function restoreReplayPresentation() {
   replayEventIndex = 0;
+  sensorConfig = replay.setup.sensors || { ...DEFAULT_SENSOR_CONFIG };
   for (const key of ["environment", "obstacles", "mission", "training"])
     showReplayEvent(key, replay.setup[key]);
 }
@@ -1086,4 +1234,201 @@ function applyReplayEvents(time) {
     const event = replay.events[replayEventIndex++];
     showReplayEvent(event.type, event.value);
   }
+}
+
+const sensorLabels = {
+  gpsHz: "GPS 更新率 (Hz)",
+  barometerHz: "氣壓計更新率 (Hz)",
+  magnetometerHz: "磁力計更新率 (Hz)",
+  rangefinderHz: "測距更新率 (Hz)",
+  lidarHz: "LiDAR 更新率 (Hz)",
+  opticalFlowHz: "光流更新率 (Hz)",
+  latency: "感測延遲 (秒)",
+  dropout: "丟包率 (0–1)",
+  originLatitudeDeg: "原點緯度 (°)",
+  originLongitudeDeg: "原點經度 (°)",
+  originAltitudeM: "原點海拔 (m)",
+  gpsNoiseM: "GPS 水平雜訊 (m)",
+  gpsVerticalNoiseM: "GPS 垂直雜訊 (m)",
+  gpsVelocityNoiseMps: "GPS 速度雜訊 (m/s)",
+  barometerNoisePa: "氣壓雜訊 (Pa)",
+  magneticFieldMicroT: "磁場強度 (µT)",
+  magneticDeclinationDeg: "磁偏角 (°)",
+  magneticInclinationDeg: "磁傾角 (°)",
+  magnetometerNoiseMicroT: "磁力雜訊 (µT)",
+  rangefinderMinM: "測距最小值 (m)",
+  rangefinderMaxM: "測距最大值 (m)",
+  rangefinderNoiseM: "測距雜訊 (m)",
+  lidarRays: "LiDAR 射線數",
+  lidarMinM: "LiDAR 最小值 (m)",
+  lidarMaxM: "LiDAR 最大值 (m)",
+  lidarNoiseM: "LiDAR 雜訊 (m)",
+  opticalFlowNoiseRadS: "光流雜訊 (rad/s)",
+};
+const sensorActions = document.querySelector(
+  "#sensors-workspace .feature-actions",
+);
+for (const [kind, label] of [
+  ["json", "匯出目前感測狀態 JSON"],
+  ["csv", "匯出目前 LiDAR 點雲 CSV"],
+]) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.id = `sensor-export-${kind}`;
+  button.textContent = label;
+  button.onclick = () => worker.postMessage({ type: "sensorExport", kind });
+  sensorActions.append(button);
+}
+const sensorSettings = $("sensor-settings");
+for (const key of Object.keys(DEFAULT_SENSOR_CONFIG)) {
+  const field = document.createElement("div");
+  field.className = "settings-field";
+  const label = document.createElement("label");
+  label.htmlFor = `sensor-config-${key}`;
+  label.textContent = sensorLabels[key] || key;
+  const input = document.createElement("input");
+  input.type = "number";
+  input.step = "any";
+  input.required = true;
+  input.id = label.htmlFor;
+  field.append(label, input);
+  sensorSettings.append(field);
+}
+function populateSensorConfig(values) {
+  for (const key of Object.keys(DEFAULT_SENSOR_CONFIG))
+    $(`sensor-config-${key}`).value = values[key];
+}
+const sensorNames = {
+  gps: "GPS",
+  barometer: "氣壓計",
+  magnetometer: "磁力計",
+  rangefinder: "向下測距",
+  lidar: "LiDAR",
+  opticalFlow: "光流",
+};
+const reasonsSensor = {
+  startup: "尚未量測",
+  "no-return": "無回波",
+  dropout: "丟包",
+  fault: "故障",
+  unavailable: "無資料",
+  range: "超出範圍",
+};
+const valueText = (value, digits = 2) =>
+  Number.isFinite(value) ? value.toFixed(digits) : "—";
+const vectorText = (value, digits = 2) =>
+  Array.isArray(value)
+    ? value.map((v) => valueText(v, digits)).join(" / ")
+    : "—";
+function renderSensors() {
+  if (!sensors) return;
+  const readings = $("sensor-readings");
+  readings.replaceChildren();
+  const detail = {
+    gps: (s) => [
+      `緯度 / 經度 ${valueText(s.latitudeDeg, 6)} / ${valueText(s.longitudeDeg, 6)} °`,
+      `海拔 ${valueText(s.altitudeM)} m`,
+      `NED 速度 ${vectorText(s.velocityNedMps)} m/s`,
+    ],
+    barometer: (s) => [
+      `氣壓 ${valueText(s.pressurePa)} Pa`,
+      `高度 ${valueText(s.altitudeM)} m`,
+      `溫度 ${valueText(s.temperatureK)} K`,
+    ],
+    magnetometer: (s) => [`機體磁場 ${vectorText(s.fieldBodyMicroT)} µT`],
+    rangefinder: (s) => [`距離 ${valueText(s.distanceM)} m`],
+    lidar: (s) => [
+      `有效回波 ${Array.isArray(s.rangesM) ? s.rangesM.filter(Number.isFinite).length : 0} / ${s.rangesM?.length || 0}`,
+      `量測範圍 ${valueText(s.minM)}–${valueText(s.maxM)} m`,
+    ],
+    opticalFlow: (s) => [
+      `光流 ${vectorText(s.flowRadS, 3)} rad/s`,
+      `地面距離 ${valueText(s.groundDistanceM)} m`,
+    ],
+  };
+  for (const [key, name] of Object.entries(sensorNames)) {
+    const item = sensors[key];
+    if (!item) continue;
+    const card = document.createElement("article");
+    card.className = "sensor-card";
+    const title = document.createElement("h3");
+    title.textContent = name;
+    card.append(title);
+    const state = document.createElement("p");
+    state.textContent = `${item.valid ? "有效" : `無效（${reasonsSensor[item.reason] || "無資料"}）`} · 量測 ${valueText(item.time, 3)} s · 齡期 ${valueText(Number.isFinite(item.time) ? Math.max(0, sensors.time - item.time) : null, 3)} s${sensors.faults?.[key] ? " · 故障啟用" : ""}`;
+    card.append(state);
+    for (const line of detail[key](item)) {
+      const p = document.createElement("p");
+      p.textContent = line;
+      card.append(p);
+    }
+    readings.append(card);
+  }
+  drawLidar(sensors.lidar);
+  scene?.setSensorScan($("sensor-scan-visible").checked ? sensors.lidar : null);
+}
+function drawLidar(reading) {
+  const canvas = $("lidar-map"),
+    ctx = canvas.getContext("2d"),
+    size = canvas.width,
+    center = size / 2;
+  ctx.clearRect(0, 0, size, size);
+  ctx.strokeStyle = "#35566b";
+  for (const radius of [0.25, 0.5, 0.75, 1]) {
+    ctx.beginPath();
+    ctx.arc(center, center, radius * (center - 15), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.moveTo(center, 0);
+  ctx.lineTo(center, size);
+  ctx.moveTo(0, center);
+  ctx.lineTo(size, center);
+  ctx.stroke();
+  if (!reading?.valid || !Array.isArray(reading.rangesM)) return;
+  ctx.fillStyle = "#ffbf78";
+  reading.rangesM.forEach((range, i) => {
+    if (!Number.isFinite(range)) return;
+    const angle = reading.angleStartRad + i * reading.angleStepRad,
+      radius = (range / reading.maxM) * (center - 15);
+    ctx.fillRect(
+      center + Math.sin(angle) * radius - 2,
+      center - Math.cos(angle) * radius - 2,
+      4,
+      4,
+    );
+  });
+}
+$("sensor-scan-visible").onchange = () =>
+  scene?.setSensorScan(
+    $("sensor-scan-visible").checked ? sensors?.lidar : null,
+  );
+for (const [id, failed] of [
+  ["sensor-fault-on", true],
+  ["sensor-fault-off", false],
+])
+  $(id).onclick = () =>
+    worker.postMessage({
+      type: "sensorFault",
+      value: { sensor: $("sensor-fault-channel").value, failed },
+    });
+
+function resetReplaySensors(time) {
+  replaySensorIndex = 0;
+  sensors = undefined;
+  $("sensor-readings").replaceChildren();
+  scene?.setSensorScan(null);
+  advanceReplaySensors(time);
+}
+function advanceReplaySensors(time) {
+  const frames = replay?.sensorFrames || [];
+  let changed = false;
+  while (
+    replaySensorIndex < frames.length &&
+    frames[replaySensorIndex].time <= time + 1e-8
+  ) {
+    sensors = frames[replaySensorIndex++];
+    changed = true;
+  }
+  if (changed) renderSensors();
 }

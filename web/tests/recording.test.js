@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createSimulation, validateConfig } from "../sim.js";
+import { createSensorSuite } from "../sensors.js";
 import { createTrainer } from "../training.js";
 import {
   RECORDING_VERSION,
@@ -9,6 +10,7 @@ import {
   recordingToCsv,
   recordingToJson,
   compactSnapshot,
+  validateSensorFrame,
 } from "../recording.js";
 
 function record() {
@@ -20,10 +22,12 @@ function record() {
   };
   const first = capture();
   for (let i = 0; i < 10; i++) sim.step();
+  const last = capture(),
+    sensors = createSensorSuite();
   return {
     format: "flight-lab",
     version: RECORDING_VERSION,
-    modelVersion: "0.2.0",
+    modelVersion: "0.3.0",
     createdAt: "2026-11-04T00:00:00.000Z",
     config: validateConfig(),
     scenario: "hover",
@@ -38,10 +42,11 @@ function record() {
       renderEnabled: true,
     },
     events: [{ time: 0, type: "targets", value: { altitude: 2 } }],
-    samples: [first, capture()],
+    samples: [first, last],
+    sensorFrames: [sensors.update(first), sensors.update(last)],
   };
 }
-test("v2 round trip validates every new field; CSV preserves45columns and all body cells are numeric", () => {
+test("v3 round trip validates every new field and exports 98 CSV columns with empty invalid sensor cells", () => {
   const input = record(),
     result = validateRecording(JSON.parse(JSON.stringify(input)));
   assert.deepEqual(result, JSON.parse(JSON.stringify(input)));
@@ -63,7 +68,7 @@ test("v2 round trip validates every new field; CSV preserves45columns and all bo
   assert.ok(
     rows
       .slice(1)
-      .flat()
+      .flatMap((row) => row.slice(0, 68))
       .every((value) => value !== "" && Number.isFinite(Number(value))),
   );
   const json = recordingToJson(input);
@@ -220,6 +225,8 @@ test("large fifty-point routes are stored once and rehydrated by shared referenc
       navigation: { ...base.navigation, waypoints: route },
     }),
   );
+  const suite = createSensorSuite(input.setup.sensors);
+  input.sensorFrames = input.samples.map((snapshot) => suite.update(snapshot));
   const json = recordingToJson(input);
   assert.equal((json.match(/"hold"/g) || []).length, 50);
   const validated = validateRecording(JSON.parse(json));
@@ -243,4 +250,113 @@ test("gate training nextGate is validated against the selected course", () => {
     radius: 10,
   };
   assert.throws(() => validateRecording(input), /training gate/);
+});
+
+test("sensor frames require exact parallel times and reject future/regressing acquisition times", () => {
+  const mutations = [
+    (r) => r.sensorFrames.pop(),
+    (r) => (r.sensorFrames[1].time = 0.04),
+    (r) => (r.sensorFrames[0].gps.time = 1),
+    (r) => {
+      r.sensorFrames[0].gps.time = 0;
+      r.sensorFrames[1].gps.time = -1;
+    },
+    (r) => delete r.sensorFrames[0].faults.gps,
+    (r) => (r.sensorFrames[0].gps.latitudeDeg = Infinity),
+    (r) => (r.sensorFrames[0].gps.latitudeDeg = 91),
+    (r) => (r.sensorFrames[0].barometer.temperatureK = 0),
+    (r) => (r.sensorFrames[0].rangefinder.distanceM = 0.01),
+    (r) => r.sensorFrames[0].lidar.rangesM.pop(),
+    (r) => (r.sensorFrames[0].lidar.rangesM[0] = 51),
+    (r) => (r.sensorFrames[0].lidar.quaternion = [0, 0, 0, 0]),
+    (r) => {
+      r.sensorFrames[0].gps.valid = false;
+      r.sensorFrames[0].gps.reason = "dropout";
+    },
+    (r) => (r.sensorFrames[0].gps.reason = "fault"),
+    (r) => (r.sensorFrames[0].faults.gps = 1),
+  ];
+  for (const mutate of mutations) {
+    const input = record();
+    mutate(input);
+    assert.throws(() => validateRecording(input));
+  }
+  const input = record();
+  input.samples[0].time = 0.1;
+  input.samples[1].time = 0.2;
+  input.sensorFrames[0].time = 0.1;
+  input.sensorFrames[1].time = 0.2;
+  input.sensorFrames[0].gps.time = 0.1;
+  input.sensorFrames[1].gps.time = 0.05;
+  assert.throws(() => validateRecording(input), /backwards/);
+  for (const version of [1, 2]) {
+    const legacy = record();
+    legacy.version = version;
+    assert.throws(() => validateRecording(legacy), /version 3 required/);
+  }
+});
+test("no-return and startup measurements retain explicit nulls and produce empty CSV sensor cells", () => {
+  const input = record();
+  assert.equal(input.sensorFrames[0].lidar.reason, "no-return");
+  assert.ok(
+    input.sensorFrames[0].lidar.rangesM.every((value) => value === null),
+  );
+  assert.deepEqual(
+    validateRecording(JSON.parse(recordingToJson(input))).sensorFrames,
+    input.sensorFrames,
+  );
+  const rows = recordingToCsv(input)
+    .split("\n")
+    .map((row) => row.split(","));
+  assert.equal(rows[1][rows[0].indexOf("lidar_nearest_m")], "");
+  assert.equal(rows[1][rows[0].indexOf("lidar_valid_boolean")], "0");
+  const suite = createSensorSuite({ ...input.setup.sensors, latency: 1 });
+  const startup = suite.update(input.samples[0]);
+  assert.deepEqual(
+    validateSensorFrame(startup, { ...input.setup.sensors, latency: 1 }),
+    startup,
+  );
+  startup.gps.latitudeDeg = 0;
+  assert.throws(() => validateSensorFrame(startup));
+});
+test("sensor config/fault history validates different lidar dimensions and preserves exact raw replay", () => {
+  const input = record(),
+    changed = { ...input.setup.sensors, lidarRays: 36, latency: 0.1 };
+  input.events.push(
+    { time: input.samples[1].time, type: "sensorConfig", value: changed },
+    {
+      time: input.samples[1].time,
+      type: "sensorFault",
+      value: { sensor: "gps", failed: true },
+    },
+  );
+  const suite = createSensorSuite(changed);
+  suite.update(input.samples[1]);
+  suite.setFault("gps", true);
+  input.sensorFrames[1] = suite.snapshot();
+  const validated = validateRecording(input);
+  assert.equal(validated.sensorFrames[0].lidar.rangesM.length, 72);
+  assert.equal(validated.sensorFrames[1].lidar.rangesM.length, 36);
+  assert.equal(validated.sensorFrames[1].gps.reason, "fault");
+  assert.deepEqual(
+    validateRecording(JSON.parse(recordingToJson(input))).sensorFrames,
+    input.sensorFrames,
+  );
+  const bad = structuredClone(input);
+  bad.events[1].value.lidarRays = 37;
+  assert.throws(() => validateRecording(bad), /range count/);
+  const fault = record();
+  fault.events.push({
+    time: 0,
+    type: "sensorFault",
+    value: { sensor: "unknown", failed: true },
+  });
+  assert.throws(() => validateRecording(fault));
+  const config = record();
+  config.events.push({
+    time: 0,
+    type: "sensorConfig",
+    value: { lidarRays: 181 },
+  });
+  assert.throws(() => validateRecording(config));
 });
