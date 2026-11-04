@@ -136,6 +136,11 @@ export const SOURCES = [
     kind: "開源文件",
   },
   {
+    name: "AirSim 影像 API",
+    url: "https://github.com/microsoft/AirSim/blob/main/docs/image_apis.md",
+    kind: "開源文件",
+  },
+  {
     name: "AirSim API",
     url: "https://github.com/microsoft/AirSim/blob/main/docs/apis.md",
     kind: "開源文件",
@@ -536,9 +541,11 @@ export const CAPABILITIES = [
     id: "camera-data",
     category: "感測與通訊",
     title: "相機感測資料",
-    description: "產出可供演算法使用的相機資料與參數。",
-    status: "planned",
+    description:
+      "提供同步 RGB 與場景類別、相機內參及獨立資料集；非實體相機或經校準模型。",
+    status: "partial",
     sources: [
+      "https://github.com/microsoft/AirSim/blob/main/docs/image_apis.md",
       "https://github.com/microsoft/AirSim",
       "https://docs.isaacsim.omniverse.nvidia.com/5.1.0/overview/overview.html",
     ],
@@ -547,8 +554,8 @@ export const CAPABILITIES = [
     id: "depth",
     category: "感測與通訊",
     title: "深度影像",
-    description: "輸出深度資料。",
-    status: "planned",
+    description: "提供相機光軸方向平面深度，無效值為 0；非徑向距離或實體校準。",
+    status: "partial",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/apis.md"],
   },
   {
@@ -827,7 +834,7 @@ export const CAPABILITIES = [
     id: "api",
     category: "資料與整合",
     title: "程式控制 API",
-    description: "同頁 API 1.2 新增起飛及中止；無網路或飛控協定橋接。",
+    description: "同頁 API 1.3 增加相機設定與擷取；無網路或飛控協定橋接。",
     status: "partial",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/apis.md"],
   },

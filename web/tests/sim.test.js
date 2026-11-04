@@ -935,7 +935,21 @@ test("pilot abort and disarm brake a moving aircraft over time, preserve phase d
     const braking = sim.step();
     assert.ok(braking.velocity[0] > 0);
     assert.ok(braking.position[0] > moving.position[0]);
+    let slowed = braking;
+    for (let i = 0; i < 20; i++) {
+      slowed = sim.step();
+      assert.equal(slowed.target.altitude, 0);
+      assert.equal(slowed.target.airspeed, 0);
+      assert.equal(slowed.runway.takeoffPhase, "aborted");
+      assert.equal(slowed.runway.brake, 1);
+      assert.equal(slowed.propulsion.command, 0);
+    }
+    assert.ok(
+      slowed.velocity[0] > 0 && slowed.velocity[0] < moving.velocity[0],
+    );
     const stopped = advance(sim, 3);
+    assert.equal(stopped.target.altitude, 0);
+    assert.equal(stopped.target.airspeed, 0);
     assert.equal(stopped.runway.takeoffPhase, "aborted");
     assert.equal(stopped.runway.abortReason, "pilot");
     assert.equal(stopped.armed, false);

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readPilotInput } from "../input.js";
+import { readPilotInput, takeoffPlayAction } from "../input.js";
 
 test("keyboard controls map to body and climb commands", () => {
   assert.deepEqual(
@@ -23,4 +23,41 @@ test("keyboard overrides each active axis including opposing keys", () => {
     }),
     { roll: 0, pitch: -0.5, yaw: 0.4, climb: -1 },
   );
+});
+
+test("ground launch and unfinished takeoff select the correct play action", () => {
+  const grounded = {
+    status: "landed",
+    armed: false,
+    velocity: [0, 0, 0],
+    runway: { weightOnWheels: true, takeoffPhase: "idle" },
+    navigation: { mode: "attitude" },
+  };
+  assert.equal(takeoffPlayAction(grounded), "launch");
+  assert.equal(
+    takeoffPlayAction({
+      ...grounded,
+      velocity: [3, 0, 0],
+      runway: { weightOnWheels: true, takeoffPhase: "aborted" },
+    }),
+    "play",
+  );
+  assert.equal(
+    takeoffPlayAction({
+      ...grounded,
+      armed: true,
+      navigation: { mode: "land" },
+    }),
+    "play",
+  );
+  assert.equal(
+    takeoffPlayAction({
+      ...grounded,
+      velocity: [3, 0, 0],
+      runway: { weightOnWheels: true, takeoffPhase: "roll" },
+    }),
+    "resume",
+  );
+  assert.equal(takeoffPlayAction({ ...grounded, status: "crashed" }), "play");
+  assert.equal(takeoffPlayAction(undefined), "play");
 });

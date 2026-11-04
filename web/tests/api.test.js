@@ -12,7 +12,7 @@ test("API sends the documented commands and copies input and output", async () =
     },
     () => () => {},
   );
-  assert.equal(api.version, "1.2");
+  assert.equal(api.version, "1.3");
   assert.ok(Object.isFrozen(api));
   const targets = { roll: 1 };
   const pending = api.setTargets(targets);
@@ -22,6 +22,9 @@ test("API sends the documented commands and copies input and output", async () =
   assert.deepEqual(response.snapshot.position, [1, 2, 3]);
   await api.getState();
   await api.getSensors();
+  await api.getCameraConfig();
+  await api.setCameraConfig({ pitchDeg: 90 });
+  await api.captureCamera();
   await api.setMode("mission");
   await api.takeoff();
   await api.abortTakeoff();
@@ -39,6 +42,9 @@ test("API sends the documented commands and copies input and output", async () =
     { type: "targets", value: { roll: 1 } },
     { type: "inspect" },
     { type: "inspectSensors" },
+    { type: "getCameraConfig" },
+    { type: "setCameraConfig", value: { pitchDeg: 90 } },
+    { type: "captureCamera" },
     { type: "mode", value: "mission" },
     { type: "takeoff" },
     { type: "abortTakeoff" },

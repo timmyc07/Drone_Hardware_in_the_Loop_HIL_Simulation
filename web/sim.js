@@ -1255,6 +1255,10 @@ export function createSimulation(configuration = {}) {
     integrals.fill(0);
   }
   function disarm() {
+    if (takeoffActive() && groundRolling) {
+      stopTakeoff("pilot");
+      return;
+    }
     if (takeoffActive()) {
       takeoffPhase = "aborted";
       takeoffAbortReason = "pilot";
@@ -1301,6 +1305,7 @@ export function createSimulation(configuration = {}) {
       integrals.fill(0);
       navigation.reason = "takeoff-aborted";
       target = { altitude: 0, roll: 0, pitch: 0, yawRate: 0, airspeed: 0 };
+      baseTarget = { ...target };
     } else if (reason === "pilot") {
       enterMode("position", "takeoff-aborted");
       positionTarget.altitude = Math.max(30, -state[2]);
@@ -1578,7 +1583,7 @@ export function createSimulation(configuration = {}) {
     )
       return;
     if (fixedWing && navigation.mode === "takeoff") {
-      navigateTakeoff(dt);
+      if (takeoffActive()) navigateTakeoff(dt);
       return;
     }
     if (battery.critical) safetyMode("land", "critical-battery");

@@ -17,3 +17,20 @@ export function readPilotInput(keys, gamepad) {
     climb: keyboard("ArrowDown", "ArrowUp", -axis(3)),
   };
 }
+
+export function takeoffPlayAction(snapshot) {
+  if (!snapshot || ["crashed", "failsafe"].includes(snapshot.status))
+    return "play";
+  if (
+    ["runup", "roll", "rotate", "climb"].includes(snapshot.runway.takeoffPhase)
+  )
+    return "resume";
+  const moving = Math.hypot(...snapshot.velocity) >= 0.25;
+  if (
+    snapshot.runway.weightOnWheels &&
+    !moving &&
+    !(snapshot.navigation.mode === "land" && snapshot.armed)
+  )
+    return "launch";
+  return "play";
+}

@@ -154,6 +154,54 @@
         <h2>感測器工作台 <span>VIRTUAL SENSORS</span></h2>
         <p>合成感測器與故障僅供觀察，不驅動理想化飛控；數值未經實機校準。</p>
         <div id="sensor-readings" class="sensor-grid" aria-live="off"></div>
+        <section class="camera-workbench" aria-labelledby="camera-title">
+          <h3 id="camera-title">機載相機</h3>
+          <p>
+            影像、深度與分類取自同一次拍攝；相機資料集需另行匯出，不包含在飛行紀錄中。
+          </p>
+          <div class="feature-actions">
+            <button id="camera-capture">拍攝一張</button
+            ><label
+              ><input id="camera-live" type="checkbox" /> 即時預覽（每秒最多 2
+              張）</label
+            ><button id="camera-add">拍攝並加入資料集</button
+            ><button id="camera-png">匯出 RGB PNG</button
+            ><button id="camera-export">匯出資料集 JSON</button
+            ><button id="camera-import">匯入資料集 JSON</button
+            ><input
+              id="camera-import-file"
+              type="file"
+              accept=".json,application/json"
+              hidden
+            /><button id="camera-clear">清除資料集</button>
+          </div>
+          <p id="camera-status" role="status">尚未拍攝</p>
+          <label
+            >資料集畫面
+            <select id="camera-frame-select">
+              <option value="">選擇畫面</option>
+            </select></label
+          >
+          <p id="camera-metadata"></p>
+          <div class="camera-previews">
+            <figure>
+              <canvas id="camera-rgb" aria-label="相機 RGB 影像"></canvas>
+              <figcaption>RGB</figcaption>
+            </figure>
+            <figure>
+              <canvas id="camera-depth" aria-label="相機深度影像"></canvas>
+              <figcaption>深度（近亮、遠暗；無效為黑）</figcaption>
+            </figure>
+            <figure>
+              <canvas
+                id="camera-segmentation"
+                aria-label="相機分類影像"
+              ></canvas>
+              <figcaption>分類</figcaption>
+            </figure>
+          </div>
+          <p id="camera-legend">分類圖例依場景物件區分；影像為模擬資料。</p>
+        </section>
         <h3>水平 LiDAR 掃描</h3>
         <canvas
           id="lidar-map"
@@ -563,7 +611,7 @@
           </button>
         </div>
         <p>
-          參數儲存在此瀏覽器。套用後重設實驗；模型數值為研究假設，尚未經實體校準。
+          參數儲存在此瀏覽器。變更飛行模型或虛擬感測器會重設實驗；只變更相機設定會保留目前飛行。模型數值為研究假設，尚未經實體校準。
         </p>
         <label
           >機體預設
@@ -593,6 +641,74 @@
         >
         <div id="settings-fields"></div>
         <section class="settings-group">
+          <h3>機載相機</h3>
+          <div class="settings-grid">
+            <div class="settings-field">
+              <label for="camera-resolution">解析度</label
+              ><select id="camera-resolution">
+                <option value="160x120">160 × 120</option>
+                <option value="320x240">320 × 240</option>
+                <option value="640x480">640 × 480</option>
+              </select>
+            </div>
+            <div class="settings-field">
+              <label for="camera-fov">水平視角 (°)</label
+              ><input
+                id="camera-fov"
+                type="number"
+                min="30"
+                max="140"
+                step="1"
+                required
+              />
+            </div>
+            <div class="settings-field">
+              <label for="camera-near">最近距離 (m)</label
+              ><input
+                id="camera-near"
+                type="number"
+                min="0.05"
+                max="5"
+                step="0.05"
+                required
+              />
+            </div>
+            <div class="settings-field">
+              <label for="camera-far">最遠距離 (m)</label
+              ><input
+                id="camera-far"
+                type="number"
+                min="10"
+                max="500"
+                step="1"
+                required
+              />
+            </div>
+            <div class="settings-field">
+              <label for="camera-pitch">俯視角 (°，向下為正)</label
+              ><input
+                id="camera-pitch"
+                type="number"
+                min="-90"
+                max="90"
+                step="1"
+                required
+              />
+            </div>
+            <div class="settings-field">
+              <label for="camera-yaw">偏航角 (°，向右為正)</label
+              ><input
+                id="camera-yaw"
+                type="number"
+                min="-180"
+                max="180"
+                step="1"
+                required
+              />
+            </div>
+          </div>
+        </section>
+        <section class="settings-group">
           <h3>虛擬感測器</h3>
           <div id="sensor-settings" class="settings-grid"></div>
         </section>
@@ -600,7 +716,7 @@
         <div class="dialog-actions">
           <button type="button" id="settings-default" class="button secondary">
             載入預設值</button
-          ><button type="submit" class="button primary">套用並重設</button>
+          ><button type="submit" class="button primary">套用設定</button>
         </div>
       </form>
     </dialog>

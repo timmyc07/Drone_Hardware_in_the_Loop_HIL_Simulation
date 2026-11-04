@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { lidarPoints } from "./sensors.js";
 import { RUNWAY } from "./sim.js";
+import { createCameraRenderer } from "./camera-renderer.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 export function createScene(container) {
@@ -30,6 +31,19 @@ export function createScene(container) {
   grid.material.transparent = true;
   grid.material.opacity = 0.48;
   scene.add(grid);
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(20000, 20000),
+    new THREE.MeshStandardMaterial({
+      color: 0x1c2d36,
+      roughness: 1,
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1,
+    }),
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.userData.cameraClass = 1;
+  scene.add(ground);
 
   const material = (color, metalness = 0, roughness = 0.5) =>
     new THREE.MeshStandardMaterial({ color, metalness, roughness });
@@ -40,6 +54,7 @@ export function createScene(container) {
   const orange = material(0xffa568, 0.4, 0.35);
   const rotorMaterial = material(0x82969d, 0.6, 0.36);
   const drone = new THREE.Group();
+  drone.userData.cameraExclude = true;
   drone.scale.setScalar(2.2);
   scene.add(drone);
   const box = (parent, size, position, mat) => {
@@ -58,6 +73,7 @@ export function createScene(container) {
     return mesh;
   };
   const runway = new THREE.Group();
+  runway.userData.cameraClass = 2;
   const runwayLength = RUNWAY.endNorth - RUNWAY.startNorth;
   runway.position.z = -(RUNWAY.startNorth + RUNWAY.endNorth) / 2;
   runway.rotation.y = -RUNWAY.headingRad;
@@ -279,6 +295,8 @@ export function createScene(container) {
   const mission = new THREE.Group();
   const gates = new THREE.Group();
   scene.add(environment, obstacles, mission, gates);
+  obstacles.userData.cameraClass = 5;
+  gates.userData.cameraClass = 6;
   const clear = (group) => {
     while (group.children.length) {
       const child = group.children[0];
@@ -312,13 +330,7 @@ export function createScene(container) {
     key.intensity = 0.5 + daylight * 2.3;
     fill.intensity = 0.7 + (1 - daylight) * 0.9;
     if (preset === "field") {
-      const ground = new THREE.Mesh(
-        new THREE.PlaneGeometry(100, 100),
-        material(0x364e43, 0, 1),
-      );
-      ground.rotation.x = -Math.PI / 2;
-      ground.position.y = -0.03;
-      environment.add(ground);
+      ground.material.color.setHex(0x364e43);
       for (let i = 0; i < 20; i++) {
         const tree = new THREE.Mesh(
           new THREE.ConeGeometry(0.7 + (i % 3) * 0.2, 3, 7),
@@ -326,9 +338,11 @@ export function createScene(container) {
         );
         const angle = (i * Math.PI * 2) / 20;
         tree.position.set(Math.cos(angle) * 18, 1.5, Math.sin(angle) * 18);
+        tree.userData.cameraClass = 3;
         environment.add(tree);
       }
     } else if (preset === "warehouse") {
+      ground.material.color.setHex(0x33414b);
       for (let i = -2; i <= 2; i++) {
         for (const x of [-10, 10])
           box(
@@ -345,6 +359,11 @@ export function createScene(container) {
         );
       }
     }
+    if (preset === "lab") ground.material.color.setHex(0x1c2d36);
+    if (preset === "warehouse")
+      environment.traverse((object) => {
+        if (object.isMesh) object.userData.cameraClass = 4;
+      });
     rain = null;
     if (rainAmount > 0) {
       const positions = new Float32Array(
@@ -369,6 +388,7 @@ export function createScene(container) {
           opacity: 0.65,
         }),
       );
+      rain.userData.cameraRgbOnly = true;
       environment.add(rain);
     }
   }
@@ -473,7 +493,9 @@ export function createScene(container) {
   const observer = new ResizeObserver(resize);
   observer.observe(container);
   resize();
+  const cameraRenderer = createCameraRenderer(renderer, scene);
   return {
+    captureCamera: cameraRenderer.captureCamera,
     update(snapshot, wallDt) {
       const nextAirframe = Object.hasOwn(airframes, snapshot.airframe)
         ? snapshot.airframe
@@ -584,6 +606,7 @@ export function createScene(container) {
     setMission,
     setGates,
     dispose() {
+      cameraRenderer.dispose();
       observer.disconnect();
       controls.dispose();
       scene.traverse((object) => {

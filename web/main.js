@@ -5,8 +5,20 @@ import {
   recordingToCsv,
   recordingToJson,
 } from "./recording.js";
-import { readPilotInput } from "./input.js";
+import { readPilotInput, takeoffPlayAction } from "./input.js";
 import { createFlightApi } from "./api.js";
+import {
+  DEFAULT_CAMERA_CONFIG,
+  validateCameraConfig,
+  cameraPreview,
+  cameraFrameBytes,
+  cameraDatasetToJson,
+  parseCameraDataset,
+  CAMERA_DATASET_MAX_FRAMES,
+  CAMERA_DATASET_MAX_BYTES,
+  CAMERA_DATASET_MAX_IMPORT_BYTES,
+  CAMERA_CLASSES,
+} from "./camera.js";
 import { DEFAULT_SENSOR_CONFIG, validateSensorConfig } from "./sensors.js";
 import { TRAINING_COURSES, isCourseSupported } from "./training.js";
 import { CAPABILITIES, SOURCES } from "./capabilities.js";
@@ -14,19 +26,31 @@ import { CAPABILITIES, SOURCES } from "./capabilities.js";
 const $ = (id) => document.getElementById(id);
 const DEG = 180 / Math.PI;
 const storageKey = "flight-lab-config-v1";
-let config = { ...DEFAULT_CONFIG };
+let config = { ...DEFAULT_CONFIG, startOnGround: true };
 let sensorConfig = { ...DEFAULT_SENSOR_CONFIG };
+let cameraConfig = { ...DEFAULT_CAMERA_CONFIG };
 let sensors;
 let replaySensorIndex = 0;
 try {
   const saved = localStorage.getItem(storageKey);
   if (saved) config = validateConfig(JSON.parse(saved));
+} catch {
+  /* Invalid or unavailable storage uses model defaults. */
+}
+try {
   const savedSensors = localStorage.getItem("flight-lab-sensors-v1");
   if (savedSensors)
     sensorConfig = validateSensorConfig(JSON.parse(savedSensors));
 } catch {
-  /* Invalid or unavailable browser storage uses model defaults. */
+  /* Invalid or unavailable storage uses sensor defaults. */
 }
+try {
+  const savedCamera = localStorage.getItem("flight-lab-camera-v1");
+  if (savedCamera) cameraConfig = validateCameraConfig(JSON.parse(savedCamera));
+} catch {
+  /* Invalid or unavailable storage uses camera defaults. */
+}
+
 let scenario = "hover";
 let running = false;
 let latest;
@@ -67,6 +91,16 @@ const apiSubscribers = new Set();
 function requestApi(command) {
   if (replay)
     return Promise.reject(new Error("請先離開重播模式再使用程式介面"));
+  if (command.type === "getCameraConfig")
+    return Promise.resolve({ ...cameraConfig });
+  if (command.type === "setCameraConfig") {
+    try {
+      return Promise.resolve(applyCameraConfig(command.value));
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+  if (command.type === "captureCamera") return captureCameraFrame();
   const id = ++requestId;
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -104,9 +138,19 @@ function toast(message) {
 
 function setPlaying(value) {
   running = value;
+  const takeoffAction = takeoffPlayAction(latest);
+  const playLabel = replay
+    ? "播放重播"
+    : takeoffAction === "resume"
+      ? "繼續起飛"
+      : takeoffAction === "launch"
+        ? "起飛並開始"
+        : latest?.time > 0
+          ? "繼續模擬"
+          : "開始模擬";
   $("play").innerHTML = value
     ? '<span aria-hidden="true">Ⅱ</span> 暫停模擬'
-    : `<span aria-hidden="true">▶</span> ${replay ? "播放重播" : latest?.time > 0 ? "繼續模擬" : "開始模擬"}`;
+    : `<span aria-hidden="true">▶</span> ${playLabel}`;
   $("runtime-status").textContent = replay
     ? "紀錄重播"
     : value
@@ -296,15 +340,19 @@ function populateConfig(values) {
 $("settings-open").onclick = () => {
   populateConfig(config);
   populateSensorConfig(sensorConfig);
+  populateCameraConfig(cameraConfig);
   $("settings-dialog").showModal();
 };
 $("config-airframe").onchange = (event) => {
-  populateConfig(AIRFRAME_PRESETS[event.target.value]);
+  const startOnGround = $("config-start-on-ground").checked;
+  populateConfig({ ...AIRFRAME_PRESETS[event.target.value], startOnGround });
   $("model-preset").value = "";
 };
 $("settings-default").onclick = () => {
-  populateConfig(DEFAULT_CONFIG);
+  const startOnGround = $("config-start-on-ground").checked;
+  populateConfig({ ...DEFAULT_CONFIG, startOnGround });
   populateSensorConfig(DEFAULT_SENSOR_CONFIG);
+  populateCameraConfig(DEFAULT_CAMERA_CONFIG);
 };
 $("settings-form").onsubmit = async (event) => {
   event.preventDefault();
@@ -319,6 +367,16 @@ $("settings-form").onsubmit = async (event) => {
     for (const [key, , , , , factor] of fields)
       next[key] = Number($(`config-${key}`).value) / factor;
     const validated = validateConfig(next);
+    const [width, height] = $("camera-resolution").value.split("x").map(Number);
+    const nextCamera = validateCameraConfig({
+      width,
+      height,
+      horizontalFovDeg: Number($("camera-fov").value),
+      nearM: Number($("camera-near").value),
+      farM: Number($("camera-far").value),
+      pitchDeg: Number($("camera-pitch").value),
+      yawDeg: Number($("camera-yaw").value),
+    });
     const nextSensors = validateSensorConfig(
       Object.fromEntries(
         Object.keys(DEFAULT_SENSOR_CONFIG).map((key) => [
@@ -327,13 +385,24 @@ $("settings-form").onsubmit = async (event) => {
         ]),
       ),
     );
+    const simulationChanged =
+      JSON.stringify(validated) !== JSON.stringify(config) ||
+      JSON.stringify(nextSensors) !== JSON.stringify(sensorConfig);
     if (
+      simulationChanged &&
       dirty() &&
       !(await confirmAction("套用參數會清除尚未匯出的實驗紀錄。確定繼續？"))
     )
       return;
+    if (!simulationChanged) {
+      applyCameraConfig(nextCamera);
+      $("settings-dialog").close();
+      toast("相機設定已套用。");
+      return;
+    }
     config = validated;
     sensorConfig = nextSensors;
+    applyCameraConfig(nextCamera);
     try {
       localStorage.setItem(storageKey, JSON.stringify(config));
       localStorage.setItem(
@@ -357,6 +426,7 @@ document.querySelectorAll("[data-close]").forEach((button) => {
 });
 
 function newExperiment() {
+  clearCameraPreview();
   replay = undefined;
   document.body.classList.remove("replay");
   setReplayControls(false);
@@ -404,6 +474,30 @@ document.querySelectorAll("[data-scenario]").forEach((button) => {
     newExperiment();
   };
 });
+let launchPending = false;
+async function launchFlight() {
+  if (launchPending || replay || storageLimited) return;
+  if (!latest) {
+    toast("模擬器尚未準備完成。");
+    return;
+  }
+  launchPending = true;
+  try {
+    const active = ["runup", "roll", "rotate", "climb"].includes(
+      latest.runway.takeoffPhase,
+    );
+    if (!active) await requestApi({ type: "takeoff" });
+    document.querySelector('[data-workspace="flight"]').click();
+    if (!rendering) $("render-toggle").click();
+    document.querySelector('[data-camera="follow"]').click();
+    $("viewport").scrollIntoView({ behavior: "smooth", block: "center" });
+    if (!running) await requestApi({ type: "play" });
+  } catch (error) {
+    toast(`無法起飛：${error.message}`);
+  } finally {
+    launchPending = false;
+  }
+}
 $("play").onclick = () => {
   if (storageLimited && !replay) {
     toast("紀錄已達資料上限，請匯出後重設。");
@@ -420,7 +514,9 @@ $("play").onclick = () => {
       resetReplaySensors(replayClock);
     }
     setPlaying(!running);
-  } else worker.postMessage({ type: running ? "pause" : "play" });
+  } else if (running) worker.postMessage({ type: "pause" });
+  else if (takeoffPlayAction(latest) !== "play") launchFlight();
+  else worker.postMessage({ type: "play" });
 };
 $("speed").onchange = (event) =>
   worker.postMessage({ type: "speed", value: Number(event.target.value) });
@@ -496,6 +592,7 @@ $("import-file").onchange = async (event) => {
     )
       return;
     worker.postMessage({ type: "pause" });
+    clearCameraPreview();
     replay = record;
     config = { ...record.config };
     scenario = record.scenario;
@@ -578,6 +675,7 @@ worker.onmessage = ({ data }) => {
   timing = data.timing;
   sampleCount = data.sampleCount;
   if (data.message === "reset") {
+    clearCameraPreview();
     config = data.config;
     scenario = data.scenario;
     $("position-altitude").value =
@@ -897,13 +995,17 @@ function animate(now) {
     }
   }
   updatePilot(now);
+  updateCameraLive(now);
   if (latest && rendering)
     scene?.update(latest, running ? elapsed * Number($("speed").value) : 0);
   requestAnimationFrame(animate);
 }
 requestAnimationFrame(animate);
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) releasePilot();
+  if (document.hidden) {
+    releasePilot();
+    $("camera-live").checked = false;
+  }
   if (document.hidden && running) {
     if (replay) setPlaying(false);
     else worker.postMessage({ type: "pause" });
@@ -1112,7 +1214,9 @@ document
   .forEach(
     (button) =>
       (button.onclick = () =>
-        worker.postMessage({ type: button.dataset.command })),
+        button.dataset.command === "takeoff"
+          ? launchFlight()
+          : worker.postMessage({ type: button.dataset.command })),
   );
 document.querySelectorAll("[data-mode]").forEach(
   (button) =>
@@ -1345,7 +1449,7 @@ function updatePilot(now) {
 function setReplayControls(disabled) {
   document
     .querySelectorAll(
-      "#mission-workspace button:not(#mission-export), #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #sensor-export-csv, #flight-mode, [data-command], [data-mode], #position-apply, #fault-apply, #fault-link, #fault-clear, #abort-takeoff, #fault-pusher, #transition-hover, #transition-cruise, #pilot-enable",
+      "#mission-workspace button:not(#mission-export), #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #sensor-export-csv, #camera-capture, #camera-add, #camera-live, #flight-mode, [data-command], [data-mode], #position-apply, #fault-apply, #fault-link, #fault-clear, #abort-takeoff, #fault-pusher, #transition-hover, #transition-cruise, #pilot-enable",
     )
     .forEach((element) => {
       element.disabled = disabled;
@@ -1423,9 +1527,7 @@ const sensorLabels = {
   lidarNoiseM: "LiDAR 雜訊 (m)",
   opticalFlowNoiseRadS: "光流雜訊 (rad/s)",
 };
-const sensorActions = document.querySelector(
-  "#sensors-workspace .feature-actions",
-);
+const sensorActions = $("sensor-fault-on").parentElement;
 for (const [kind, label] of [
   ["json", "匯出目前感測狀態 JSON"],
   ["csv", "匯出目前 LiDAR 點雲 CSV"],
@@ -1590,3 +1692,262 @@ function advanceReplaySensors(time) {
   }
   if (changed) renderSensors();
 }
+
+const cameraLegend = $("camera-legend");
+cameraLegend.replaceChildren(document.createTextNode("分類圖例： "));
+for (const item of CAMERA_CLASSES) {
+  const label = document.createElement("span");
+  const swatch = document.createElement("span");
+  swatch.className = "camera-swatch";
+  swatch.style.backgroundColor = `rgb(${item.color.join(",")})`;
+  label.append(swatch, ` ${item.label} `);
+  cameraLegend.append(label);
+}
+let cameraFrame;
+let cameraBusy = false;
+let cameraEpoch = 0;
+let cameraLastLive = 0;
+let cameraDataset = [];
+let cameraDatasetBytes = 0;
+let cameraDatasetDirty = false;
+function populateCameraConfig(value) {
+  const resolution = $("camera-resolution"),
+    size = `${value.width}x${value.height}`;
+  resolution.querySelector("option[data-custom]")?.remove();
+  if (![...resolution.options].some((option) => option.value === size)) {
+    const option = new Option(`${value.width} × ${value.height}（自訂）`, size);
+    option.dataset.custom = "true";
+    resolution.add(option);
+  }
+  resolution.value = size;
+  for (const [id, key] of [
+    ["camera-fov", "horizontalFovDeg"],
+    ["camera-near", "nearM"],
+    ["camera-far", "farM"],
+    ["camera-pitch", "pitchDeg"],
+    ["camera-yaw", "yawDeg"],
+  ])
+    $(id).value = value[key];
+}
+function applyCameraConfig(value) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    ![Object.prototype, null].includes(Object.getPrototypeOf(value))
+  )
+    throw new Error("相機設定必須是物件。");
+  cameraConfig = validateCameraConfig({ ...cameraConfig, ...value });
+  try {
+    localStorage.setItem("flight-lab-camera-v1", JSON.stringify(cameraConfig));
+  } catch {
+    toast("此瀏覽器無法儲存相機設定。");
+  }
+  populateCameraConfig(cameraConfig);
+  updateCameraStatus();
+  return { ...cameraConfig };
+}
+function clearCameraPreview() {
+  cameraEpoch++;
+  $("camera-live").checked = false;
+  cameraFrame = undefined;
+  $("camera-metadata").textContent = "";
+  for (const id of ["camera-rgb", "camera-depth", "camera-segmentation"]) {
+    const canvas = $(id);
+    canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+  }
+  updateCameraStatus();
+}
+function updateCameraStatus() {
+  const full =
+    cameraDataset.length >= CAMERA_DATASET_MAX_FRAMES ||
+    cameraDatasetBytes + cameraConfig.width * cameraConfig.height * 9 >
+      CAMERA_DATASET_MAX_BYTES;
+  $("camera-status").textContent =
+    `${cameraFrame ? "已顯示影像" : "尚未拍攝"} · 資料集 ${cameraDataset.length}/${CAMERA_DATASET_MAX_FRAMES} 張 · ${(cameraDatasetBytes / 1048576).toFixed(2)}/${(CAMERA_DATASET_MAX_BYTES / 1048576).toFixed(0)} MiB${cameraDatasetDirty ? " · 尚未匯出" : ""}${full ? " · 容量不足，請匯出並清除" : ""}`;
+  $("camera-png").disabled = !cameraFrame;
+  $("camera-export").disabled = !cameraDataset.length;
+  $("camera-clear").disabled = !cameraDataset.length || cameraBusy;
+  $("camera-import").disabled = cameraBusy;
+  $("camera-add").disabled =
+    !!replay ||
+    cameraBusy ||
+    cameraDataset.length >= CAMERA_DATASET_MAX_FRAMES ||
+    cameraDatasetBytes + cameraConfig.width * cameraConfig.height * 9 >
+      CAMERA_DATASET_MAX_BYTES;
+  $("camera-capture").disabled = !!replay || cameraBusy;
+  $("camera-live").disabled = !!replay;
+}
+function showCameraFrame(frame) {
+  cameraFrame = frame;
+  for (const type of ["rgb", "depth", "segmentation"]) {
+    const canvas = $(`camera-${type}`);
+    canvas.width = frame.width;
+    canvas.height = frame.height;
+    canvas
+      .getContext("2d")
+      .putImageData(
+        new ImageData(cameraPreview(frame, type), frame.width, frame.height),
+        0,
+        0,
+      );
+  }
+  const pose = frame.pose,
+    intrinsics = frame.intrinsics;
+  $("camera-metadata").textContent =
+    `影格機型 ${{ quadrotor: "四旋翼", fixedwing: "固定翼", vtol: "VTOL" }[frame.airframe]} · 模擬時間 ${frame.time.toFixed(3)} s · NED 位置 ${pose.positionNed.map((v) => v.toFixed(2)).join(" / ")} m · 機體四元數 ${pose.bodyQuaternionWxyz.map((v) => v.toFixed(3)).join(" / ")} · 焦距 fx/fy ${intrinsics.fx.toFixed(1)} / ${intrinsics.fy.toFixed(1)} px · 主點 cx/cy ${intrinsics.cx.toFixed(1)} / ${intrinsics.cy.toFixed(1)} px · 水平視角 ${intrinsics.horizontalFovDeg.toFixed(1)}° · 景深範圍 ${frame.nearM.toFixed(2)}–${frame.farM.toFixed(1)} m`;
+  updateCameraStatus();
+}
+async function captureCameraFrame() {
+  if (replay) throw new Error("重播時無法拍攝新影像。");
+  if (!scene || !latest) throw new Error("相機尚未準備完成。");
+  if (cameraBusy) throw new Error("相機正在拍攝，請稍候。");
+  cameraBusy = true;
+  const epoch = cameraEpoch;
+  updateCameraStatus();
+  try {
+    const frame = await scene.captureCamera(structuredClone(latest), {
+      ...cameraConfig,
+    });
+    if (epoch !== cameraEpoch || replay)
+      throw new Error("實驗已切換，本次影像已取消。");
+    showCameraFrame(frame);
+    return frame;
+  } finally {
+    cameraBusy = false;
+    updateCameraStatus();
+  }
+}
+function refreshCameraSelector() {
+  const select = $("camera-frame-select");
+  select.replaceChildren(new Option("選擇畫面", ""));
+  cameraDataset.forEach((frame, i) =>
+    select.add(
+      new Option(
+        `影像 ${i + 1} · ${Number(frame.time).toFixed(2)} s`,
+        String(i),
+      ),
+    ),
+  );
+  updateCameraStatus();
+}
+$("camera-capture").onclick = async () => {
+  try {
+    await captureCameraFrame();
+  } catch (error) {
+    toast(`拍攝失敗：${error.message}`);
+  }
+};
+$("camera-add").onclick = async () => {
+  if (
+    cameraDataset.length >= CAMERA_DATASET_MAX_FRAMES ||
+    cameraDatasetBytes + cameraConfig.width * cameraConfig.height * 9 >
+      CAMERA_DATASET_MAX_BYTES
+  )
+    return toast("資料集已達容量上限，請先匯出並清除。");
+  try {
+    const frame = await captureCameraFrame();
+    const bytes = cameraFrameBytes(frame);
+    if (cameraDatasetBytes + bytes > CAMERA_DATASET_MAX_BYTES)
+      return toast("資料集已達容量上限，請先匯出並清除。");
+    cameraDataset.push(frame);
+    cameraDatasetBytes += bytes;
+    cameraDatasetDirty = true;
+    refreshCameraSelector();
+    $("camera-frame-select").value = String(cameraDataset.length - 1);
+  } catch (error) {
+    toast(`拍攝失敗：${error.message}`);
+  }
+};
+$("camera-frame-select").onchange = (event) => {
+  if (event.target.value !== "")
+    showCameraFrame(cameraDataset[Number(event.target.value)]);
+};
+$("camera-png").onclick = () =>
+  $("camera-rgb").toBlob((blob) => {
+    if (!blob) return toast("無法匯出影像。");
+    const url = URL.createObjectURL(blob),
+      link = document.createElement("a");
+    link.href = url;
+    link.download = "flight-camera-rgb.png";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, "image/png");
+$("camera-export").onclick = () => {
+  try {
+    download(
+      cameraDatasetToJson(cameraDataset),
+      "json",
+      "application/json",
+      "flight-camera-dataset.json",
+    );
+    cameraDatasetDirty = false;
+    updateCameraStatus();
+  } catch (error) {
+    toast(`資料集匯出失敗：${error.message}`);
+  }
+};
+$("camera-clear").onclick = async () => {
+  if (
+    cameraDatasetDirty &&
+    !(await confirmAction("清除會移除尚未匯出的相機資料集。確定清除？"))
+  )
+    return;
+  cameraDataset = [];
+  cameraDatasetBytes = 0;
+  cameraDatasetDirty = false;
+  refreshCameraSelector();
+};
+$("camera-import").onclick = () => {
+  cameraEpoch++;
+  $("camera-live").checked = false;
+  $("camera-import-file").click();
+};
+$("camera-import-file").onchange = async (event) => {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+  cameraEpoch++;
+  $("camera-live").checked = false;
+  if (file.size > CAMERA_DATASET_MAX_IMPORT_BYTES)
+    return toast("相機資料集超過 40 MiB 匯入上限。");
+  try {
+    const frames = parseCameraDataset(await file.text());
+    if (
+      cameraDatasetDirty &&
+      !(await confirmAction("匯入將取代尚未匯出的相機資料集。確定繼續？"))
+    )
+      return;
+    cameraDataset = frames;
+    cameraDatasetBytes = frames.reduce(
+      (sum, frame) => sum + cameraFrameBytes(frame),
+      0,
+    );
+    cameraDatasetDirty = false;
+    refreshCameraSelector();
+    if (frames.length) {
+      $("camera-frame-select").value = "0";
+      showCameraFrame(frames[0]);
+    } else clearCameraPreview();
+    toast("相機資料集已匯入。");
+  } catch (error) {
+    toast(`相機資料集無法讀取：${error.message}`);
+  }
+};
+function updateCameraLive(now) {
+  if (
+    !$("camera-live").checked ||
+    $("sensors-workspace").hidden ||
+    document.hidden ||
+    replay ||
+    cameraBusy ||
+    now - cameraLastLive < 500
+  )
+    return;
+  cameraLastLive = now;
+  captureCameraFrame().catch((error) => {
+    $("camera-live").checked = false;
+    toast(`相機預覽已停止：${error.message}`);
+  });
+}
+updateCameraStatus();

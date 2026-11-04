@@ -6,9 +6,12 @@ export function createFlightApi(request, onState) {
     structuredClone(await request(structuredClone(command)));
   const withValue = (type) => (value) => send({ type, value });
   return Object.freeze({
-    version: "1.2",
+    version: "1.3",
     getState: () => send({ type: "inspect" }),
     getSensors: () => send({ type: "inspectSensors" }),
+    getCameraConfig: () => send({ type: "getCameraConfig" }),
+    setCameraConfig: withValue("setCameraConfig"),
+    captureCamera: () => send({ type: "captureCamera" }),
     setTargets: withValue("targets"),
     setMode: withValue("mode"),
     takeoff: () => send({ type: "takeoff" }),
