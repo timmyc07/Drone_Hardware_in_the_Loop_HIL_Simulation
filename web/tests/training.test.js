@@ -265,3 +265,187 @@ test("custom gates preserve ordered continuous segment intersections and immutab
   assert.throws(() => createTrainer("custom"));
   assert.throws(() => createTrainer("custom", "quadrotor", Array(1)));
 });
+
+test("tutorial completes all seven real physical stages on quad, hexa, octo and hovering VTOL", async () => {
+  const { TUTORIAL_STEPS, TRAINING_COURSES } = await import("../training.js");
+  assert.deepEqual(Object.keys(TRAINING_COURSES), [
+    "free",
+    "hover",
+    "gates",
+    "landing",
+    "runway",
+    "circuit",
+    "custom",
+    "tutorial",
+  ]);
+  assert.deepEqual(
+    TUTORIAL_STEPS.map((step) => step.holdSeconds),
+    [2, 1, 1, 5, 3, 3, 2],
+  );
+  assert.equal(
+    TUTORIAL_STEPS.reduce((sum, step) => sum + step.holdSeconds, 0),
+    17,
+  );
+  assert.ok(Object.isFrozen(TUTORIAL_STEPS[0]));
+  for (const airframe of ["quadrotor", "hexarotor", "octorotor", "vtol"]) {
+    const sim = createSimulation({
+        airframe,
+        startOnGround: true,
+        geofenceRadius: 10,
+        geofenceHeight: 3,
+      }),
+      trainer = createTrainer("tutorial", airframe);
+    let result = trainer.update(sim.snapshot()),
+      handled = -1;
+    const transitions = [];
+    assert.equal(result.passed, 0);
+    assert.equal(result.total, 7);
+    assert.equal(result.nextGate, null);
+    for (let i = 0; i < 30000 && !result.complete; i++) {
+      if (result.passed !== handled) {
+        handled = result.passed;
+        transitions.push(handled);
+        if (handled === 1) sim.arm();
+        if (handled === 2) sim.takeoff();
+        if (handled === 4)
+          sim.setPositionTarget({ north: 8, east: 0, altitude: 2 });
+        if (handled === 5)
+          sim.setPositionTarget({ north: 0, east: 0, altitude: 2 });
+        if (handled === 6) sim.setMode("land");
+      }
+      const before = result.passed;
+      result = trainer.update(sim.step());
+      assert.ok(result.passed - before <= 1);
+      assert.equal(result.reason, "", `${airframe} failed stage${before}`);
+    }
+    assert.equal(result.complete, true, `${airframe} did not finish`);
+    assert.equal(result.passed, 7);
+    assert.equal(result.holdSeconds, 0);
+    assert.equal(result.score, 1000);
+    assert.ok(result.elapsed >= 17);
+    assert.deepEqual(transitions, [0, 1, 2, 3, 4, 5, 6]);
+    assert.equal(sim.snapshot().armed, false);
+    assert.equal(sim.snapshot().status, "landed");
+    const terminal = structuredClone(result);
+    assert.deepEqual(trainer.update(sim.step()), terminal);
+  }
+});
+
+test("tutorial rejects bad starts and freezes failed progress after premature commands, faults or a VTOL transition", () => {
+  assert.throws(() => createTrainer("tutorial", "fixedwing"), /unsupported/);
+  const airborne = createSimulation();
+  assert.throws(
+    () => createTrainer("tutorial").update(airborne.snapshot()),
+    /ground start/,
+  );
+  const external = createSimulation(
+    { startOnGround: true },
+    { controlSource: "external" },
+  );
+  assert.throws(
+    () => createTrainer("tutorial").update(external.snapshot()),
+    /internal/,
+  );
+  const sim = createSimulation({ startOnGround: true }),
+    trainer = createTrainer("tutorial");
+  trainer.update(sim.snapshot());
+  sim.arm();
+  const failed = trainer.update(sim.step());
+  assert.equal(failed.reason, "procedure-order");
+  assert.equal(failed.score, 0);
+  assert.equal(failed.holdSeconds, 0);
+  sim.disarm();
+  assert.deepEqual(trainer.update(sim.step()), failed);
+  const scenarios = [
+    ["unsafe", (s) => s.injectFault("motor", { index: 0, efficiency: 0.5 })],
+    ["unsafe", (s) => s.injectFault("link", { lost: true })],
+    ["crashed", null],
+    ["failsafe", null],
+  ];
+  for (const [expected, action] of scenarios) {
+    const s = createSimulation({ startOnGround: true }),
+      t = createTrainer("tutorial");
+    t.update(s.snapshot());
+    if (action) {
+      action(s);
+      assert.equal(t.update(s.step()).reason, expected);
+    } else {
+      const value = s.snapshot();
+      value.time = 0.005;
+      value.status = expected;
+      assert.equal(t.update(value).reason, expected);
+    }
+  }
+  const v = createSimulation({ airframe: "vtol", startOnGround: true }),
+    t = createTrainer("tutorial", "vtol");
+  t.update(v.snapshot());
+  const sample = v.snapshot();
+  sample.time = 0.005;
+  sample.flight.transitionProgress = 0.0001;
+  assert.equal(t.update(sample).reason, "unsafe");
+});
+
+test("tutorial dwell cannot be earned while paused or through sample gaps, and an airborne jump cannot skip armed procedure", () => {
+  const sim = createSimulation({ startOnGround: true }),
+    trainer = createTrainer("tutorial");
+  let snapshot = sim.snapshot(),
+    result = trainer.update(snapshot);
+  for (let i = 0; i < 100; i++) result = trainer.update(snapshot);
+  assert.equal(result.holdSeconds, 0);
+  assert.equal(result.passed, 0);
+  result.passed = 7;
+  assert.equal(trainer.update(snapshot).passed, 0);
+  snapshot = { ...snapshot, time: 10 };
+  result = trainer.update(snapshot);
+  assert.equal(result.passed, 0);
+  assert.equal(result.holdSeconds, 0);
+  for (let i = 1; i <= 400; i++) {
+    snapshot = { ...snapshot, time: 10 + i * 0.005 };
+    result = trainer.update(snapshot);
+  }
+  assert.equal(result.passed, 1);
+  assert.equal(result.holdSeconds, 0);
+  const jump = {
+    ...snapshot,
+    time: snapshot.time + 0.005,
+    armed: true,
+    status: "flying",
+    position: [0, 0, -2],
+    ground: { heightM: 0, clearanceM: 2, normalNed: [0, 0, -1] },
+  };
+  result = trainer.update(jump);
+  assert.equal(result.passed, 1);
+  assert.equal(result.reason, "procedure-order");
+  assert.equal(result.score, 0);
+  const landingSim = createSimulation({ startOnGround: true }),
+    landingTrainer = createTrainer("tutorial");
+  let progress = landingTrainer.update(landingSim.snapshot()),
+    handled = -1;
+  for (let i = 0; i < 30000 && progress.passed < 6; i++) {
+    if (handled !== progress.passed) {
+      handled = progress.passed;
+      if (handled === 1) landingSim.arm();
+      if (handled === 2) landingSim.takeoff();
+      if (handled === 4)
+        landingSim.setPositionTarget({ north: 8, east: 0, altitude: 2 });
+      if (handled === 5)
+        landingSim.setPositionTarget({ north: 0, east: 0, altitude: 2 });
+    }
+    progress = landingTrainer.update(landingSim.step());
+  }
+  assert.equal(progress.passed, 6);
+  const jumped = landingSim.snapshot();
+  jumped.position = [0, 0, 0];
+  jumped.velocity = [0, 0, 0];
+  jumped.ground = { heightM: 0, clearanceM: 0, normalNed: [0, 0, -1] };
+  jumped.armed = false;
+  jumped.status = "landed";
+  jumped.navigation.mode = "land";
+  for (let i = 0; i < 500; i++) {
+    jumped.time += 0.005;
+    progress = landingTrainer.update(jumped);
+  }
+  assert.equal(progress.passed, 6);
+  assert.equal(progress.complete, false);
+  assert.equal(progress.holdSeconds, 0);
+});

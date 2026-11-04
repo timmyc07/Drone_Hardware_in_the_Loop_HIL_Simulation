@@ -1,6 +1,10 @@
 import { createSimulation, validateConfig, bodyToNedAngles } from "./sim.js";
 import { DEFAULT_SENSOR_CONFIG, validateSensorConfig } from "./sensors.js";
-import { TRAINING_COURSES, resolveTrainingGates } from "./training.js";
+import {
+  TRAINING_COURSES,
+  TUTORIAL_STEPS,
+  resolveTrainingGates,
+} from "./training.js";
 import { DEFAULT_SCENE, validateScene } from "./scene-data.js";
 import { AIRFRAMES, rotorCount } from "./rotor-geometry.js";
 import { createTerrain } from "./terrain.js";
@@ -31,7 +35,7 @@ const ABORT_REASONS = [
   "insufficient-airspeed",
   "safety",
 ];
-const COURSES = [...Object.keys(TRAINING_COURSES), "custom"];
+const COURSES = Object.keys(TRAINING_COURSES);
 const GIMBAL_AXES = ["yaw", "pitch", "roll"];
 export const DEFAULT_SETUP = Object.freeze({
   sensors: DEFAULT_SENSOR_CONFIG,
@@ -85,7 +89,10 @@ export function validateSetup(value, config = {}) {
   const gimbal = validateGimbalSettings(merged.gimbal);
   const validatedConfig = validateConfig(object(config));
   const scene = validateScene(merged.scene, validatedConfig.airframe);
-  const sim = createSimulation(validatedConfig, { gimbal, terrain: scene.terrain });
+  const sim = createSimulation(validatedConfig, {
+    gimbal,
+    terrain: scene.terrain,
+  });
   if (!Array.isArray(merged.mission))
     throw new Error("Mission must be an array");
   const mission = Array.from(merged.mission, (point) => ({ ...object(point) }));
@@ -125,7 +132,7 @@ function training(value, airframe, scene) {
   object(value);
   const course = choice(value.course, COURSES),
     gates = resolveTrainingGates(scene, airframe),
-    total = gates.length;
+    total = course === "tutorial" ? TUTORIAL_STEPS.length : gates.length;
   if (course !== scene.training)
     throw new Error("Training course does not match active scene");
   if (count(value.total, 50) !== total)
@@ -133,7 +140,30 @@ function training(value, airframe, scene) {
   const passed = count(value.passed, total);
   if (gates.length && boolean(value.complete) !== (passed === total))
     throw new Error("Training completion disagrees with gate progress");
-  if (!gates.length) {
+  if (course === "tutorial") {
+    const reason = choice(value.reason, [
+      "",
+      "crashed",
+      "procedure-order",
+      "failsafe",
+      "unsafe",
+    ]);
+    const minimumElapsed = TUTORIAL_STEPS.slice(0, passed).reduce(
+      (sum, step) => sum + step.holdSeconds,
+      0,
+    );
+    if (
+      boolean(value.complete) !== (passed === total) ||
+      (value.complete && reason) ||
+      value.misses !== 0 ||
+      value.score !== (reason ? 0 : Math.round((1000 * passed) / total)) ||
+      number(value.elapsed, 0) + 1e-8 < minimumElapsed ||
+      number(value.holdSeconds, 0) >
+        (TUTORIAL_STEPS[passed]?.holdSeconds ?? 0) ||
+      ((reason || value.complete) && value.holdSeconds !== 0)
+    )
+      throw new Error("Invalid tutorial progress");
+  } else if (!gates.length) {
     const hold = number(value.holdSeconds, 0),
       complete = boolean(value.complete);
     if (
@@ -168,7 +198,12 @@ function training(value, airframe, scene) {
     score: number(value.score, 0, 1000),
     nextGate,
     holdSeconds: number(value.holdSeconds, 0),
-    reason: choice(value.reason, ["", "crashed", "takeoff-aborted"]),
+    reason: choice(
+      value.reason,
+      course === "tutorial"
+        ? ["", "crashed", "procedure-order", "failsafe", "unsafe"]
+        : ["", "crashed", "takeoff-aborted"],
+    ),
   };
 }
 function sample(
@@ -264,26 +299,51 @@ function sample(
     }) !== JSON.stringify(gimbalSettings)
   )
     throw new Error("Gimbal settings do not match command history");
-  const position = vector(value.position, 3), surface = terrain.sample(position[0], position[1]);
-  const ground = { heightM: surface.heightM, clearanceM: number(-position[2] - surface.heightM, -1e-6), normalNed: surface.normalNed.map((v) => v === 0 ? 0 : v) };
+  const position = vector(value.position, 3),
+    surface = terrain.sample(position[0], position[1]);
+  const ground = {
+    heightM: surface.heightM,
+    clearanceM: number(-position[2] - surface.heightM, -1e-6),
+    normalNed: surface.normalNed.map((v) => (v === 0 ? 0 : v)),
+  };
   if (Object.hasOwn(value, "ground")) {
     const supplied = object(value.ground);
-    if (Object.keys(supplied).sort().join(",") !== "clearanceM,heightM,normalNed" ||
-        Math.abs(number(supplied.heightM) - ground.heightM) > 1e-8 ||
-        Math.abs(number(supplied.clearanceM) - ground.clearanceM) > 1e-8 ||
-        vector(supplied.normalNed, 3).some((v, i) => Math.abs(v - ground.normalNed[i]) > 1e-8))
+    if (
+      Object.keys(supplied).sort().join(",") !==
+        "clearanceM,heightM,normalNed" ||
+      Math.abs(number(supplied.heightM) - ground.heightM) > 1e-8 ||
+      Math.abs(number(supplied.clearanceM) - ground.clearanceM) > 1e-8 ||
+      vector(supplied.normalNed, 3).some(
+        (v, i) => Math.abs(v - ground.normalNed[i]) > 1e-8,
+      )
+    )
       throw new Error("Ground pose does not match terrain history");
   }
-  let reference = nav.altitudeReference, positionHeight = nav.positionAltitude;
+  let reference = nav.altitudeReference,
+    positionHeight = nav.positionAltitude;
   if (Object.hasOwn(nav, "altitude")) {
-    if (!Array.isArray(nav.altitude) || nav.altitude.length !== 2 || Object.hasOwn(nav, "altitudeReference") || Object.hasOwn(nav, "positionAltitude"))
+    if (
+      !Array.isArray(nav.altitude) ||
+      nav.altitude.length !== 2 ||
+      Object.hasOwn(nav, "altitudeReference") ||
+      Object.hasOwn(nav, "positionAltitude")
+    )
       throw new Error("Invalid compact navigation altitude");
     reference = ["datum", "agl"][count(nav.altitude[0], 1)];
     positionHeight = nav.altitude[1];
   }
-  const altitudeReference = choice(reference, ["datum", "agl"]), positionAltitude = number(positionHeight, -50);
-  if (altitudeReference === "agl" && (mode !== "position" || positionAltitude < 0 || positionAltitude > 500 || airframe === "fixedwing" ||
-      (airframe === "vtol" && (value.flight?.transition !== "hover" || value.flight?.transitionProgress !== 0))))
+  const altitudeReference = choice(reference, ["datum", "agl"]),
+    positionAltitude = number(positionHeight, -50);
+  if (
+    altitudeReference === "agl" &&
+    (mode !== "position" ||
+      positionAltitude < 0 ||
+      positionAltitude > 500 ||
+      airframe === "fixedwing" ||
+      (airframe === "vtol" &&
+        (value.flight?.transition !== "hover" ||
+          value.flight?.transitionProgress !== 0)))
+  )
     throw new Error("Invalid terrain-following state");
   return {
     airframe,
@@ -485,7 +545,8 @@ function event(input, sim) {
   return result;
 }
 export function compactSnapshot(snapshot) {
-  const { waypoints, altitudeReference, positionAltitude, ...navigation } = object(snapshot.navigation);
+  const { waypoints, altitudeReference, positionAltitude, ...navigation } =
+    object(snapshot.navigation);
   const { airframe, attitude, ground, gimbal, ...state } = snapshot;
   const mask = (flags) =>
     GIMBAL_AXES.reduce((bits, axis, i) => bits | (Number(flags[axis]) << i), 0);
@@ -676,7 +737,10 @@ export function validateRecording(value) {
     value.sensorFrames.length !== value.samples.length
   )
     throw new Error("Sensor frames must match sample count");
-  const sim = createSimulation(config, { gimbal: setup.gimbal, terrain: setup.scene.terrain });
+  const sim = createSimulation(config, {
+    gimbal: setup.gimbal,
+    terrain: setup.scene.terrain,
+  });
   let lastEvent = -1;
   const events = Array.from(value.events, (input) => {
     const result = event(input, sim);
@@ -686,6 +750,8 @@ export function validateRecording(value) {
   });
   let lastTime = -1,
     eventIndex = 0,
+    trainingEpochTime = 0,
+    previousTutorial,
     activeScene = setup.scene,
     activeTerrain = createTerrain(setup.scene.terrain),
     gimbalSettings = setup.gimbal,
@@ -701,7 +767,12 @@ export function validateRecording(value) {
       events[eventIndex].time <= time + 1e-8
     ) {
       if (events[eventIndex].type === "scene") {
-        activeScene = events[eventIndex].value;
+        const nextScene = events[eventIndex].value;
+        if (activeScene.training !== nextScene.training) {
+          trainingEpochTime = events[eventIndex].time;
+          previousTutorial = undefined;
+        }
+        activeScene = nextScene;
         activeTerrain = createTerrain(activeScene.terrain);
       }
       if (events[eventIndex].type === "gimbal")
@@ -722,6 +793,28 @@ export function validateRecording(value) {
       gimbalSettings,
       activeTerrain,
     );
+    if (result.training.course === "tutorial") {
+      const progress = result.training;
+      if (
+        !previousTutorial
+          ? progress.passed !== 0 ||
+            progress.reason !== "" ||
+            progress.elapsed > 0.051
+          : time - lastTime > 0.051 ||
+            progress.passed < previousTutorial.passed ||
+            progress.passed > previousTutorial.passed + 1 ||
+            ((previousTutorial.complete || previousTutorial.reason) &&
+              JSON.stringify(progress) !== JSON.stringify(previousTutorial))
+      )
+        throw new Error("Invalid tutorial history");
+      if (
+        !progress.complete &&
+        !progress.reason &&
+        Math.abs(progress.elapsed - (time - trainingEpochTime)) > 1e-7
+      )
+        throw new Error("Tutorial time does not match its course epoch");
+      previousTutorial = progress;
+    }
     lastTime = time;
     return result;
   });

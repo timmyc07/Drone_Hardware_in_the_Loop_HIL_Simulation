@@ -1519,3 +1519,13 @@ select:disabled {
   font: inherit;
   line-height: 1.5;
 }
+.tutorial-panel {
+  padding: 14px 18px;
+  border-top: 1px solid #35566b;
+  background: #142a38;
+  color: #dce9ed;
+}
+.tutorial-panel p {
+  margin: 6px 0;
+  line-height: 1.45;
+}

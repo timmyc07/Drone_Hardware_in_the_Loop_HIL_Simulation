@@ -21,6 +21,7 @@ export function readPilotInput(keys, gamepad) {
 export function takeoffPlayAction(snapshot) {
   if (!snapshot || ["crashed", "failsafe"].includes(snapshot.status))
     return "play";
+  if (snapshot.training?.course === "tutorial") return "play";
   if (
     ["runup", "roll", "rotate", "climb"].includes(snapshot.runway.takeoffPhase)
   )

@@ -34,6 +34,14 @@ test("ground launch and unfinished takeoff select the correct play action", () =
     navigation: { mode: "attitude" },
   };
   assert.equal(takeoffPlayAction(grounded), "launch");
+  for (const passed of [0, 1, 2, 7])
+    assert.equal(
+      takeoffPlayAction({
+        ...grounded,
+        training: { course: "tutorial", passed },
+      }),
+      "play",
+    );
   assert.equal(
     takeoffPlayAction({
       ...grounded,

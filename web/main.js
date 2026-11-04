@@ -33,6 +33,7 @@ import {
 import { DEFAULT_SENSOR_CONFIG, validateSensorConfig } from "./sensors.js";
 import {
   TRAINING_COURSES,
+  TUTORIAL_STEPS,
   isCourseSupported,
   resolveTrainingGates,
 } from "./training.js";
@@ -1063,6 +1064,7 @@ function updateTelemetry() {
     ? `故障：${s.faults.linkLost ? "連線中斷" : "連線正常"} · 馬達效率 ${s.faults.motorEfficiency.map((v) => `${Math.round(v * 100)}%`).join(" / ")}${wing ? ` · 巡航推進效率 ${Math.round(s.faults.pusherEfficiency * 100)}%` : ""}`
     : "故障：—";
   const training = s.training;
+  renderTutorial();
   $("training-runway-hint").hidden = $("training-select").value !== "runway";
   $("training-status").textContent =
     training && !isCourseSupported(training.course, kind)
@@ -1575,10 +1577,159 @@ for (const id of [
         rain: Number($("environment-rain").value),
       };
     });
-$("training-select").onchange = () =>
-  applySceneSetting((value) => {
-    value.training = $("training-select").value;
-  });
+$("training-select").onchange = () => {
+  renderTutorial();
+  if ($("training-select").value !== "tutorial")
+    applySceneSetting((value) => {
+      value.training = $("training-select").value;
+    });
+};
+let tutorialBusy = false;
+const tutorialFailures = {
+  "procedure-order": "步驟順序不符",
+  failsafe: "保護模式",
+  unsafe: "飛行狀態不安全",
+  crashed: "碰撞停機",
+};
+function renderTutorial() {
+  const t = latest?.training;
+  const isTutorial =
+    t?.course === "tutorial" &&
+    (!externalActive || latest.controlSource === "external");
+  const readonly = !!replay || externalActive;
+  $("tutorial-start-controls").hidden =
+    $("training-select").value !== "tutorial";
+  $("tutorial-start").disabled =
+    readonly || tutorialBusy || config.airframe === "fixedwing";
+  $("tutorial-panel").hidden = !isTutorial;
+  if (!isTutorial) return;
+  const step = TUTORIAL_STEPS[t.passed];
+  const failure = tutorialFailures[t.reason];
+  $("tutorial-title").textContent = failure
+    ? "教學已停止"
+    : t.complete
+      ? "基礎飛行教學已完成"
+      : step.title;
+  $("tutorial-instruction").textContent = failure
+    ? failure + "；請重新開始教學。"
+    : t.complete
+      ? "已完成所有步驟。"
+      : step.instruction;
+  $("tutorial-progress").textContent =
+    "已完成 " +
+    t.passed +
+    "/" +
+    t.total +
+    " 步" +
+    (step && !failure
+      ? " · 保持 " +
+        Math.min(t.holdSeconds, step.holdSeconds).toFixed(1) +
+        "/" +
+        step.holdSeconds +
+        " 秒"
+      : "") +
+    (readonly ? " · 唯讀" : "");
+  $("tutorial-action").textContent = failure
+    ? "教學已停止"
+    : t.complete
+      ? "教學完成"
+      : [
+          running ? "檢查中" : "繼續檢查",
+          "解鎖",
+          "起飛",
+          running ? "保持懸停" : "繼續懸停",
+          "飛往前方",
+          "返回家點",
+          "降落",
+        ][t.passed] || "執行這一步";
+  $("tutorial-action").disabled =
+    readonly ||
+    tutorialBusy ||
+    t.complete ||
+    !!failure ||
+    ((t.passed === 0 || t.passed === 3) && running);
+}
+$("tutorial-start").onclick = async () => {
+  if (
+    replay ||
+    externalActive ||
+    tutorialBusy ||
+    config.airframe === "fixedwing"
+  )
+    return;
+  if (config.geofenceRadius < 10 || config.geofenceHeight < 3)
+    return toast(
+      "教學需要至少 10 m 圍欄半徑及 3 m 高度，以保留飛行修正空間，請先調整管理參數。",
+    );
+  if (
+    dirty() &&
+    !(await confirmAction("開始教學會清除尚未匯出的實驗紀錄。確定繼續？"))
+  )
+    return;
+  tutorialBusy = true;
+  renderTutorial();
+  try {
+    const current = await requestApi({ type: "inspect" });
+    const setup = {
+      ...current.setup,
+      mode: "attitude",
+      mission: [],
+      scene: { ...current.setup.scene, training: "tutorial" },
+    };
+    await requestApi({
+      type: "reset",
+      config: { ...config, startOnGround: true },
+      scenario: "hover",
+      setup,
+    });
+    focusFlightView();
+    await requestApi({ type: "play" });
+  } catch (error) {
+    toast("無法開始教學：" + error.message);
+  } finally {
+    tutorialBusy = false;
+    renderTutorial();
+  }
+};
+$("tutorial-action").onclick = async () => {
+  const t = latest?.training;
+  if (
+    replay ||
+    externalActive ||
+    tutorialBusy ||
+    t?.course !== "tutorial" ||
+    t.complete ||
+    tutorialFailures[t.reason]
+  )
+    return;
+  tutorialBusy = true;
+  renderTutorial();
+  try {
+    if (t.passed === 1) await requestApi({ type: "arm" });
+    else if (t.passed === 2) {
+      await launchFlight();
+      return;
+    } else if (t.passed === 4 || t.passed === 5) {
+      await requestApi({ type: "mode", value: "position" });
+      await requestApi({
+        type: "position",
+        value: {
+          north: t.passed === 4 ? 8 : 0,
+          east: 0,
+          altitude: 2,
+          altitudeReference: "datum",
+        },
+      });
+    } else if (t.passed === 6)
+      await requestApi({ type: "mode", value: "land" });
+    if (!running) await requestApi({ type: "play" });
+  } catch (error) {
+    toast("無法執行這一步：" + error.message);
+  } finally {
+    tutorialBusy = false;
+    renderTutorial();
+  }
+};
 $("flight-mode").onchange = (event) =>
   worker.postMessage({ type: "mode", value: event.target.value });
 document.querySelectorAll("[data-command]").forEach(
@@ -1830,6 +1981,7 @@ function updatePilot(now) {
 }
 function setReplayControls(disabled) {
   renderGimbal();
+  renderTutorial();
   document
     .querySelectorAll(
       "#mission-workspace button:not(#mission-export), #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #camera-capture, #camera-add, #camera-live, #flight-mode, [data-command], [data-mode], #position-reference, #position-apply, #fault-apply, #fault-link, #fault-clear, #abort-takeoff, #fault-pusher, #transition-hover, #transition-cruise, #pilot-enable",
@@ -2485,6 +2637,7 @@ let hilPreviousGrounded;
 let hilFollowed = false;
 function setExternalControls(disabled) {
   renderGimbal();
+  renderTutorial();
   if (disabled && latest?.controlSource !== "external")
     $("ground-status").textContent = "等待外部飛控模型真值。";
   $("hil-type").disabled = disabled;

@@ -822,3 +822,95 @@ test("atomic scene edits preserve flight, training progress and custom geometry 
   assert.deepEqual(wing.value.setup.scene.customGates, gates);
   assert.deepEqual(wing.value.setup.scene.obstacles, [tall]);
 });
+
+test("tutorial entry is atomic and advances only with simulation time", async (t) => {
+  const url = new URL("../worker.js", import.meta.url).href;
+  const worker = new Worker(
+    `import {parentPort} from 'node:worker_threads';
+ let now=0,scheduled;globalThis.performance={now:()=>now};globalThis.setTimeout=fn=>{scheduled=fn;};
+ globalThis.postMessage=data=>parentPort.postMessage(data);globalThis.onmessage=null;
+ parentPort.on('message',data=>{if(data.advance){now+=100;scheduled();parentPort.postMessage({advanced:true});}else globalThis.onmessage({data});});
+ await import(${JSON.stringify(url)});`,
+    { eval: true, type: "module" },
+  );
+  t.after(() => worker.terminate());
+  const next = (predicate) =>
+    new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        worker.off("message", receive);
+        reject(new Error("Worker timeout"));
+      }, 3000);
+      function receive(data) {
+        if (predicate(data)) {
+          clearTimeout(timeout);
+          worker.off("message", receive);
+          resolve(data);
+        }
+      }
+      worker.on("message", receive);
+    });
+  await next((d) => d.message === "reset");
+  let serial = 0;
+  const call = async (command) => {
+    const requestId = ++serial,
+      reply = next((d) => d.type === "apiReply" && d.requestId === requestId);
+    worker.postMessage({ ...command, requestId });
+    return reply;
+  };
+  const advance = async (count) => {
+    for (let i = 0; i < count; i++) {
+      const reply = next((d) => d.advanced);
+      worker.postMessage({ advance: true });
+      await reply;
+    }
+  };
+  assert.equal(
+    (await call({ type: "reset", config: { startOnGround: false } })).ok,
+    true,
+  );
+  const before = (await call({ type: "inspect" })).value;
+  const recordBefore = (await call({ type: "apiExport" })).value;
+  const scene = { ...before.setup.scene, training: "tutorial" };
+  assert.equal((await call({ type: "scene", value: scene })).ok, false);
+  const after = (await call({ type: "inspect" })).value;
+  const recordAfter = (await call({ type: "apiExport" })).value;
+  assert.deepEqual(after.setup.scene, before.setup.scene);
+  assert.deepEqual(after.snapshot.training, before.snapshot.training);
+  assert.equal(after.snapshot.time, before.snapshot.time);
+  assert.deepEqual(recordAfter.events, recordBefore.events);
+  assert.deepEqual(recordAfter.samples, recordBefore.samples);
+  assert.equal(
+    (await call({ type: "reset", config: { startOnGround: true } })).ok,
+    true,
+  );
+  assert.equal((await call({ type: "scene", value: scene })).ok, true);
+  const paused = (await call({ type: "inspect" })).value.snapshot.training;
+  await advance(30);
+  const stillPaused = (await call({ type: "inspect" })).value.snapshot.training;
+  assert.equal(stillPaused.holdSeconds, paused.holdSeconds);
+  assert.equal(stillPaused.passed, 0);
+  await call({ type: "play" });
+  await advance(25);
+  assert.equal(
+    (await call({ type: "inspect" })).value.snapshot.training.passed,
+    1,
+  );
+  assert.equal((await call({ type: "arm" })).ok, true);
+  await advance(15);
+  assert.equal(
+    (await call({ type: "inspect" })).value.snapshot.training.passed,
+    2,
+  );
+  assert.equal((await call({ type: "mode", value: "land" })).ok, true);
+  await advance(1);
+  const failed = (await call({ type: "inspect" })).value.snapshot.training;
+  assert.equal(failed.reason, "procedure-order");
+  assert.equal(failed.score, 0);
+  const record = validateRecording((await call({ type: "apiExport" })).value);
+  assert.equal(record.samples.at(-1).training.reason, "procedure-order");
+  assert.ok(
+    record.events.some(
+      (event) => event.type === "scene" && event.value.training === "tutorial",
+    ),
+  );
+});

@@ -1,4 +1,8 @@
-import { AIRFRAMES, MULTIROTOR_AIRFRAMES } from "./rotor-geometry.js";
+import {
+  AIRFRAMES,
+  MULTIROTOR_AIRFRAMES,
+  rotorCount,
+} from "./rotor-geometry.js";
 
 const deepFreeze = (value) => {
   Object.freeze(value);
@@ -6,6 +10,50 @@ const deepFreeze = (value) => {
     if (item && typeof item === "object") deepFreeze(item);
   return value;
 };
+export const TUTORIAL_STEPS = deepFreeze([
+  {
+    id: "preflight",
+    title: "地面檢查",
+    instruction: "開始模擬，保持原點地面、未解鎖，確認電量與故障狀態。",
+    holdSeconds: 2,
+  },
+  {
+    id: "armed",
+    title: "解鎖並等待",
+    instruction: "按解鎖，保持地面一秒；完成後才按起飛。",
+    holdSeconds: 1,
+  },
+  {
+    id: "takeoff",
+    title: "起飛至兩米",
+    instruction: "按起飛，等待機體在原點上方兩米穩定。",
+    holdSeconds: 1,
+  },
+  {
+    id: "hover",
+    title: "穩定懸停",
+    instruction: "保持位置模式，在原點上方兩米連續懸停五秒。",
+    holdSeconds: 5,
+  },
+  {
+    id: "move",
+    title: "向北移動",
+    instruction: "在位置模式設定北8米、東0米、高度2米，抵達後停留三秒。",
+    holdSeconds: 3,
+  },
+  {
+    id: "return",
+    title: "返回原點",
+    instruction: "在位置模式設定北0米、東0米、高度2米，抵達後停留三秒。",
+    holdSeconds: 3,
+  },
+  {
+    id: "land",
+    title: "降落並上鎖",
+    instruction: "按降落，等待機體返回地面並自動上鎖，停穩兩秒。",
+    holdSeconds: 2,
+  },
+]);
 export const TRAINING_COURSES = deepFreeze({
   free: {
     title: "自由飛行",
@@ -43,15 +91,20 @@ export const TRAINING_COURSES = deepFreeze({
       { north: 0, east: 0, altitude: 30, yaw: -Math.PI / 2, radius: 20 },
     ],
   },
+  custom: { title: "自訂課程", airframes: AIRFRAMES, gates: [] },
+  tutorial: {
+    title: "基礎教學與程序檢核",
+    airframes: [...MULTIROTOR_AIRFRAMES, "vtol"],
+    gates: [],
+  },
 });
 
 export function isCourseSupported(course, airframe) {
   return (
     typeof course === "string" &&
     AIRFRAMES.includes(airframe) &&
-    (course === "custom" ||
-      (Object.hasOwn(TRAINING_COURSES, course) &&
-        TRAINING_COURSES[course].airframes.includes(airframe)))
+    Object.hasOwn(TRAINING_COURSES, course) &&
+    TRAINING_COURSES[course].airframes.includes(airframe)
   );
 }
 
@@ -137,7 +190,7 @@ export function createTrainer(
       course,
       elapsed,
       passed,
-      total: gates.length,
+      total: course === "tutorial" ? TUTORIAL_STEPS.length : gates.length,
       misses,
       complete,
       score,
@@ -145,6 +198,170 @@ export function createTrainer(
       holdSeconds,
       reason,
     };
+  }
+  function tutorialUpdate(snapshot) {
+    if (previous && snapshot.time < previous.time) reset();
+    if (complete || reason) return result();
+    const {
+      ground,
+      battery,
+      faults,
+      navigation: nav,
+      flight,
+      attitude,
+    } = snapshot;
+    if (
+      !ground ||
+      !Number.isFinite(ground.clearanceM) ||
+      !Number.isFinite(ground.heightM) ||
+      !battery ||
+      !Number.isFinite(battery.soc) ||
+      battery.soc < 0 ||
+      battery.soc > 1 ||
+      typeof battery.low !== "boolean" ||
+      typeof battery.critical !== "boolean" ||
+      !faults ||
+      !Array.isArray(faults.motorEfficiency) ||
+      faults.motorEfficiency.length !== rotorCount(airframe) ||
+      !Array.from(faults.motorEfficiency).every(
+        (v) => Number.isFinite(v) && v >= 0 && v <= 1,
+      ) ||
+      typeof faults.linkLost !== "boolean" ||
+      !Number.isFinite(faults.pusherEfficiency) ||
+      !nav ||
+      typeof nav.fenceBreached !== "boolean" ||
+      !Array.isArray(nav.targetPosition) ||
+      nav.targetPosition.length !== 2 ||
+      !Array.from(nav.targetPosition).every(Number.isFinite) ||
+      !flight ||
+      !Number.isFinite(flight.transitionProgress) ||
+      !Array.isArray(attitude) ||
+      attitude.length !== 3 ||
+      !Array.from(attitude).every(Number.isFinite)
+    )
+      throw new Error("Invalid tutorial snapshot");
+    const clearance = ground.clearanceM,
+      speed = Math.hypot(...snapshot.velocity),
+      distance = Math.hypot(...snapshot.position.slice(0, 2));
+    const healthy =
+      snapshot.controlSource !== "external" &&
+      snapshot.airframe === airframe &&
+      !battery.low &&
+      !battery.critical &&
+      battery.soc > 0.2 &&
+      !faults.linkLost &&
+      faults.motorEfficiency.every((v) => v === 1) &&
+      faults.pusherEfficiency === 1 &&
+      !nav.fenceBreached &&
+      !nav.reason &&
+      flight.transition === "hover" &&
+      flight.transitionProgress === 0;
+    const parked =
+      snapshot.status === "landed" &&
+      Math.abs(clearance) < 0.05 &&
+      speed < 0.1 &&
+      distance <= 0.25 &&
+      Math.abs(ground.heightM) < 0.01 &&
+      Math.abs(attitude[0]) < 0.17 &&
+      Math.abs(attitude[1]) < 0.17;
+    if (!previous) {
+      if (
+        !healthy ||
+        !parked ||
+        snapshot.armed ||
+        !["attitude", "position"].includes(nav.mode)
+      )
+        throw new Error(
+          "Tutorial requires an internal, healthy, disarmed aircraft parked at home; reset with ground start before selecting the course",
+        );
+      start = snapshot.time;
+    }
+    elapsed = snapshot.time - start;
+    const dt = previous ? snapshot.time - previous.time : 0;
+    const fail = (why) => {
+      reason = why;
+      score = 0;
+      holdSeconds = 0;
+      inside = false;
+      previous = {
+        time: snapshot.time,
+        position: [...snapshot.position],
+        clearance,
+        mode: nav.mode,
+      };
+      return result();
+    };
+    if (snapshot.status === "crashed") return fail("crashed");
+    if (snapshot.status === "failsafe") return fail("failsafe");
+    if (!healthy) return fail("unsafe");
+    if (
+      (passed === 0 && snapshot.armed) ||
+      (passed === 1 && clearance > 0.1) ||
+      (passed >= 2 &&
+        passed <= 5 &&
+        (!snapshot.armed || nav.mode === "land")) ||
+      !["attitude", "position", "land"].includes(nav.mode)
+    )
+      return fail("procedure-order");
+    const validDt = dt > 0 && dt <= 0.1 + 1e-9;
+    if (
+      passed === 6 &&
+      validDt &&
+      previous?.mode === "land" &&
+      nav.mode === "land" &&
+      snapshot.armed &&
+      clearance > 0.1 &&
+      clearance < 1.75 &&
+      snapshot.velocity[2] > 0.02 &&
+      clearance < previous.clearance
+    )
+      descended = true;
+    const at = (north, east, maximumSpeed) =>
+      snapshot.armed &&
+      snapshot.status === "flying" &&
+      nav.mode === "position" &&
+      Math.hypot(snapshot.position[0] - north, snapshot.position[1] - east) <=
+        0.5 &&
+      Math.abs(clearance - 2) <= 0.25 &&
+      speed < maximumSpeed &&
+      Math.abs(attitude[0]) < 0.26 &&
+      Math.abs(attitude[1]) < 0.26;
+    const commanded = (north, east) =>
+      Math.hypot(nav.targetPosition[0] - north, nav.targetPosition[1] - east) <
+      0.1;
+    const eligible = [
+      () => parked && !snapshot.armed,
+      () => parked && snapshot.armed,
+      () => at(0, 0, 0.5) && commanded(0, 0),
+      () => at(0, 0, 0.3) && commanded(0, 0),
+      () => at(8, 0, 0.3) && commanded(8, 0),
+      () => at(0, 0, 0.3) && commanded(0, 0),
+      () =>
+        descended &&
+        nav.mode === "land" &&
+        snapshot.status === "landed" &&
+        !snapshot.armed &&
+        Math.abs(clearance) < 0.05 &&
+        distance <= 0.5 &&
+        speed < 0.2,
+    ][passed]();
+    if (dt !== 0)
+      holdSeconds = eligible && inside && validDt ? holdSeconds + dt : 0;
+    inside = eligible;
+    if (holdSeconds + 1e-9 >= TUTORIAL_STEPS[passed].holdSeconds) {
+      passed++;
+      holdSeconds = 0;
+      inside = false;
+      complete = passed === TUTORIAL_STEPS.length;
+    }
+    score = Math.round((1000 * passed) / TUTORIAL_STEPS.length);
+    previous = {
+      time: snapshot.time,
+      position: [...snapshot.position],
+      clearance,
+      mode: nav.mode,
+    };
+    return result();
   }
   function update(snapshot) {
     if (
@@ -162,6 +379,7 @@ export function createTrainer(
     ) {
       throw new Error("Invalid training snapshot");
     }
+    if (course === "tutorial") return tutorialUpdate(snapshot);
     if (previous && snapshot.time < previous.time) reset();
     if (complete || reason === "crashed" || reason === "takeoff-aborted")
       return result();

@@ -107,10 +107,20 @@
             <option value="landing">降落</option>
             <option value="circuit">巡航航線</option>
             <option value="runway">跑道起降循環</option>
+            <option value="tutorial">基礎飛行教學</option>
             <option value="custom">自訂訓練門</option>
           </select></label
         >
         <p id="training-status">尚未開始</p>
+        <div id="tutorial-start-controls" hidden>
+          <p>
+            教學從家點地面、上鎖狀態開始，建立新實驗並先進行起飛前檢查。適用多旋翼與懸停
+            VTOL；不代表正式認證。
+          </p>
+          <button id="tutorial-start" class="button primary">
+            從地面開始教學（建立新實驗）
+          </button>
+        </div>
         <p id="training-runway-hint" hidden>
           須由地面起跑，完成爬升，再落地、上鎖並停穩 2
           秒才得分；空中起始不符合條件。此練習不代表正式認證。
@@ -171,6 +181,7 @@
             <option value="landing">降落</option>
             <option value="circuit">巡航航線</option>
             <option value="runway">跑道起降</option>
+            <option value="tutorial">基礎飛行教學</option>
             <option value="custom">自訂訓練門</option>
           </select></label
         >
@@ -512,6 +523,19 @@
               </div>
               <div id="scene-error" class="scene-error" hidden></div>
             </div>
+            <section
+              id="tutorial-panel"
+              class="tutorial-panel"
+              aria-live="polite"
+              hidden
+            >
+              <strong id="tutorial-title"></strong>
+              <p id="tutorial-instruction"></p>
+              <p id="tutorial-progress"></p>
+              <button id="tutorial-action" class="button primary">
+                執行這一步
+              </button>
+            </section>
             <div class="transport">
               <button id="play" class="button primary" disabled>
                 <span aria-hidden="true">▶</span> 開始模擬</button

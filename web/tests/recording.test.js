@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createSimulation, validateConfig } from "../sim.js";
 import { createSensorSuite } from "../sensors.js";
-import { createTrainer } from "../training.js";
+import { createTrainer, TRAINING_COURSES } from "../training.js";
 import { DEFAULT_GIMBAL_SETTINGS } from "../gimbal.js";
 import {
   RECORDING_VERSION,
@@ -51,6 +51,151 @@ function record(airframe = "quadrotor", overrides = {}) {
     sensorFrames: [sensors.update(first), sensors.update(last)],
   };
 }
+
+function tutorialRecording() {
+  const config = validateConfig({ startOnGround: true, seed: 34 });
+  const setup = validateSetup(
+    {
+      scene: { ...DEFAULT_SCENE, training: "tutorial" },
+      sensors: {
+        lidarRays: 12,
+        lidarChannels: 1,
+        lidarVerticalMinDeg: -30,
+        lidarVerticalMaxDeg: -30,
+      },
+    },
+    config,
+  );
+  const sim = createSimulation(config),
+    trainer = createTrainer("tutorial");
+  const sensors = createSensorSuite(setup.sensors);
+  const samples = [],
+    sensorFrames = [],
+    events = [],
+    acted = new Set();
+  let progress = trainer.update(sim.snapshot());
+  const capture = () => {
+    const state = { ...sim.snapshot(), training: structuredClone(progress) };
+    samples.push(state);
+    sensorFrames.push(sensors.update(state));
+  };
+  const command = (type, value) => {
+    events.push({
+      time: sim.snapshot().time,
+      type,
+      ...(value === undefined ? {} : { value }),
+    });
+    if (type === "arm") sim.arm();
+    if (type === "takeoff") sim.takeoff();
+    if (type === "mode") sim.setMode(value);
+    if (type === "position") sim.setPositionTarget(value);
+  };
+  capture();
+  for (
+    let step = 1;
+    step <= 20000 && !progress.complete && !progress.reason;
+    step++
+  ) {
+    if (!acted.has(progress.passed)) {
+      acted.add(progress.passed);
+      if (progress.passed === 1) command("arm");
+      if (progress.passed === 2) command("takeoff");
+      if (progress.passed === 4 || progress.passed === 5) {
+        command("mode", "position");
+        command("position", {
+          north: progress.passed === 4 ? 8 : 0,
+          east: 0,
+          altitude: 2,
+          altitudeReference: "datum",
+        });
+      }
+      if (progress.passed === 6) command("mode", "land");
+    }
+    progress = trainer.update(sim.step());
+    if (step % 10 === 0) capture();
+  }
+  assert.equal(progress.reason, "");
+  assert.equal(progress.complete, true);
+  if (samples.at(-1).time < sim.snapshot().time) capture();
+  return {
+    format: "flight-lab",
+    version: RECORDING_VERSION,
+    modelVersion: MODEL_VERSION,
+    createdAt: "2026-11-05T00:00:00.000Z",
+    config,
+    scenario: "hover",
+    dt: 0.005,
+    setup,
+    runtime: {
+      speed: 1,
+      wallSeconds: sim.snapshot().time,
+      p95LateMs: 0,
+      lateTicks: 0,
+      skippedWallSeconds: 0,
+      renderEnabled: true,
+    },
+    events,
+    samples,
+    sensorFrames,
+  };
+}
+
+test("guided flight records seven observed stages without changing prior course codes or data formats", () => {
+  const input = tutorialRecording();
+  const clean = validateRecording(input);
+  assert.equal(
+    JSON.stringify(validateRecording(JSON.parse(recordingToJson(input)))),
+    JSON.stringify(clean),
+  );
+  assert.equal(clean.samples.at(-1).training.passed, 7);
+  assert.equal(clean.samples.at(-1).training.score, 1000);
+  assert.deepEqual(Object.keys(TRAINING_COURSES), [
+    "free",
+    "hover",
+    "gates",
+    "landing",
+    "runway",
+    "circuit",
+    "custom",
+    "tutorial",
+  ]);
+  const rows = recordingToCsv(clean)
+    .split("\n")
+    .map((line) => line.split(","));
+  assert.ok(rows.every((row) => row.length === 164));
+  const courseColumn = rows[0].indexOf("training_course_code");
+  assert.ok(rows.slice(1).every((row) => row[courseColumn] === "7"));
+  for (const mutate of [
+    (value) => {
+      value.samples.at(-1).training.score = 999;
+    },
+    (value) => {
+      value.samples.at(-1).training.holdSeconds = 1;
+    },
+    (value) => {
+      value.samples[1].training.elapsed += 0.1;
+    },
+    (value) => {
+      value.samples[1].training.passed = 1;
+      value.samples[1].training.score = Math.round(1000 / 7);
+    },
+    (value) => {
+      const index = value.samples.findIndex(
+        (sample) => sample.training.passed === 3,
+      );
+      value.samples[index + 1].training.passed = 2;
+      value.samples[index + 1].training.score = Math.round(2000 / 7);
+      value.samples[index + 1].training.holdSeconds = 0;
+    },
+    (value) => {
+      value.samples[0].training.reason = "unsafe";
+    },
+  ]) {
+    const bad = structuredClone(input);
+    mutate(bad);
+    assert.throws(() => validateRecording(bad));
+  }
+});
 test("v10 round trip preserves multi-layer scans and exports 164 telemetry CSV columns", () => {
   const input = record(),
     result = validateRecording(JSON.parse(JSON.stringify(input)));
@@ -432,35 +577,81 @@ test("sensor config/fault history validates different lidar dimensions and prese
 });
 
 test("terrain scene history restores ground and AGL targets without repeating ground metadata", () => {
-  const input = record(), heights = Array(25).fill(0); heights[12] = 4;
-  const terrain = { kind: "heightfield", north: 40, east: 40, cellSize: 10, rows: 5, cols: 5, heights };
-  input.setup.scene = { ...input.setup.scene, terrain }; input.setup.mode = "position";
-  const sim = createSimulation(input.config, { terrain, gimbal: input.setup.gimbal });
-  const trainer = createTrainer("free"), sensors = createSensorSuite(); sensors.setTerrain(terrain);
+  const input = record(),
+    heights = Array(25).fill(0);
+  heights[12] = 4;
+  const terrain = {
+    kind: "heightfield",
+    north: 40,
+    east: 40,
+    cellSize: 10,
+    rows: 5,
+    cols: 5,
+    heights,
+  };
+  input.setup.scene = { ...input.setup.scene, terrain };
+  input.setup.mode = "position";
+  const sim = createSimulation(input.config, {
+    terrain,
+    gimbal: input.setup.gimbal,
+  });
+  const trainer = createTrainer("free"),
+    sensors = createSensorSuite();
+  sensors.setTerrain(terrain);
   sim.setMode("position");
-  const command = { north: 60, east: 60, altitude: 6, altitudeReference: "agl" };
+  const command = {
+    north: 60,
+    east: 60,
+    altitude: 6,
+    altitudeReference: "agl",
+  };
   sim.setPositionTarget(command);
-  input.samples = []; input.sensorFrames = []; input.events = [{ time: 0, type: "position", value: command }];
-  const capture = () => { const s = sim.snapshot(); input.samples.push({ ...s, training: trainer.update(s) }); input.sensorFrames.push(sensors.update(s)); };
-  capture(); for (let i = 0; i < 8000; i++) sim.step(); capture();
-  assert.ok(Math.abs(input.samples[1].ground.clearanceM - 6) < .1);
-  const nextScene = structuredClone(input.setup.scene); nextScene.terrain.heights[12] = -4;
-  for (let i = 0; i < 10; i++) sim.step(); sim.setTerrain(nextScene.terrain); sensors.setTerrain(nextScene.terrain);
-  input.events.push({ time: sim.snapshot().time, type: "scene", value: nextScene }); capture();
+  input.samples = [];
+  input.sensorFrames = [];
+  input.events = [{ time: 0, type: "position", value: command }];
+  const capture = () => {
+    const s = sim.snapshot();
+    input.samples.push({ ...s, training: trainer.update(s) });
+    input.sensorFrames.push(sensors.update(s));
+  };
+  capture();
+  for (let i = 0; i < 8000; i++) sim.step();
+  capture();
+  assert.ok(Math.abs(input.samples[1].ground.clearanceM - 6) < 0.1);
+  const nextScene = structuredClone(input.setup.scene);
+  nextScene.terrain.heights[12] = -4;
+  for (let i = 0; i < 10; i++) sim.step();
+  sim.setTerrain(nextScene.terrain);
+  sensors.setTerrain(nextScene.terrain);
+  input.events.push({
+    time: sim.snapshot().time,
+    type: "scene",
+    value: nextScene,
+  });
+  capture();
   const serialized = JSON.parse(recordingToJson(input));
   assert.equal(Object.hasOwn(serialized.samples[1], "ground"), false);
   assert.deepEqual(serialized.samples[1].navigation.altitude, [1, 6]);
   const restored = validateRecording(serialized);
-  assert.ok(Math.abs(restored.samples[1].ground.heightM - 4) < .1);
-  assert.ok(Math.abs(restored.samples[2].ground.heightM + 4) < .1);
+  assert.ok(Math.abs(restored.samples[1].ground.heightM - 4) < 0.1);
+  assert.ok(Math.abs(restored.samples[2].ground.heightM + 4) < 0.1);
   assert.ok(restored.samples[2].ground.clearanceM > 13);
   for (const mutate of [
     (r) => (r.samples[1].navigation.altitude[0] = 2),
     (r) => (r.samples[1].navigation.altitude[1] = -1),
-    (r) => (r.samples[1].ground = { heightM: 0, clearanceM: 0, normalNed: [0, 0, -1] }),
+    (r) =>
+      (r.samples[1].ground = {
+        heightM: 0,
+        clearanceM: 0,
+        normalNed: [0, 0, -1],
+      }),
     (r) => (r.events[0].value.altitude = 98),
     (r) => delete r.setup.scene.terrain,
-  ]) { const bad = structuredClone(serialized); mutate(bad); assert.throws(() => validateRecording(bad)); }
+  ]) {
+    const bad = structuredClone(serialized);
+    mutate(bad);
+    assert.throws(() => validateRecording(bad));
+  }
   assert.equal(recordingToCsv(restored).split("\n")[0].split(",").length, 164);
 });
 
