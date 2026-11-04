@@ -6,6 +6,14 @@ export const TERRAIN_PROTECTED_AREA = Object.freeze({
   eastMax: 20,
 });
 export const TERRAIN_MESH_EXTENT = 10000;
+export const RUNWAY_FLAT_TOLERANCE_M = 1e-8;
+export class TerrainCoverageError extends Error {
+  constructor(north, east) {
+    super(`Terrain coverage unavailable at N=${north}, E=${east}`);
+    this.name = "TerrainCoverageError";
+    this.code = "TERRAIN_COVERAGE";
+  }
+}
 const UP = Object.freeze([0, 0, -1]);
 const EPS = 1e-9;
 const validVector = (value) =>
@@ -28,13 +36,17 @@ export function validateTerrain(value = DEFAULT_TERRAIN) {
   )
     throw new Error("Invalid terrain fields");
   if (value.kind === "flat") return Object.freeze({ kind: "flat" });
-  if (value.kind !== "heightfield") throw new Error("Invalid terrain kind");
+  if (!["heightfield", "dem"].includes(value.kind))
+    throw new Error("Invalid terrain kind");
   const { north, east, cellSize, rows, cols, heights } = value;
+  const dem = value.kind === "dem";
   if (
     ![north, east, cellSize].every(Number.isFinite) ||
     cellSize < 1 ||
     cellSize > 50 ||
-    ![rows, cols].every((n) => Number.isInteger(n) && n >= 2 && n <= 65) ||
+    ![rows, cols].every(
+      (n) => Number.isInteger(n) && n >= 2 && n <= (dem ? 129 : 65),
+    ) ||
     north < -500 ||
     east < -500 ||
     north + (rows - 1) * cellSize > 500 ||
@@ -51,16 +63,17 @@ export function validateTerrain(value = DEFAULT_TERRAIN) {
       if (
         !Object.hasOwn(heights, index) ||
         !Number.isFinite(height) ||
-        height < -50 ||
-        height > 150 ||
-        ((i === 0 || j === 0 || i === rows - 1 || j === cols - 1) &&
+        height < (dem ? -1000 : -50) ||
+        height > (dem ? 1000 : 150) ||
+        (!dem &&
+          (i === 0 || j === 0 || i === rows - 1 || j === cols - 1) &&
           height !== 0)
       )
         throw new Error("Invalid terrain height or nonzero boundary");
       copy.push(height);
     }
   const p = TERRAIN_PROTECTED_AREA;
-  for (let i = 0; i < rows - 1; i++)
+  for (let i = 0; !dem && i < rows - 1; i++)
     for (let j = 0; j < cols - 1; j++) {
       const n = north + i * cellSize,
         e = east + j * cellSize;
@@ -79,7 +92,7 @@ export function validateTerrain(value = DEFAULT_TERRAIN) {
         throw new Error("Terrain must keep the home and runway flat");
     }
   return Object.freeze({
-    kind: "heightfield",
+    kind: value.kind,
     north,
     east,
     cellSize,
@@ -91,7 +104,8 @@ export function validateTerrain(value = DEFAULT_TERRAIN) {
 
 export function createTerrain(value = DEFAULT_TERRAIN) {
   const data = validateTerrain(value),
-    grid = data.kind === "heightfield";
+    grid = data.kind !== "flat",
+    dem = data.kind === "dem";
   const {
     north = 0,
     east = 0,
@@ -102,6 +116,33 @@ export function createTerrain(value = DEFAULT_TERRAIN) {
   } = data;
   const nMax = north + (rows - 1) * cellSize,
     eMax = east + (cols - 1) * cellSize;
+  const protectedArea = TERRAIN_PROTECTED_AREA;
+  let runwayCompatible =
+    !dem ||
+    (north <= protectedArea.northMin &&
+      nMax >= protectedArea.northMax &&
+      east <= protectedArea.eastMin &&
+      eMax >= protectedArea.eastMax);
+  if (dem && runwayCompatible) {
+    for (let i = 0; i < rows - 1; i++)
+      for (let j = 0; j < cols - 1; j++) {
+        const n = north + i * cellSize,
+          e = east + j * cellSize;
+        if (
+          n < protectedArea.northMax &&
+          n + cellSize > protectedArea.northMin &&
+          e < protectedArea.eastMax &&
+          e + cellSize > protectedArea.eastMin &&
+          [
+            i * cols + j,
+            (i + 1) * cols + j,
+            i * cols + j + 1,
+            (i + 1) * cols + j + 1,
+          ].some((index) => Math.abs(heights[index]) > RUNWAY_FLAT_TOLERANCE_M)
+        )
+          runwayCompatible = false;
+      }
+  }
   const cells = [];
   if (grid)
     for (let i = 0; i < rows - 1; i++)
@@ -132,7 +173,10 @@ export function createTerrain(value = DEFAULT_TERRAIN) {
   function sample(n, e) {
     if (!Number.isFinite(n) || !Number.isFinite(e))
       throw new Error("Invalid terrain coordinates");
-    if (!inside(n, e)) return { heightM: 0, normalNed: [...UP] };
+    if (!inside(n, e)) {
+      if (dem) throw new TerrainCoverageError(n, e);
+      return { heightM: 0, normalNed: [...UP] };
+    }
     const x = (n - north) / cellSize,
       y = (e - east) / cellSize;
     const i = Math.min(rows - 2, Math.floor(x)),
@@ -197,7 +241,11 @@ export function createTerrain(value = DEFAULT_TERRAIN) {
       if (entering && !enteringAt(position, direction)) return;
       best = { t, position, normal };
     }
-    if (Math.abs(direction[2]) > 1e-14 && (!entering || direction[2] > 0)) {
+    if (
+      !dem &&
+      Math.abs(direction[2]) > 1e-14 &&
+      (!entering || direction[2] > 0)
+    ) {
       const t = -origin[2] / direction[2],
         p = point(t);
       if (!inside(p[0], p[1])) accept(t, UP);
@@ -308,41 +356,43 @@ export function createTerrain(value = DEFAULT_TERRAIN) {
             );
           quad(v(i, j), v(i + 1, j), v(i, j + 1), v(i + 1, j + 1));
         }
-      const outerE = (j) =>
-        j === 0 ? -m : j === cols - 1 ? m : east + j * cellSize;
-      const outerN = (i) =>
-        i === 0 ? -m : i === rows - 1 ? m : north + i * cellSize;
-      for (let j = 0; j < cols - 1; j++) {
-        const e = east + j * cellSize,
-          e1 = e + cellSize;
-        quad(
-          vertex(-m, outerE(j)),
-          vertex(north, e),
-          vertex(-m, outerE(j + 1)),
-          vertex(north, e1),
-        );
-        quad(
-          vertex(nMax, e),
-          vertex(m, outerE(j)),
-          vertex(nMax, e1),
-          vertex(m, outerE(j + 1)),
-        );
-      }
-      for (let i = 0; i < rows - 1; i++) {
-        const n = north + i * cellSize,
-          n1 = n + cellSize;
-        quad(
-          vertex(outerN(i), -m),
-          vertex(outerN(i + 1), -m),
-          vertex(n, east),
-          vertex(n1, east),
-        );
-        quad(
-          vertex(n, eMax),
-          vertex(n1, eMax),
-          vertex(outerN(i), m),
-          vertex(outerN(i + 1), m),
-        );
+      if (!dem) {
+        const outerE = (j) =>
+          j === 0 ? -m : j === cols - 1 ? m : east + j * cellSize;
+        const outerN = (i) =>
+          i === 0 ? -m : i === rows - 1 ? m : north + i * cellSize;
+        for (let j = 0; j < cols - 1; j++) {
+          const e = east + j * cellSize,
+            e1 = e + cellSize;
+          quad(
+            vertex(-m, outerE(j)),
+            vertex(north, e),
+            vertex(-m, outerE(j + 1)),
+            vertex(north, e1),
+          );
+          quad(
+            vertex(nMax, e),
+            vertex(m, outerE(j)),
+            vertex(nMax, e1),
+            vertex(m, outerE(j + 1)),
+          );
+        }
+        for (let i = 0; i < rows - 1; i++) {
+          const n = north + i * cellSize,
+            n1 = n + cellSize;
+          quad(
+            vertex(outerN(i), -m),
+            vertex(outerN(i + 1), -m),
+            vertex(n, east),
+            vertex(n1, east),
+          );
+          quad(
+            vertex(n, eMax),
+            vertex(n1, eMax),
+            vertex(outerN(i), m),
+            vertex(outerN(i + 1), m),
+          );
+        }
       }
     }
     geometry = Object.freeze({
@@ -353,7 +403,11 @@ export function createTerrain(value = DEFAULT_TERRAIN) {
   }
   return Object.freeze({
     data,
+    runwayCompatible,
     sample,
+    contains(n, e) {
+      return Number.isFinite(n) && Number.isFinite(e) && (!dem || inside(n, e));
+    },
     mesh,
     raycast(originNed, unitDir, minM, maxM) {
       if (!validVector(unitDir) || Math.abs(Math.hypot(...unitDir) - 1) > 1e-8)

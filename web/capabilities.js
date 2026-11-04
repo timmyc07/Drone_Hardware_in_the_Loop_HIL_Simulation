@@ -477,7 +477,7 @@ export const CAPABILITIES = [
     id: "global-terrain",
     category: "環境",
     title: "地理地形",
-    description: "提供局部高度網格；不含地理資料、投影或廣域 GIS。",
+    description: "可本機匯入有限範圍 GeoTIFF 地形及地理原點；支援部分投影，非廣域 GIS 或實機校準。",
     status: "partial",
     sources: [
       "https://www.ga-asi.com/training-and-support-services/skyguardian-mission-trainer",
@@ -782,7 +782,7 @@ export const CAPABILITIES = [
     id: "record-csv",
     category: "資料與整合",
     title: "CSV 飛行紀錄",
-    description: "可匯出 164 欄飛行及感測資料 CSV。",
+    description: "可匯出 165 欄飛行及感測資料 CSV。",
     status: "partial",
     sources: ["https://wiki.zephyr-sim.com/help/faqs"],
   },
@@ -790,7 +790,7 @@ export const CAPABILITIES = [
     id: "replay-json",
     category: "資料與整合",
     title: "JSON 重播",
-    description: "版本 10 JSON 保存完整場景、地形與事件；拒絕版本 1 至 9。",
+    description: "版本 11 JSON 保存完整場景、地理來源與事件；拒絕版本 1 至 10。",
     status: "partial",
     sources: [
       "https://www.liftoff-game.com/news/full-release-liftoff-micro-drones",
@@ -863,7 +863,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "程式控制 API",
     description:
-      "同頁 API 1.8 提供場景、雲台與位置高度基準設定；外部 SITL 使用獨立本機服務。",
+      "同頁 API 1.9 提供場景、雲台與位置高度基準設定；外部 SITL 使用獨立本機服務。",
     status: "partial",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/apis.md"],
   },

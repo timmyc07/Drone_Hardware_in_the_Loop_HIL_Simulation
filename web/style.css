@@ -1548,3 +1548,22 @@ select:disabled {
   font-size: 18px;
   font-variant-numeric: tabular-nums;
 }
+.dem-editor {
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid #496175;
+  border-radius: 8px;
+  background: #142337;
+}
+.dem-editor label {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.dem-editor input[type="number"] {
+  width: 8rem;
+}
+#dem-status {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

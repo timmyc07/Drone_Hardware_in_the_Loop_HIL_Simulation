@@ -157,7 +157,7 @@ test("camera metadata uses the acquired joints while a commanded target is still
   acquired.gimbal.trackingErrorRad = Math.PI / 2;
   acquired.gimbal.rateLimited.yaw = true;
   const metadata = cameraMetadata(acquired);
-  assert.equal(metadata.version, 2);
+  assert.equal(metadata.version, 3);
   assert.equal(metadata.gimbal.target.yaw, Math.PI / 2);
   assert.equal(metadata.gimbal.actual.yaw, 0);
   [1, 0, 0].forEach((v, row) =>
@@ -206,7 +206,7 @@ test("camera datasets round trip exact byte buffers and little-endian float32 de
 test("camera dataset trust boundaries reject malformed buffers, schemas and limits", () => {
   const valid = JSON.parse(cameraDatasetToJson([frame()]));
   for (const mutate of [
-    (d) => (d.version = 1),
+    (d) => (d.version = 2),
     (d) => (d.format = "other"),
     (d) => (d.extra = 1),
     (d) => (d.classes[1].name = "wrong"),
@@ -215,7 +215,7 @@ test("camera dataset trust boundaries reject malformed buffers, schemas and limi
     (d) => (d.frames[0].classes = "A".repeat(d.frames[0].classes.length)),
     (d) => (d.frames[0].config.width = 640),
     (d) => (d.frames[0].intrinsics.cx = 0),
-    (d) => (d.frames[0].version = 1),
+    (d) => (d.frames[0].version = 2),
     (d) => delete d.frames[0].gimbal,
     (d) => (d.frames = Array(CAMERA_DATASET_MAX_FRAMES + 1).fill(d.frames[0])),
   ]) {
@@ -241,4 +241,49 @@ test("camera dataset trust boundaries reject malformed buffers, schemas and limi
     /import limit/,
   );
   assert.deepEqual(parseCameraDataset(cameraDatasetToJson([])), []);
+});
+
+test("geographic camera metadata survives dataset roundtrip and rejects malformed provenance", () => {
+  const geography = {
+    origin: {
+      latitudeDeg: 25.033,
+      longitudeDeg: 121.5654,
+      altitudeM: 123,
+      verticalDatum: "orthometric",
+    },
+    source: {
+      name: "terrain.tif",
+      sha256: "a".repeat(64),
+      crs: "EPSG:4326",
+      width: 100,
+      height: 80,
+      band: 1,
+      pixelInterpretation: "area",
+      heightUnit: "m",
+      scale: 1,
+      offset: 0,
+      resampling: "bilinear",
+      window: [0, 0, 100, 80],
+    },
+  };
+  const base = frame();
+  const acquired = {
+    ...base,
+    ...cameraMetadata(snapshot, base.config, geography),
+  };
+  geography.origin.latitudeDeg = 1;
+  const restored = parseCameraDataset(cameraDatasetToJson([acquired]))[0];
+  assert.equal(restored.geography.origin.latitudeDeg, 25.033);
+  assert.equal(restored.geography.source.sha256, "a".repeat(64));
+  assert.equal(restored.version, 3);
+  assert.equal(
+    parseCameraDataset(cameraDatasetToJson([base]))[0].geography,
+    null,
+  );
+  const missing = JSON.parse(cameraDatasetToJson([acquired]));
+  delete missing.frames[0].geography;
+  assert.throws(() => parseCameraDataset(JSON.stringify(missing)));
+  const bad = JSON.parse(cameraDatasetToJson([acquired]));
+  bad.frames[0].geography.source.sha256 = "invalid";
+  assert.throws(() => parseCameraDataset(JSON.stringify(bad)));
 });

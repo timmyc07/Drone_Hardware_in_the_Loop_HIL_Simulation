@@ -48,6 +48,7 @@ export function createScene(container) {
   scene.add(ground);
 
   let terrain = createTerrain();
+  let runway, pad;
   function setTerrain(value) {
     const next = createTerrain(value);
     const mesh = next.mesh();
@@ -65,6 +66,8 @@ export function createScene(container) {
     ground.geometry = geometry;
     terrain = next;
     grid.visible = next.data.kind === "flat";
+    if (runway) runway.visible = next.runwayCompatible;
+    if (pad) pad.visible = next.data.kind !== "dem";
   }
   setTerrain();
 
@@ -95,7 +98,7 @@ export function createScene(container) {
     parent.add(mesh);
     return mesh;
   };
-  const runway = new THREE.Group();
+  runway = new THREE.Group();
   runway.userData.cameraClass = 2;
   const runwayLength = RUNWAY.endNorth - RUNWAY.startNorth;
   runway.position.z = -(RUNWAY.startNorth + RUNWAY.endNorth) / 2;
@@ -253,6 +256,8 @@ export function createScene(container) {
   };
   let airframe = "quadrotor";
 
+  pad = new THREE.Group();
+  scene.add(pad);
   const ringMaterial = new THREE.MeshBasicMaterial({
     color: 0x5edbd5,
     transparent: true,
@@ -266,7 +271,7 @@ export function createScene(container) {
     );
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.008;
-    scene.add(ring);
+    pad.add(ring);
   }
   function marker(text, x, z, color) {
     const canvas = document.createElement("canvas");
@@ -291,7 +296,7 @@ export function createScene(container) {
     );
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.set(x, 0.012, z);
-    scene.add(mesh);
+    pad.add(mesh);
   }
   marker("N", 0, -2.4, "#8be4df");
   marker("E", 2.4, 0, "#ffb27b");
@@ -370,6 +375,11 @@ export function createScene(container) {
         const angle = (i * Math.PI * 2) / 20;
         const x = Math.cos(angle) * 18,
           z = Math.sin(angle) * 18;
+        if (!terrain.contains(-z, x)) {
+          tree.geometry.dispose();
+          tree.material.dispose();
+          continue;
+        }
         tree.position.set(x, 1.5 + terrain.sample(-z, x).heightM, z);
         tree.userData.cameraClass = 3;
         environment.add(tree);
@@ -377,17 +387,19 @@ export function createScene(container) {
     } else if (preset === "warehouse") {
       ground.material.color.setHex(0x33414b);
       for (let i = -2; i <= 2; i++) {
+        const z = i * 8;
+        if (!terrain.contains(-z, -10) || !terrain.contains(-z, 10)) continue;
         for (const x of [-10, 10])
           box(
             environment,
             [0.3, 7, 0.3],
-            [x, 3.5, i * 8],
+            [x, 3.5 + terrain.sample(-z, x).heightM, z],
             material(0x526273, 0.5),
           );
         box(
           environment,
           [20, 0.25, 0.25],
-          [0, 7, i * 8],
+          [0, 7 + terrain.sample(-z, 0).heightM, z],
           material(0x526273, 0.5),
         );
       }
@@ -569,7 +581,9 @@ export function createScene(container) {
       target.set(east, -down, -north);
       drone.position.copy(target);
       drone.quaternion.set(y, -z, -x, w).normalize();
-      projection.position.y = terrain.sample(north, east).heightM + 0.02;
+      projection.visible = terrain.contains(north, east);
+      if (projection.visible)
+        projection.position.y = terrain.sample(north, east).heightM + 0.02;
       projection.position.x = east;
       projection.position.z = -north;
       if (snapshot.time < lastTime) count = 0;

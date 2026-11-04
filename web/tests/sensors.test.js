@@ -1,4 +1,5 @@
 import test from "node:test";
+import { localToGeographic } from "../geography.js";
 import assert from "node:assert/strict";
 import {
   createSensorSuite,
@@ -6,6 +7,7 @@ import {
   DEFAULT_SENSOR_CONFIG,
   lidarPoints,
   MAX_LIDAR_POINTS,
+  assertGeographicSensors,
 } from "../sensors.js";
 
 const quiet = {
@@ -36,34 +38,74 @@ const near = (a, b, tolerance = 1e-8) =>
 
 test("range, lidar and point clouds share raised and negative terrain without a phantom datum plane", () => {
   for (const height of [4, -4]) {
-    const heights = Array(25).fill(0); heights[12] = height;
-    const terrain = { kind: "heightfield", north: 40, east: 40, cellSize: 10, rows: 5, cols: 5, heights };
-    const suite = createSensorSuite({ ...quiet, latency: 0, lidarChannels: 1, lidarRays: 12, lidarVerticalMinDeg: -90, lidarVerticalMaxDeg: -90 });
+    const heights = Array(25).fill(0);
+    heights[12] = height;
+    const terrain = {
+      kind: "heightfield",
+      north: 40,
+      east: 40,
+      cellSize: 10,
+      rows: 5,
+      cols: 5,
+      heights,
+    };
+    const suite = createSensorSuite({
+      ...quiet,
+      latency: 0,
+      lidarChannels: 1,
+      lidarRays: 12,
+      lidarVerticalMinDeg: -90,
+      lidarVerticalMaxDeg: -90,
+    });
     suite.setTerrain(terrain);
     const reading = suite.update(state(0, { position: [60, 60, -10] }));
     near(reading.rangefinder.distanceM, 10 - height);
     reading.lidar.rangesM.forEach((r) => near(r, 10 - height));
     lidarPoints(reading.lidar).forEach((p) => near(p[2], -height));
-    const closeReading = suite.update(state(.1, { position: [60, 60, -height - .05] }));
+    const closeReading = suite.update(
+      state(0.1, { position: [60, 60, -height - 0.05] }),
+    );
     assert.equal(closeReading.rangefinder.valid, false);
     assert.equal(closeReading.rangefinder.reason, "no-return");
   }
 });
 
 test("terrain changes preserve delayed acquisitions, faults and invalid-change atomicity", () => {
-  const heights = Array(25).fill(0); heights[12] = 4;
-  const terrain = { kind: "heightfield", north: 40, east: 40, cellSize: 10, rows: 5, cols: 5, heights };
-  const suite = createSensorSuite({ ...quiet, latency: .2, rangefinderHz: 10 });
-  suite.setTerrain(terrain); suite.setFault("gps", true);
+  const heights = Array(25).fill(0);
+  heights[12] = 4;
+  const terrain = {
+    kind: "heightfield",
+    north: 40,
+    east: 40,
+    cellSize: 10,
+    rows: 5,
+    cols: 5,
+    heights,
+  };
+  const suite = createSensorSuite({
+    ...quiet,
+    latency: 0.2,
+    rangefinderHz: 10,
+  });
+  suite.setTerrain(terrain);
+  suite.setFault("gps", true);
   suite.update(state(0, { position: [60, 60, -10] }));
-  const valley = structuredClone(terrain); valley.heights[12] = -4;
+  const valley = structuredClone(terrain);
+  valley.heights[12] = -4;
   suite.setTerrain(valley);
-  suite.update(state(.1, { position: [60, 60, -10] }));
-  near(suite.update(state(.2, { position: [60, 60, -10] })).rangefinder.distanceM, 6);
-  const current = suite.update(state(.3, { position: [60, 60, -10] }));
-  near(current.rangefinder.distanceM, 14); assert.equal(current.faults.gps, true);
-  const bad = structuredClone(terrain); bad.heights[0] = 1;
-  const before = suite.snapshot(); assert.throws(() => suite.setTerrain(bad)); assert.deepEqual(suite.snapshot(), before);
+  suite.update(state(0.1, { position: [60, 60, -10] }));
+  near(
+    suite.update(state(0.2, { position: [60, 60, -10] })).rangefinder.distanceM,
+    6,
+  );
+  const current = suite.update(state(0.3, { position: [60, 60, -10] }));
+  near(current.rangefinder.distanceM, 14);
+  assert.equal(current.faults.gps, true);
+  const bad = structuredClone(terrain);
+  bad.heights[0] = 1;
+  const before = suite.snapshot();
+  assert.throws(() => suite.setTerrain(bad));
+  assert.deepEqual(suite.snapshot(), before);
 });
 const roll = (angle) => [Math.cos(angle / 2), Math.sin(angle / 2), 0, 0];
 const yaw = (angle) => [Math.cos(angle / 2), 0, 0, Math.sin(angle / 2)];
@@ -514,4 +556,94 @@ test("3D configuration and point reconstruction reject sparse, nonunit and incon
   );
   assert.throws(() => lidarPoints({ ...startup, reason: "dropout" }));
   assert.deepEqual(lidarPoints(startup), []);
+});
+
+test("GPS shares geographic projection and preserves declared vertical datum on valid, delayed and failed acquisitions", () => {
+  for (const verticalDatum of ["unspecified", "ellipsoidal", "orthometric"]) {
+    const origin = {
+      latitudeDeg: 25.033,
+      longitudeDeg: 179.999,
+      altitudeM: 123,
+      verticalDatum,
+    };
+    const config = {
+      ...quiet,
+      originLatitudeDeg: origin.latitudeDeg,
+      originLongitudeDeg: origin.longitudeDeg,
+      originAltitudeM: origin.altitudeM,
+      originVerticalDatum: verticalDatum,
+    };
+    const suite = createSensorSuite(config);
+    assert.equal(suite.snapshot().gps.verticalDatum, verticalDatum);
+    const pose = state(0, { position: [-500, 500, -12] });
+    const gps = suite.update(pose).gps;
+    const expected = localToGeographic(-500, 500, origin);
+    assert.equal(gps.latitudeDeg, expected.latitudeDeg);
+    assert.equal(gps.longitudeDeg, expected.longitudeDeg);
+    assert.equal(gps.altitudeM, 135);
+    assert.equal(gps.verticalDatum, verticalDatum);
+    suite.setFault("gps", true);
+    const failed = suite.update(state(0.2)).gps;
+    assert.equal(failed.valid, false);
+    assert.equal(failed.verticalDatum, verticalDatum);
+    assert.equal(failed.altitudeM, null);
+    assert.equal(suite.reset().gps.verticalDatum, verticalDatum);
+    const delayed = createSensorSuite({ ...config, latency: 0.1, dropout: 1 });
+    assert.equal(delayed.update(state()).gps.reason, "startup");
+    const dropped = delayed.update(state(0.1)).gps;
+    assert.equal(dropped.reason, "dropout");
+    assert.equal(dropped.verticalDatum, verticalDatum);
+    assert.equal(dropped.latitudeDeg, null);
+  }
+  for (const value of [
+    null,
+    0,
+    "msl",
+    "Ellipsoidal",
+    new String("orthometric"),
+  ])
+    assert.throws(
+      () => validateSensorConfig({ originVerticalDatum: value }),
+      /originVerticalDatum/,
+    );
+});
+
+test("geographic sensor origin and datum must match DEM provenance atomically", () => {
+  const geography = {
+    origin: {
+      latitudeDeg: 25.033,
+      longitudeDeg: 121.5654,
+      altitudeM: 20,
+      verticalDatum: "orthometric",
+    },
+    source: {
+      name: "terrain.tif",
+      sha256: "a".repeat(64),
+      crs: "EPSG:4326",
+      width: 3,
+      height: 3,
+      band: 1,
+      pixelInterpretation: "point",
+      heightUnit: "m",
+      scale: 1,
+      offset: 0,
+      resampling: "bilinear",
+      window: [0, 0, 3, 3],
+    },
+  };
+  const config = validateSensorConfig({ originVerticalDatum: "orthometric" });
+  const before = structuredClone({ geography, config });
+  assert.doesNotThrow(() => assertGeographicSensors({ geography }, config));
+  assert.doesNotThrow(() => assertGeographicSensors({ geography: null }, {}));
+  for (const [key, value] of [
+    ["originLatitudeDeg", 25],
+    ["originLongitudeDeg", 121],
+    ["originAltitudeM", 21],
+    ["originVerticalDatum", "ellipsoidal"],
+  ])
+    assert.throws(
+      () => assertGeographicSensors({ geography }, { ...config, [key]: value }),
+      /must match/,
+    );
+  assert.deepEqual({ geography, config }, before);
 });

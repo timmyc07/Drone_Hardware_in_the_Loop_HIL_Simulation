@@ -161,10 +161,10 @@ export function createCameraRenderer(renderer, scene) {
     materials.forEach((material) => material.dispose());
     materials.clear();
   }
-  async function captureCamera(snapshot, config = {}) {
+  async function captureCamera(snapshot, config = {}, geography = null) {
     checkAvailable();
     if (busy) throw new Error("A camera capture is already in progress");
-    const metadata = cameraMetadata(snapshot, config);
+    const metadata = cameraMetadata(snapshot, config, geography);
     busy = true;
     let reads = [];
     try {

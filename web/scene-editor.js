@@ -60,7 +60,10 @@ export function createSceneEditor({
     ])
       $(id).disabled = readonly;
     for (const id of terrainInputs)
-      $(id).disabled = readonly || draft.terrain.kind === "flat";
+      $(id).disabled =
+        readonly ||
+        draft.terrain.kind === "flat" ||
+        draft.terrain.kind === "dem";
     for (const name of terrainPresets) $("terrain-" + name).disabled = readonly;
     $("scene-apply").disabled = readonly || invalidInputs.size > 0;
     $("scene-export").disabled = !readonly && invalidInputs.size > 0;
@@ -119,14 +122,19 @@ export function createSceneEditor({
       $("terrain-east").value = terrain.kind === "flat" ? "" : terrain.east;
       $("terrain-cell").value = terrain.kind === "flat" ? "" : terrain.cellSize;
       $("terrain-heights").value =
-        terrain.kind === "flat"
+        terrain.kind === "flat" || terrain.kind === "dem"
           ? ""
           : Array.from({ length: terrain.rows }, (_, i) =>
               terrain.heights
                 .slice(i * terrain.cols, (i + 1) * terrain.cols)
                 .join(" "),
             ).join("\n");
-      $("terrain-error").textContent = "";
+      $("terrain-error").textContent =
+        terrain.kind === "dem"
+          ? "匯入地形的高度網格唯讀；選擇程序地形會移除地理來源。"
+          : applied.geography && !draft.geography
+            ? "套用程序地形時將移除地理來源與座標原點，並重設實驗。"
+            : "";
     }
     $("scene-course").value = draft.training;
     for (const option of $("scene-course").options)
@@ -393,6 +401,7 @@ export function createSceneEditor({
     $("terrain-" + name).onclick = () => {
       if (readonly) return;
       invalidInputs.delete(terrainInvalid);
+      draft.geography = null;
       if (name === "flat") draft.terrain = { kind: "flat" };
       else {
         const heights = Array(81).fill(0);
@@ -421,7 +430,12 @@ export function createSceneEditor({
     };
   const terrainInvalid = $("terrain-heights");
   function editTerrain() {
-    if (readonly || draft.terrain.kind === "flat") return;
+    if (
+      readonly ||
+      draft.terrain.kind === "flat" ||
+      draft.terrain.kind === "dem"
+    )
+      return;
     try {
       const text = $("terrain-heights").value.trim();
       if (text.length > 100000) throw new Error("矩陣內容過長");

@@ -3,6 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { Worker } from "node:worker_threads";
 import { validateRecording } from "../recording.js";
+import { createSimulation } from "../sim.js";
 
 test("worker runs, pauses, records simulation-time samples and exports validated data", async (t) => {
   const url = new URL("../worker.js", import.meta.url).href;
@@ -120,7 +121,7 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   const record = validateRecording(exported.recording);
   assert.equal(record.config.seed, 18);
   assert.equal(record.scenario, "step");
-  assert.equal(record.version, 10);
+  assert.equal(record.version, 11);
   assert.equal(record.sensorFrames.length, record.samples.length);
   assert.equal(record.sensorFrames[0].time, record.samples[0].time);
   assert.equal(record.setup.sensors.gpsNoiseM, 1.5);
@@ -493,6 +494,7 @@ test(
             // Keep payload small so this exercises the time limit rather than the separate data cap.
             worker.postMessage({
               type: "reset",
+              config: { startOnGround: true, batteryBasePower: 0 },
               setup: {
                 sensors: {
                   lidarRays: 12,
@@ -697,7 +699,7 @@ test(
     const exported = await call({ type: "apiExport" });
     assert.equal(exported.ok, true);
     const recording = validateRecording(exported.value);
-    assert.equal(recording.version, 10);
+    assert.equal(recording.version, 11);
     assert.ok(
       recording.events.some(
         (event) =>
@@ -913,4 +915,228 @@ test("tutorial entry is atomic and advances only with simulation time", async (t
       (event) => event.type === "scene" && event.value.training === "tutorial",
     ),
   );
+});
+
+test("geographic Worker reset and origin guards are atomic, then coverage stop exports the unchanged last physical tick", async (t) => {
+  const url = new URL("../worker.js", import.meta.url).href;
+  const worker = new Worker(
+    `
+    import {parentPort} from 'node:worker_threads';
+    let now=0,scheduled;
+    globalThis.performance={now:()=>now};
+    globalThis.setTimeout=fn=>{scheduled=fn;};
+    globalThis.postMessage=data=>parentPort.postMessage(data);
+    globalThis.onmessage=null;
+    parentPort.on('message',data=>{
+      if(data.advance){now+=100;scheduled();parentPort.postMessage({type:'advanced'});}
+      else globalThis.onmessage({data});
+    });
+    await import(${JSON.stringify(url)});
+  `,
+    { eval: true, type: "module" },
+  );
+  t.after(() => worker.terminate());
+  const next = (predicate) =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        worker.off("message", receive);
+        reject(new Error("Geographic worker timeout"));
+      }, 3000);
+      function receive(data) {
+        if (predicate(data)) {
+          clearTimeout(timer);
+          worker.off("message", receive);
+          resolve(data);
+        }
+      }
+      worker.on("message", receive);
+    });
+  await next((data) => data.message === "reset");
+  let requestId = 0;
+  const call = async (command) => {
+    const id = ++requestId,
+      pending = next(
+        (data) => data.type === "apiReply" && data.requestId === id,
+      );
+    worker.postMessage({ ...command, requestId: id });
+    return pending;
+  };
+  const inspect = async () => {
+    const reply = await call({ type: "inspect" });
+    assert.equal(reply.ok, true, reply.error);
+    return reply.value;
+  };
+  const exported = async () => {
+    const reply = await call({ type: "apiExport" });
+    assert.equal(reply.ok, true, reply.error);
+    return reply.value;
+  };
+  const scene = {
+    ...DEFAULT_SCENE,
+    terrain: {
+      kind: "dem",
+      north: -1,
+      east: -1,
+      cellSize: 1,
+      rows: 3,
+      cols: 3,
+      heights: Array(9).fill(0),
+    },
+    geography: {
+      origin: {
+        latitudeDeg: 25.033,
+        longitudeDeg: 121.5654,
+        altitudeM: 123,
+        verticalDatum: "orthometric",
+      },
+      source: {
+        name: "small-dem.tif",
+        sha256: "c".repeat(64),
+        crs: "EPSG:4326",
+        width: 3,
+        height: 3,
+        band: 1,
+        pixelInterpretation: "point",
+        heightUnit: "m",
+        scale: 1,
+        offset: 0,
+        resampling: "bilinear",
+        window: [0, 0, 3, 3],
+      },
+    },
+  };
+  const sensors = {
+    originLatitudeDeg: 25.033,
+    originLongitudeDeg: 121.5654,
+    originAltitudeM: 123,
+    originVerticalDatum: "orthometric",
+    lidarRays: 12,
+    lidarChannels: 1,
+    lidarVerticalMinDeg: -30,
+    lidarVerticalMaxDeg: -30,
+  };
+  const config = { seed: 17, noise: 0.1, turbulence: 0.2 };
+  const prior = await inspect(),
+    priorRecord = await exported();
+  let reply = await call({
+    type: "reset",
+    config,
+    setup: { scene, sensors: { ...sensors, originAltitudeM: 20 } },
+  });
+  assert.equal(reply.ok, false);
+  assert.deepEqual(await inspect(), prior);
+  assert.deepEqual(await exported(), priorRecord);
+  reply = await call({ type: "reset", config, setup: { scene, sensors } });
+  assert.equal(reply.ok, true, reply.error);
+  assert.equal(reply.value.snapshot.time, 0);
+  assert.equal(reply.value.running, false);
+  assert.deepEqual(reply.value.setup.scene, scene);
+  assert.equal(reply.value.sensors.gps.verticalDatum, "orthometric");
+  assert.equal(reply.value.sensors.gps.valid, true);
+  assert.ok(Math.abs(reply.value.sensors.gps.altitudeM - 125) < 10);
+  const weather = {
+    ...scene,
+    name: "Same survey, changed weather",
+    environment: { ...scene.environment, fog: 0.2, rain: 0.1 },
+  };
+  reply = await call({ type: "scene", value: weather });
+  assert.equal(reply.ok, true, reply.error);
+  assert.deepEqual(reply.value.setup.scene, weather);
+  const stable = await inspect(),
+    stableRecord = await exported();
+  for (const command of [
+    {
+      type: "scene",
+      value: {
+        ...weather,
+        geography: {
+          ...weather.geography,
+          origin: { ...weather.geography.origin, altitudeM: 124 },
+        },
+      },
+    },
+    {
+      type: "scene",
+      value: {
+        ...weather,
+        geography: {
+          ...weather.geography,
+          source: { ...weather.geography.source, sha256: "d".repeat(64) },
+        },
+      },
+    },
+    { type: "sensorConfig", value: { ...sensors, originLongitudeDeg: 121 } },
+    {
+      type: "sensorConfig",
+      value: { ...sensors, originVerticalDatum: "ellipsoidal" },
+    },
+  ]) {
+    reply = await call(command);
+    assert.equal(reply.ok, false);
+    assert.deepEqual(await inspect(), stable);
+    assert.deepEqual(
+      await exported(),
+      stableRecord,
+      "failed commands must not enter event history",
+    );
+  }
+  assert.equal(
+    (await call({ type: "targets", value: { roll: 0.2 } })).ok,
+    true,
+  );
+  const reference = createSimulation(config, { terrain: scene.terrain });
+  reference.setTargets({ roll: 0.2 });
+  let lastPhysical,
+    rejected = false;
+  for (let i = 0; i < 2000; i++) {
+    lastPhysical = reference.snapshot();
+    try {
+      reference.step();
+    } catch (error) {
+      assert.equal(error.code, "TERRAIN_COVERAGE");
+      rejected = true;
+      break;
+    }
+  }
+  assert.ok(rejected);
+  assert.deepEqual(reference.snapshot(), lastPhysical);
+  assert.equal((await call({ type: "play" })).ok, true);
+  let stopped;
+  for (let i = 0; i < 100; i++) {
+    const pending = next((data) => data.type === "advanced");
+    worker.postMessage({ advance: true });
+    await pending;
+    stopped = await inspect();
+    if (!stopped.running) break;
+  }
+  assert.equal(stopped.running, false);
+  assert.deepEqual(stopped.termination, {
+    reason: "terrain-coverage",
+    time: lastPhysical.time,
+  });
+  for (const [key, value] of Object.entries(lastPhysical))
+    assert.deepEqual(stopped.snapshot[key], value, key);
+  const pending = next((data) => data.type === "advanced");
+  worker.postMessage({ advance: true });
+  await pending;
+  assert.deepEqual(
+    (await inspect()).snapshot,
+    stopped.snapshot,
+    "paused coverage stop cannot advance physics",
+  );
+  const record = validateRecording(await exported());
+  assert.equal(record.version, 11);
+  assert.equal(record.modelVersion, "0.8.0");
+  assert.equal(record.termination.time, record.samples.at(-1).time);
+  assert.equal(record.samples.at(-1).time, lastPhysical.time);
+  assert.deepEqual(record.samples.at(-1).position, lastPhysical.position);
+  assert.deepEqual(record.samples.at(-1).quaternion, lastPhysical.quaternion);
+  assert.deepEqual(record.samples.at(-1).motors, lastPhysical.motors);
+  assert.equal(record.sensorFrames.at(-1).gps.verticalDatum, "orthometric");
+  assert.ok(
+    record.events.some(
+      (event) => event.type === "scene" && event.value.environment.fog === 0.2,
+    ),
+  );
+  assert.equal(record.setup.scene.environment.fog, 0);
 });

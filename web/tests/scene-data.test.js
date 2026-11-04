@@ -57,6 +57,7 @@ test("scene boundary rejects unknown, missing, sparse and invalid geometry and a
   const artifact = JSON.parse(sceneToJson(DEFAULT_SCENE));
   for (const patch of [
     { version: 1 },
+    { version: 2 },
     { frame: "ENU" },
     { units: "cm" },
     { format: "other" },
@@ -67,4 +68,60 @@ test("scene boundary rejects unknown, missing, sparse and invalid geometry and a
     );
   assert.throws(() => parseSceneJson(" ".repeat(SCENE_MAX_IMPORT_BYTES + 1)));
   assert.throws(() => parseSceneJson("中".repeat(SCENE_MAX_IMPORT_BYTES / 2)));
+});
+
+test("DEM scene round trips its full grid and provenance and enforces covered zero home", () => {
+  const geography = {
+    origin: {
+      latitudeDeg: 25,
+      longitudeDeg: 121,
+      altitudeM: 100,
+      verticalDatum: "orthometric",
+    },
+    source: {
+      name: "terrain.tif",
+      sha256: "a".repeat(64),
+      crs: "EPSG:4326",
+      width: 256,
+      height: 256,
+      band: 1,
+      pixelInterpretation: "area",
+      heightUnit: "m",
+      scale: 1,
+      offset: 0,
+      resampling: "bilinear",
+      window: [0, 0, 256, 256],
+    },
+  };
+  const terrain = {
+    kind: "dem",
+    north: -256,
+    east: -256,
+    rows: 129,
+    cols: 129,
+    cellSize: 4,
+    heights: Array.from(
+      { length: 129 * 129 },
+      (_, i) => ((i % 129) - 64) * 0.375,
+    ),
+  };
+  const scene = { ...DEFAULT_SCENE, terrain, geography };
+  const text = sceneToJson(scene);
+  assert.equal(JSON.parse(text).version, 3);
+  assert.deepEqual(parseSceneJson(text), scene);
+  assert.ok(new TextEncoder().encode(text).length <= SCENE_MAX_IMPORT_BYTES);
+  for (const invalid of [
+    { ...scene, geography: null },
+    { ...DEFAULT_SCENE, geography },
+    {
+      ...scene,
+      terrain: { ...terrain, heights: terrain.heights.map((h) => h + 1) },
+    },
+    { ...scene, terrain: { ...terrain, north: 1, cellSize: 1 } },
+    { ...scene, training: "runway" },
+  ])
+    assert.throws(() => validateScene(invalid));
+  const missing = { ...scene };
+  delete missing.geography;
+  assert.throws(() => validateScene(missing));
 });

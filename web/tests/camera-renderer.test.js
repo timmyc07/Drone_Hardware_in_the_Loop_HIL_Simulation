@@ -236,3 +236,34 @@ test("render exceptions restore every mesh/material and release busy; context lo
   assert.equal(f.passes.length, count);
   capture.dispose();
 });
+
+test("camera capture preserves the acquired geographic provenance", async () => {
+  const f = fixture();
+  const camera = createCameraRenderer(f.renderer, f.scene);
+  const geography = {
+    origin: {
+      latitudeDeg: 25.033,
+      longitudeDeg: 121.5654,
+      altitudeM: 123,
+      verticalDatum: "orthometric",
+    },
+    source: {
+      name: "terrain.tif",
+      sha256: "a".repeat(64),
+      crs: "EPSG:4326",
+      width: 100,
+      height: 80,
+      band: 1,
+      pixelInterpretation: "area",
+      heightUnit: "m",
+      scale: 1,
+      offset: 0,
+      resampling: "bilinear",
+      window: [0, 0, 100, 80],
+    },
+  };
+  const result = await camera.captureCamera(pose, config, geography);
+  assert.deepEqual(result.geography, geography);
+  assert.equal(result.version, 3);
+  camera.dispose();
+});

@@ -1,0 +1,92 @@
+{
+  "schema": "flight-lab-geographic-terrain-verification-v1",
+  "createdAt": "2026-11-04T21:45:42.635Z",
+  "files": {
+    "scene": "scene-dem.json",
+    "flight": "flight-dem.json",
+    "camera": "camera-dem.json",
+    "csv": "flight-dem.csv",
+    "source": "taipei-z13-6862-3507.tif"
+  },
+  "sha256": {
+    "scene": "4e800651f124ae6f52752f4d30fe876a36977bcb70d30ef5a945b7bf2b5894cd",
+    "flight": "20c2daffb312baec359e76c485c1b2e7e1f7eeb6a31e4c35ffb756ba337f81c1",
+    "camera": "5fdde80fd500f06a97accb4df758cdfdd60368f3fb31f21bcbfb739a064b9c2b",
+    "csv": "587680db5e0c3b90aed3b820bad2a05426d0824b061d961be887709d59545493",
+    "demSource": "af41ac17ed1abbf4ea7e673da6f5810bfde88c21189647a75b158244f59856a0"
+  },
+  "formats": {
+    "scene": 3,
+    "recording": 11,
+    "cameraDataset": 3,
+    "csvColumns": 165
+  },
+  "geography": {
+    "origin": {
+      "latitudeDeg": 25.025884063244828,
+      "longitudeDeg": 121.57470703125003,
+      "altitudeM": 128.25000190762057,
+      "verticalDatum": "unspecified"
+    },
+    "source": {
+      "name": "taipei-z13-6862-3507.tif",
+      "sha256": "af41ac17ed1abbf4ea7e673da6f5810bfde88c21189647a75b158244f59856a0",
+      "crs": "EPSG:3857",
+      "width": 512,
+      "height": 512,
+      "band": 1,
+      "pixelInterpretation": "point",
+      "heightUnit": "m",
+      "scale": 1,
+      "offset": 0,
+      "resampling": "bilinear",
+      "window": [
+        226,
+        226,
+        286,
+        286
+      ]
+    },
+    "gpsOriginMatches": true
+  },
+  "terrain": {
+    "rows": 65,
+    "cols": 65,
+    "cellSizeM": 7.8125,
+    "heightRangeM": [
+      -105.72212256412072,
+      46.54991023012866
+    ]
+  },
+  "replay": {
+    "sampleCount": 1051,
+    "sensorFrameCount": 1051,
+    "steps": 10495,
+    "eventCount": 4,
+    "maxAbsoluteErrors": {
+      "position": 0,
+      "quaternion": 0,
+      "motors": 0,
+      "velocity": 0,
+      "rates": 0,
+      "sensors": 2.1316282072803006e-14
+    }
+  },
+  "camera": {
+    "frameCount": 1,
+    "terrainClassId": 1,
+    "frames": [
+      {
+        "index": 0,
+        "time": 52.47500000000839,
+        "class1Pixels": 75684,
+        "comparedPixels": 75684,
+        "rayMisses": 0,
+        "maxErrorM": 0.0021447479951675064,
+        "meanErrorM": 0.00027227685968293227
+      }
+    ],
+    "method": "Pixel-centre optical ray transformed to NED, compared against nearest shared terrain triangle; only class 1 pixels with all 3×3 neighbours class 1 are used.",
+    "precision": "Depth shader rounds to 1 mm (nominal 0.5 mm); 10 mm practical margin permits raster/interpolation variation, not a claim of 0.5 mm accuracy."
+  }
+}

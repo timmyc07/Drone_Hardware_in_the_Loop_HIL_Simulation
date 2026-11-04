@@ -331,3 +331,146 @@ test("DDA nearest hits agree with an independent triangle intersection reference
     else near(actual?.distanceM, expected, 1e-7);
   }
 });
+
+test("DEM preserves surveyed heights, protected-area relief and bounded coverage without invented exterior ground", () => {
+  const raw = field({
+    kind: "dem",
+    north: -10,
+    east: -10,
+    heights: [-1000, 3, 4, 5, 6, 7, 8, 9, 1000],
+  });
+  const terrain = createTerrain(raw);
+  assert.deepEqual(terrain.data.heights, raw.heights);
+  assert.equal(terrain.sample(-10, -10).heightM, -1000);
+  near(terrain.sample(10, 10).heightM, 1000);
+  assert.equal(terrain.contains(-10, -10), true);
+  assert.equal(terrain.contains(10, 10), true);
+  for (const point of [
+    [-10.001, 0],
+    [10.001, 0],
+    [0, -10.001],
+    [0, 10.001],
+  ]) {
+    assert.equal(terrain.contains(...point), false);
+    assert.throws(() => terrain.sample(...point), { code: "TERRAIN_COVERAGE" });
+    assert.equal(terrain.raycast([...point, -2000], [0, 0, 1], 0, 4000), null);
+    assert.equal(terrain.sweep([...point, -2000], [...point, 2000]), null);
+  }
+  assert.equal(terrain.contains(NaN, 0), false);
+  assert.equal(terrain.mesh().positionsNed.length, 9 * 3);
+  assert.equal(terrain.mesh().indices.length, 4 * 6);
+  for (const legacy of [createTerrain(), createTerrain(field())]) {
+    assert.equal(legacy.contains(1e6, -1e6), true);
+    assert.equal(legacy.sample(1e6, -1e6).heightM, 0);
+  }
+  assert.throws(
+    () =>
+      validateTerrain({ ...raw, heights: [...raw.heights.slice(0, -1), 1001] }),
+    /height/,
+  );
+  assert.throws(
+    () =>
+      validateTerrain({
+        ...raw,
+        heights: [...raw.heights.slice(0, -1), -1001],
+      }),
+    /height/,
+  );
+  const maximum = createTerrain({
+    kind: "dem",
+    north: -64,
+    east: -64,
+    cellSize: 1,
+    rows: 129,
+    cols: 129,
+    heights: Array(129 ** 2).fill(4),
+  });
+  assert.equal(maximum.sample(64, 64).heightM, 4);
+  assert.throws(
+    () =>
+      validateTerrain({
+        ...maximum.data,
+        rows: 130,
+        heights: Array(130 * 129).fill(0),
+      }),
+    /resolution/,
+  );
+});
+
+test("DEM samples, rays, sweeps and CPU mesh use the identical A-D triangles including boundary crossings", () => {
+  const terrain = createTerrain({
+    kind: "dem",
+    north: 0,
+    east: 0,
+    cellSize: 10,
+    rows: 2,
+    cols: 2,
+    heights: [2, 6, 10, 22],
+  });
+  const { positionsNed, indices } = terrain.mesh();
+  // Each triangle's centroid is an independent barycentric mesh reference.
+  for (let i = 0; i < indices.length; i += 3) {
+    const vertices = indices
+      .slice(i, i + 3)
+      .map((index) => positionsNed.slice(index * 3, index * 3 + 3));
+    const center = [0, 1, 2].map((axis) =>
+      vertices.reduce((sum, v) => sum + v[axis] / 3, 0),
+    );
+    near(terrain.sample(center[0], center[1]).heightM, -center[2]);
+    vectorNear(
+      terrain.raycast([center[0], center[1], -40], [0, 0, 1], 0, 100)
+        .positionNed,
+      center,
+    );
+    vectorNear(
+      terrain.sweep([center[0], center[1], -40], [center[0], center[1], 20])
+        .positionNed,
+      center,
+    );
+  }
+  const boundary = terrain.raycast([-10, 0, -2], [1, 0, 0], 0, 30);
+  near(boundary.distanceM, 10);
+  vectorNear(boundary.positionNed, [0, 0, -2]);
+  near(terrain.sweep([-10, 0, -2], [20, 0, -2]).fraction, 1 / 3);
+  assert.equal(terrain.sweep([-10, 0, -30], [20, 0, -30]), null);
+  assert.equal(terrain.raycast([20, 20, -10], [0, 0, 1], 0, 100), null);
+});
+
+test("runway compatibility follows covered planar geometry rather than the terrain kind", () => {
+  const data = {
+    kind: "dem",
+    north: -20,
+    east: -50,
+    cellSize: 10,
+    rows: 25,
+    cols: 11,
+    heights: Array(25 * 11).fill(0),
+  };
+  assert.equal(createTerrain(data).runwayCompatible, true);
+  assert.equal(createTerrain().runwayCompatible, true);
+  assert.equal(createTerrain(field()).runwayCompatible, true);
+  assert.equal(createTerrain({ ...data, north: -9 }).runwayCompatible, false);
+  assert.equal(
+    createTerrain({ ...data, rows: 23, heights: Array(23 * 11).fill(0) })
+      .runwayCompatible,
+    false,
+  );
+  const relief = [...data.heights];
+  relief[4 * 11 + 4] = 0.001;
+  assert.equal(
+    createTerrain({ ...data, heights: relief }).runwayCompatible,
+    false,
+  );
+  relief[4 * 11 + 4] = 5e-9;
+  assert.equal(
+    createTerrain({ ...data, heights: relief }).runwayCompatible,
+    true,
+  );
+  relief[4 * 11 + 4] = 0;
+  relief[0] = 10;
+  assert.equal(
+    createTerrain({ ...data, heights: relief }).runwayCompatible,
+    true,
+    "relief outside protected area is retained",
+  );
+});

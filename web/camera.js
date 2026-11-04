@@ -1,4 +1,5 @@
 import { gimbalRotation, validateGimbalState } from "./gimbal.js";
+import { validateGeography } from "./geography.js";
 import { AIRFRAMES } from "./rotor-geometry.js";
 
 export const DEFAULT_CAMERA_CONFIG = Object.freeze({
@@ -115,7 +116,11 @@ const multiply = (a, b) =>
       a[row * 3 + 2] * b[col + 6]
     );
   });
-export function cameraMetadata(snapshot, input = DEFAULT_CAMERA_CONFIG) {
+export function cameraMetadata(
+  snapshot,
+  input = DEFAULT_CAMERA_CONFIG,
+  geography = null,
+) {
   plain(snapshot);
   const config = validateCameraConfig(input),
     { width, height, horizontalFovDeg, nearM, farM } = config;
@@ -145,7 +150,8 @@ export function cameraMetadata(snapshot, input = DEFAULT_CAMERA_CONFIG) {
   );
   const fx = width / (2 * Math.tan((horizontalFovDeg * Math.PI) / 360));
   return {
-    version: 2,
+    version: 3,
+    geography: geography === null ? null : validateGeography(geography),
     time: finite(snapshot.time, 0, 1800.001),
     airframe: snapshot.airframe,
     config,
@@ -183,6 +189,7 @@ function checkFrame(value) {
       gimbal: value.gimbal,
     },
     value.config,
+    value.geography,
   );
   for (const key of Object.keys(metadata)) {
     // Trigonometric results can differ by a few ULPs across browser and Node engines.
@@ -313,7 +320,7 @@ export function cameraDatasetToJson(frames) {
   });
   return JSON.stringify({
     format: "flight-lab-camera-dataset",
-    version: 2,
+    version: 3,
     encoding,
     classes: classLegend,
     frames: encoded,
@@ -325,7 +332,7 @@ export function parseCameraDataset(text) {
   const data = plain(JSON.parse(text));
   if (
     data.format !== "flight-lab-camera-dataset" ||
-    data.version !== 2 ||
+    data.version !== 3 ||
     !same(data.encoding, encoding) ||
     !same(data.classes, classLegend) ||
     !Array.isArray(data.frames) ||

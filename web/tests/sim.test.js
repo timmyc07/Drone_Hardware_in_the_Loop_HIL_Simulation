@@ -1780,3 +1780,394 @@ test("wing-borne VTOL collides with terrain instead of gaining a fictitious hill
   assert.equal(s.armed, false);
   assert.ok(s.position[0] < 222);
 });
+
+const boundedDem = (halfSize = 10, height = 0) => ({
+  kind: "dem",
+  north: -halfSize,
+  east: -halfSize,
+  cellSize: halfSize,
+  rows: 3,
+  cols: 3,
+  heights: Array(9).fill(height),
+});
+
+test("DEM coverage rejection preserves the complete last tick and random/controller history", () => {
+  const config = {
+    noise: 0.2,
+    turbulence: 0.3,
+    latency: 0.02,
+    dropout: 0.1,
+    seed: 71,
+  };
+  const sim = createSimulation(config, { terrain: boundedDem(1) });
+  const reference = createSimulation(config, { terrain: boundedDem(50) });
+  sim.setTargets({ roll: 0.2 });
+  reference.setTargets({ roll: 0.2 });
+  let rejected = false;
+  for (let i = 0; i < 2000; i++) {
+    const before = sim.snapshot();
+    try {
+      sim.step();
+    } catch (error) {
+      assert.equal(error.code, "TERRAIN_COVERAGE");
+      assert.deepEqual(
+        sim.snapshot(),
+        before,
+        "all published state must remain atomic",
+      );
+      assert.throws(() => sim.step(), { code: "TERRAIN_COVERAGE" });
+      assert.deepEqual(sim.snapshot(), before);
+      sim.setTerrain(boundedDem(50));
+      assert.deepEqual(
+        sim.step(),
+        reference.step(),
+        "retry must reproduce noise, sensor queues, PID and physics",
+      );
+      rejected = true;
+      break;
+    }
+    assert.deepEqual(sim.snapshot(), reference.step());
+  }
+  assert.ok(rejected, "physical roll must reach the surveyed boundary");
+});
+
+test("DEM scene replacement rejects missing current or AGL coverage atomically and reset restores the constructor surface", () => {
+  const sim = createSimulation(
+    { startOnGround: true },
+    { terrain: boundedDem(10, 6) },
+  );
+  assert.equal(sim.snapshot().ground.heightM, 6);
+  assert.equal(sim.snapshot().position[2], -6);
+  sim.takeoff();
+  advance(sim, 10);
+  near(sim.snapshot().ground.clearanceM, 2, 0.05);
+  sim.setMode("position");
+  sim.setPositionTarget({
+    north: 5,
+    east: 0,
+    altitude: 3,
+    altitudeReference: "agl",
+  });
+  const before = sim.snapshot();
+  assert.throws(() => sim.setTerrain({ ...boundedDem(10), north: 20 }), {
+    code: "TERRAIN_COVERAGE",
+  });
+  assert.deepEqual(sim.snapshot(), before);
+  assert.throws(() => sim.setTerrain(boundedDem(1)), {
+    code: "TERRAIN_COVERAGE",
+  });
+  assert.deepEqual(sim.snapshot(), before);
+  sim.reset();
+  assert.deepEqual(
+    sim.snapshot(),
+    createSimulation(
+      { startOnGround: true },
+      { terrain: boundedDem(10, 6) },
+    ).snapshot(),
+  );
+});
+
+test("DEM slopes retain real wing collision and reject unsupported runway operations without flattening", () => {
+  const terrain = {
+    kind: "dem",
+    north: -10,
+    east: -10,
+    cellSize: 50,
+    rows: 3,
+    cols: 3,
+    heights: [0, 0, 0, 80, 80, 80, 100, 100, 100],
+  };
+  assert.throws(
+    () =>
+      createSimulation(
+        { airframe: "fixedwing", startOnGround: true },
+        { terrain },
+      ),
+    /runway/,
+  );
+  const sim = createSimulation({ airframe: "fixedwing" }, { terrain });
+  const before = sim.snapshot();
+  for (const mode of ["takeoff", "land"]) {
+    assert.throws(() => sim.setMode(mode), /runway/);
+    assert.deepEqual(sim.snapshot(), before);
+  }
+  let state;
+  for (let i = 0; i < 2000; i++) {
+    state = sim.step();
+    if (state.status === "crashed") break;
+  }
+  assert.equal(state.status, "crashed");
+  assert.equal(state.navigation.reason, "terrain-impact");
+  assert.equal(state.armed, false);
+  assert.ok(
+    state.ground.heightM > 20,
+    "real relief must remain in the runway area",
+  );
+  assert.throws(
+    () =>
+      createSimulation(
+        { startOnGround: true },
+        { controlSource: "external", terrain: boundedDem() },
+      ),
+    /flat/,
+  );
+});
+
+test("covered genuinely flat DEM supports the full physical fixed-wing runway flight cycle", () => {
+  const terrain = {
+    kind: "dem",
+    north: -500,
+    east: -500,
+    cellSize: 50,
+    rows: 21,
+    cols: 21,
+    heights: Array(21 ** 2).fill(0),
+  };
+  const sim = createSimulation(
+    { airframe: "fixedwing", startOnGround: true },
+    { terrain },
+  );
+  sim.takeoff();
+  let last = sim.snapshot(),
+    sawGroundRoll = false,
+    sawAirborne = false;
+  for (let i = 0; i < 40 * 200; i++) {
+    const next = sim.step();
+    assert.ok(
+      Math.hypot(...next.position.map((v, j) => v - last.position[j])) < 0.2,
+    );
+    if (next.position[0] > 1 && next.ground.clearanceM === 0)
+      sawGroundRoll = true;
+    if (next.ground.clearanceM > 5) sawAirborne = true;
+    last = next;
+    if (next.runway.takeoffPhase === "complete") break;
+  }
+  assert.ok(sawGroundRoll && sawAirborne);
+  assert.equal(last.runway.takeoffPhase, "complete");
+  sim.setMode("land");
+  let touchdown = false;
+  for (let i = 0; i < 140 * 200; i++) {
+    last = sim.step();
+    if (last.runway.weightOnWheels && last.position[0] > -5) touchdown = true;
+    if (!last.armed) break;
+  }
+  assert.ok(touchdown);
+  assert.equal(last.status, "landed");
+  assert.equal(last.armed, false);
+  assert.equal(last.ground.clearanceM, 0);
+  assert.equal(last.runway.onRunway, true);
+});
+
+function deepValley() {
+  const profile = [0, 0, 0, -30, -60, -90, -110, -110, -110, -110, -110];
+  return {
+    kind: "dem",
+    north: -10,
+    east: -10,
+    cellSize: 10,
+    rows: profile.length,
+    cols: 3,
+    heights: profile.flatMap((height) => [height, height, height]),
+  };
+}
+
+test("DEM negative datum commands and missions reach a real valley while AGL remains a nonnegative clearance", () => {
+  const sim = createSimulation({}, { terrain: deepValley() });
+  sim.setMode("position");
+  sim.setPositionTarget({ north: 60, east: 0, altitude: 2 });
+  advance(sim, 35);
+  near(sim.snapshot().position[0], 60, 0.2);
+  // Descend in controlled increments; a 110m instantaneous demand is not terrain avoidance.
+  for (const altitude of [-8, -28, -48, -68, -88, -108]) {
+    sim.setTargets({ altitude });
+    advance(sim, 8);
+  }
+  let s = sim.snapshot();
+  near(-s.position[2], -108, 0.05);
+  near(s.ground.heightM, -110);
+  near(s.ground.clearanceM, 2, 0.05);
+  assert.equal(s.navigation.altitudeReference, "datum");
+  assert.equal(s.status, "flying");
+  const before = s;
+  assert.throws(
+    () =>
+      sim.setPositionTarget({
+        north: 60,
+        east: 0,
+        altitude: -1,
+        altitudeReference: "agl",
+      }),
+    /altitude/,
+  );
+  assert.deepEqual(sim.snapshot(), before);
+  sim.setPositionTarget({
+    north: 60,
+    east: 0,
+    altitude: 2,
+    altitudeReference: "agl",
+  });
+  advance(sim, 5);
+  near(sim.snapshot().ground.clearanceM, 2, 0.05);
+  sim.setMission([{ north: 70, east: 0, altitude: -108, hold: 0.5 }]);
+  sim.setMode("mission");
+  s = advance(sim, 18);
+  assert.equal(s.navigation.completed, true);
+  near(s.position[0], 70, 0.3);
+  near(-s.position[2], -108, 0.05);
+  assert.equal(s.navigation.altitudeReference, "datum");
+});
+
+test("negative datum trust boundaries depend on active DEM without broadening flat or legacy targets", () => {
+  for (const terrain of [
+    { kind: "flat" },
+    {
+      kind: "heightfield",
+      north: 40,
+      east: 40,
+      cellSize: 1,
+      rows: 3,
+      cols: 3,
+      heights: Array(9).fill(0),
+    },
+  ]) {
+    const sim = createSimulation({}, { terrain });
+    sim.setMode("position");
+    const before = sim.snapshot();
+    assert.throws(() => sim.setTargets({ altitude: -1 }), /altitude/);
+    assert.throws(
+      () => sim.setPositionTarget({ north: 0, east: 0, altitude: -1 }),
+      /altitude/,
+    );
+    assert.throws(
+      () => sim.setMission([{ north: 0, east: 0, altitude: -1, hold: 0 }]),
+      /altitude/,
+    );
+    assert.deepEqual(sim.snapshot(), before);
+  }
+  const sim = createSimulation({}, { terrain: deepValley() });
+  sim.setMode("position");
+  assert.doesNotThrow(() => sim.setTargets({ altitude: -1000 }));
+  assert.doesNotThrow(() =>
+    sim.setPositionTarget({ north: 60, east: 0, altitude: -1000 }),
+  );
+  assert.doesNotThrow(() =>
+    sim.setMission([{ north: 60, east: 0, altitude: -1000, hold: 0 }]),
+  );
+  const before = sim.snapshot();
+  for (const altitude of [-1000.01, 500.01, NaN]) {
+    assert.throws(() => sim.setTargets({ altitude }), /altitude/);
+    assert.throws(
+      () => sim.setPositionTarget({ north: 60, east: 0, altitude }),
+      /altitude/,
+    );
+    assert.throws(
+      () => sim.setMission([{ north: 60, east: 0, altitude, hold: 0 }]),
+      /altitude/,
+    );
+    assert.deepEqual(sim.snapshot(), before);
+  }
+});
+
+// Original 3x3 center samples from taipei-z13-6862-3507.tif, imported at radius250/grid65.
+// Source SHA256 af41ac17ed1abbf4ea7e673da6f5810bfde88c21189647a75b158244f59856a0.
+const taipeiHomeSlope = {
+  kind: "dem",
+  north: -7.8125,
+  east: -7.8125,
+  cellSize: 7.8125,
+  rows: 3,
+  cols: 3,
+  heights: [
+    -4.607935982917155, -4.406080355844082, -3.9394520658867833,
+    -0.17518156259455964, 0, 0.5260885110098741, 4.186640878653549,
+    4.203068660435662, 4.585304043578333,
+  ],
+};
+
+test("real Taipei slope supports motor spool and physical rotor takeoff without flattening or a false landing impact", () => {
+  for (const airframe of ["quadrotor", "hexarotor", "octorotor", "vtol"]) {
+    const sim = createSimulation(
+      { airframe, startOnGround: true },
+      { terrain: taipeiHomeSlope },
+    );
+    const original = sim.snapshot();
+    assert.ok(
+      original.ground.normalNed[2] > -Math.cos(Math.PI / 12),
+      "real home slope exceeds gentle-landing limit",
+    );
+    assert.equal(original.ground.clearanceM, 0);
+    sim.takeoff();
+    const first = sim.step();
+    assert.notEqual(first.status, "crashed");
+    assert.equal(first.armed, true);
+    assert.ok(
+      first.motors.every((value) => value > 0 && value < 0.2),
+      "motors must actually spool, never teleport to flight speed",
+    );
+    let previous = first,
+      lifted = false;
+    for (let i = 1; i < 4000; i++) {
+      const s = sim.step();
+      assert.notEqual(s.status, "crashed");
+      assert.ok(
+        s.ground.clearanceM >= -1e-8,
+        "support must not penetrate the surveyed surface",
+      );
+      assert.ok(
+        Math.hypot(...s.position.map((v, j) => v - previous.position[j])) <
+          0.03,
+        "liftoff must be continuous",
+      );
+      if (s.ground.clearanceM > 0.05) lifted = true;
+      previous = s;
+    }
+    assert.ok(lifted);
+    assert.equal(previous.armed, true);
+    near(previous.ground.clearanceM, 2, 0.03);
+    near(Math.hypot(...previous.velocity), 0, 0.02);
+    near(Math.hypot(previous.position[0], previous.position[1]), 0, 0.05);
+    assert.ok(
+      previous.ground.normalNed[2] > -Math.cos(Math.PI / 12),
+      "the surveyed slope must remain steep",
+    );
+    assert.deepEqual(
+      createSimulation(
+        { airframe, startOnGround: true },
+        { terrain: taipeiHomeSlope },
+      ).snapshot(),
+      original,
+    );
+  }
+});
+
+test("existing slope support does not excuse a new airborne steep landing or invent unlimited static friction", () => {
+  const landing = createSimulation({}, { terrain: taipeiHomeSlope });
+  landing.setMode("land");
+  let s;
+  for (let i = 0; i < 3000; i++) {
+    s = landing.step();
+    if (s.status === "crashed") break;
+  }
+  assert.equal(s.status, "crashed");
+  assert.equal(s.navigation.reason, "terrain-impact");
+  assert.equal(s.armed, false);
+  const steep = {
+    kind: "dem",
+    north: -10,
+    east: -10,
+    cellSize: 10,
+    rows: 3,
+    cols: 3,
+    heights: [-10, -10, -10, 0, 0, 0, 10, 10, 10],
+  };
+  const slipping = createSimulation(
+    { startOnGround: true },
+    { terrain: steep },
+  );
+  slipping.takeoff();
+  const specific = slipping.readSensors().specificForceFrd;
+  assert.ok(
+    specific[0] < -0.5,
+    "finite mu=.8 cannot cancel all downslope gravity on a 45-degree surface",
+  );
+});

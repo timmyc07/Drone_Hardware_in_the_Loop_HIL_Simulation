@@ -1,5 +1,9 @@
 import { createSimulation, validateConfig, bodyToNedAngles } from "./sim.js";
-import { DEFAULT_SENSOR_CONFIG, validateSensorConfig } from "./sensors.js";
+import {
+  DEFAULT_SENSOR_CONFIG,
+  validateSensorConfig,
+  assertGeographicSensors,
+} from "./sensors.js";
 import {
   TRAINING_COURSES,
   TUTORIAL_STEPS,
@@ -14,8 +18,8 @@ import {
   validateGimbalState,
 } from "./gimbal.js";
 
-export const RECORDING_VERSION = 10;
-export const MODEL_VERSION = "0.7.0";
+export const RECORDING_VERSION = 11;
+export const MODEL_VERSION = "0.8.0";
 const MODES = ["attitude", "position", "mission", "rtl", "land", "takeoff"];
 const TAKEOFF_PHASES = [
   "idle",
@@ -89,6 +93,8 @@ export function validateSetup(value, config = {}) {
   const gimbal = validateGimbalSettings(merged.gimbal);
   const validatedConfig = validateConfig(object(config));
   const scene = validateScene(merged.scene, validatedConfig.airframe);
+  const sensors = validateSensorConfig(merged.sensors);
+  assertGeographicSensors(scene, sensors);
   const sim = createSimulation(validatedConfig, {
     gimbal,
     terrain: scene.terrain,
@@ -103,14 +109,14 @@ export function validateSetup(value, config = {}) {
     mode,
     mission,
     scene,
-    sensors: validateSensorConfig(merged.sensors),
+    sensors,
     gimbal,
   };
 }
 function targets(value, partial = false, automatic = false) {
   object(value);
   const limits = {
-    altitude: [0, 500],
+    altitude: [-1000, 500],
     roll: [-Math.PI / 6, Math.PI / 6],
     pitch: [-Math.PI / 6, Math.PI / 6],
     yawRate: [-2, 2],
@@ -123,7 +129,7 @@ function targets(value, partial = false, automatic = false) {
     if (!partial || Object.hasOwn(value, key))
       result[key] = number(
         value[key],
-        automatic && key === "altitude" ? -50 : min,
+        automatic && key === "altitude" ? -1000 : min,
         automatic && key === "altitude" ? 1e9 : max,
       );
   return result;
@@ -333,7 +339,7 @@ function sample(
     positionHeight = nav.altitude[1];
   }
   const altitudeReference = choice(reference, ["datum", "agl"]),
-    positionAltitude = number(positionHeight, -50);
+    positionAltitude = number(positionHeight, -1000);
   if (
     altitudeReference === "agl" &&
     (mode !== "position" ||
@@ -472,7 +478,7 @@ function flight(value) {
     transitionProgress: number(value.transitionProgress, 0, 1),
   };
 }
-function event(input, sim) {
+function event(input, sim, initialScene) {
   object(input);
   const result = { time: number(input.time, 0, 1800.001), type: input.type };
   switch (input.type) {
@@ -490,6 +496,7 @@ function event(input, sim) {
       break;
     case "sensorConfig":
       result.value = validateSensorConfig(input.value);
+      assertGeographicSensors(initialScene, result.value);
       break;
     case "sensorFault": {
       const fault = object(input.value);
@@ -522,6 +529,13 @@ function event(input, sim) {
       break;
     case "scene":
       result.value = validateScene(input.value, sim.snapshot().airframe);
+      if (
+        JSON.stringify(result.value.geography ?? null) !==
+        JSON.stringify(initialScene.geography ?? null)
+      )
+        throw new Error(
+          "Scene geography must remain fixed throughout a recording",
+        );
       sim.setTerrain(result.value.terrain);
       break;
     case "fault":
@@ -603,6 +617,7 @@ export function validateSensorFrame(value, sensorConfig = {}) {
     };
     if (name === "gps")
       Object.assign(channel, {
+        verticalDatum: choice(raw.verticalDatum, [config.originVerticalDatum]),
         latitudeDeg: payload("latitudeDeg", (v) => number(v, -90, 90)),
         longitudeDeg: payload("longitudeDeg", (v) => number(v, -180, 180)),
         altitudeM: payload("altitudeM", (v) => number(v, -1e6, 1e6)),
@@ -701,7 +716,7 @@ export function validateRecording(value) {
   object(value);
   if (value.version !== RECORDING_VERSION)
     throw new Error(
-      "Unsupported recording version: version 10 required; legacy recordings are not supported",
+      "Unsupported recording version: version 11 required; legacy recordings are not supported",
     );
   if (
     value.format !== "flight-lab" ||
@@ -743,7 +758,7 @@ export function validateRecording(value) {
   });
   let lastEvent = -1;
   const events = Array.from(value.events, (input) => {
-    const result = event(input, sim);
+    const result = event(input, sim, setup.scene);
     if (result.time < lastEvent) throw new Error("Events out of order");
     lastEvent = result.time;
     return result;
@@ -845,6 +860,23 @@ export function validateRecording(value) {
   });
   if (lastEvent > lastTime + 1e-8)
     throw new Error("Event occurs after the last sample");
+  let termination = null;
+  if (value.termination !== null) {
+    const input = object(value.termination);
+    if (
+      Reflect.ownKeys(input).length !== 2 ||
+      Reflect.ownKeys(input).some((key) => !["reason", "time"].includes(key))
+    )
+      throw new Error("Invalid recording termination fields");
+    termination = {
+      reason: choice(input.reason, ["terrain-coverage"]),
+      time: number(input.time, 0, 1800.001),
+    };
+    if (termination.time !== lastTime || activeTerrain.data.kind !== "dem")
+      throw new Error(
+        "Terrain coverage termination requires the final DEM sample time",
+      );
+  }
   return {
     format: "flight-lab",
     version: RECORDING_VERSION,
@@ -855,6 +887,7 @@ export function validateRecording(value) {
     dt: 0.005,
     setup,
     runtime: cleanRuntime,
+    termination,
     events,
     samples,
     sensorFrames,
@@ -1002,6 +1035,7 @@ export function recordingToCsv(record) {
     "ground_normal_d",
     "position_altitude_reference_code",
     "position_altitude_m",
+    "gps_vertical_datum_code",
   ];
   const rows = samples.map((s, index) =>
     [
@@ -1100,6 +1134,9 @@ export function recordingToCsv(record) {
       ...s.ground.normalNed,
       ["datum", "agl"].indexOf(s.navigation.altitudeReference),
       s.navigation.positionAltitude,
+      ["unspecified", "ellipsoidal", "orthometric"].indexOf(
+        sensorFrames[index].gps.verticalDatum,
+      ),
     ].join(","),
   );
   return [header.join(","), ...rows].join("\n");

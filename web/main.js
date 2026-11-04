@@ -40,7 +40,9 @@ import {
   resolveTrainingGates,
 } from "./training.js";
 import { createSceneEditor } from "./scene-editor.js";
+import { createDemEditor } from "./dem-editor.js";
 import { validateScene } from "./scene-data.js";
+import { createTerrain } from "./terrain.js";
 import { CAPABILITIES, SOURCES } from "./capabilities.js";
 
 const $ = (id) => document.getElementById(id);
@@ -49,6 +51,12 @@ const storageKey = "flight-lab-config-v1";
 let config = { ...DEFAULT_CONFIG, startOnGround: true };
 let sensorConfig = { ...DEFAULT_SENSOR_CONFIG };
 let cameraConfig = { ...DEFAULT_CAMERA_CONFIG };
+const ORIGIN_KEYS = [
+  "originLatitudeDeg",
+  "originLongitudeDeg",
+  "originAltitudeM",
+  "originVerticalDatum",
+];
 let sensors;
 let replaySensorIndex = 0;
 try {
@@ -72,6 +80,9 @@ try {
 }
 
 let scenario = "hover";
+let localSensorOrigin = Object.fromEntries(
+  ORIGIN_KEYS.map((key) => [key, sensorConfig[key]]),
+);
 let running = false;
 let latest;
 let history = [];
@@ -82,11 +93,14 @@ let replayEventIndex = 0;
 let rendering = true;
 let scene;
 let sceneEditor;
+let demEditor;
 let lastRenderedSceneKey = "";
 let lastRenderedSceneReadonly = false;
 let toastTimer;
 let sampleCount = 0;
 let storageLimited = false;
+let terrainTermination = null;
+let runwayCompatible = true;
 let exportedTime = 0;
 const dirty = () =>
   !replay && sampleCount > 1 && (latest?.time || 0) > exportedTime + 1e-8;
@@ -208,6 +222,9 @@ function setPlaying(value) {
       : latest?.time > 0
         ? "實驗暫停，資料已保留"
         : "準備就緒，開始你的實驗";
+  if (!externalActive && terrainTermination && !value)
+    $("run-label").textContent =
+      "已到達高程資料邊界，請調整航線或更換地形範圍。";
   const label =
     latest?.status === "crashed"
       ? "碰撞停機"
@@ -447,7 +464,9 @@ $("settings-form").onsubmit = async (event) => {
       Object.fromEntries(
         Object.keys(DEFAULT_SENSOR_CONFIG).map((key) => [
           key,
-          Number($(`sensor-config-${key}`).value),
+          key === "originVerticalDatum"
+            ? $(`sensor-config-${key}`).value
+            : Number($(`sensor-config-${key}`).value),
         ]),
       ),
     );
@@ -490,12 +509,16 @@ $("settings-form").onsubmit = async (event) => {
     }
     config = validated;
     sensorConfig = nextSensors;
+    if (!sceneEditor?.getApplied().geography)
+      localSensorOrigin = Object.fromEntries(
+        ORIGIN_KEYS.map((key) => [key, sensorConfig[key]]),
+      );
     applyCameraConfig(nextCamera);
     try {
       localStorage.setItem(storageKey, JSON.stringify(config));
       localStorage.setItem(
         "flight-lab-sensors-v1",
-        JSON.stringify(sensorConfig),
+        JSON.stringify({ ...sensorConfig, ...localSensorOrigin }),
       );
     } catch {
       toast("此瀏覽器無法儲存設定，本次實驗仍會使用新參數。");
@@ -699,6 +722,7 @@ $("import-file").onchange = async (event) => {
     worker.postMessage({ type: "pause" });
     clearCameraPreview();
     replay = record;
+    terrainTermination = record.termination;
     config = { ...record.config };
     scenario = record.scenario;
     document.querySelectorAll("[data-scenario]").forEach((item) => {
@@ -773,11 +797,18 @@ worker.onmessage = ({ data }) => {
     return;
   }
   latest = data.snapshot;
+  terrainTermination = data.termination;
   if (data.sensors) {
     sensors = data.sensors;
     renderSensors();
   }
-  if (data.setup?.sensors) sensorConfig = data.setup.sensors;
+  if (data.setup?.sensors) {
+    sensorConfig = data.setup.sensors;
+    if (!data.setup.scene?.geography)
+      localSensorOrigin = Object.fromEntries(
+        ORIGIN_KEYS.map((key) => [key, sensorConfig[key]]),
+      );
+  }
   timing = data.timing;
   sampleCount = data.sampleCount;
   if (data.message === "reset") {
@@ -826,6 +857,7 @@ worker.onmessage = ({ data }) => {
     sensors: data.sensors,
     setup: data.setup,
     running: data.running,
+    termination: data.termination,
     timing: data.timing,
   };
   for (const callback of apiSubscribers) {
@@ -846,6 +878,18 @@ function updateTelemetry() {
   renderGimbal();
   if (!latest) return;
   const s = latest;
+  $("target-altitude").min =
+    !externalActive && sceneEditor?.getApplied().terrain.kind === "dem"
+      ? -1000
+      : 0;
+  $("target-altitude").nextElementSibling.firstElementChild.textContent =
+    `${$("target-altitude").min} m`;
+  $("position-altitude").min =
+    !externalActive &&
+    $("position-reference").value === "datum" &&
+    sceneEditor?.getApplied().terrain.kind === "dem"
+      ? -1000
+      : 0;
   $("view-clearance").textContent = s.ground.clearanceM.toFixed(2);
   for (const t of targets) {
     const value = s.target[t.key] * t.factor;
@@ -975,8 +1019,11 @@ function updateTelemetry() {
     "insufficient-airspeed": "空速不足",
     safety: "安全保護",
   };
+  $("runway-status").hidden = kind !== "fixedwing";
   $("runway-status").textContent =
-    `跑道：${runway.onRunway ? "跑道內" : "跑道外"} · ${runway.weightOnWheels ? "地面接觸" : "離地"} · ${takeoffPhases[runway.takeoffPhase]} · 抬輪空速門檻 ${runway.rotationSpeedMps.toFixed(1)} m/s · 剩餘 ${runway.distanceRemainingM.toFixed(1)} m · 側向偏離 ${runway.crossTrackM.toFixed(1)} m · 制動指令 ${(runway.brake * 100).toFixed(0)}%${runway.abortReason ? ` · ${abortReasons[runway.abortReason]}` : ""}`;
+    !externalActive && !runwayCompatible
+      ? "目前地形不具備可用跑道；固定翼須由空中開始。"
+      : `跑道：${runway.onRunway ? "跑道內" : "跑道外"} · ${runway.weightOnWheels ? "地面接觸" : "離地"} · ${takeoffPhases[runway.takeoffPhase]} · 抬輪空速門檻 ${runway.rotationSpeedMps.toFixed(1)} m/s · 剩餘 ${runway.distanceRemainingM.toFixed(1)} m · 側向偏離 ${runway.crossTrackM.toFixed(1)} m · 制動指令 ${(runway.brake * 100).toFixed(0)}%${runway.abortReason ? ` · ${abortReasons[runway.abortReason]}` : ""}`;
   $("abort-takeoff").disabled =
     !!replay ||
     kind !== "fixedwing" ||
@@ -1300,7 +1347,11 @@ function renderWaypoints() {
       [
         "altitude",
         "高度",
-        externalActive ? (hilState?.mission?.limits?.minAltitude ?? 1) : 0,
+        externalActive
+          ? (hilState?.mission?.limits?.minAltitude ?? 1)
+          : sceneEditor?.getApplied().terrain.kind === "dem"
+            ? -1000
+            : 0,
         externalActive && hilState?.mission?.limits
           ? hilState.mission.limits.height
           : 100,
@@ -1552,12 +1603,54 @@ async function applyMission(start) {
 $("mission-apply").onclick = () => applyMission(false);
 $("mission-start").onclick = () => applyMission(true);
 let sceneWriteBusy = false;
-async function applyScene(value) {
+async function applyScene(value, restart = false) {
   if (sceneWriteBusy) throw new Error("場景正在套用，請稍候。");
   const valid = validateScene(value, config.airframe);
   sceneWriteBusy = true;
   try {
-    const state = await requestApi({ type: "scene", value: valid });
+    const current = await requestApi({ type: "inspect" });
+    const reset =
+      restart ||
+      JSON.stringify(valid.geography) !==
+        JSON.stringify(current.setup.scene.geography);
+    if (
+      reset &&
+      dirty() &&
+      !(await confirmAction(
+        "套用地理場景會重設實驗並清除尚未匯出的紀錄。確定繼續？",
+      ))
+    )
+      throw new Error("已取消套用，原實驗已保留。");
+    const origin = valid.geography?.origin;
+    const nextSensors = reset
+      ? {
+          ...current.setup.sensors,
+          ...(origin
+            ? {
+                originLatitudeDeg: origin.latitudeDeg,
+                originLongitudeDeg: origin.longitudeDeg,
+                originAltitudeM: origin.altitudeM,
+                originVerticalDatum: origin.verticalDatum,
+              }
+            : localSensorOrigin),
+        }
+      : current.setup.sensors;
+    const state = await requestApi(
+      reset
+        ? {
+            type: "reset",
+            config,
+            scenario,
+            setup: {
+              ...current.setup,
+              mode: "attitude",
+              mission: [],
+              sensors: nextSensors,
+              scene: valid,
+            },
+          }
+        : { type: "scene", value: valid },
+    );
     renderScene(state.setup.scene, false);
     return state.setup.scene;
   } finally {
@@ -1978,7 +2071,7 @@ function updatePilot(now) {
     pitch: (input.pitch * 20) / DEG,
     yawRate: (input.yaw * 60) / DEG,
     altitude: Math.max(
-      0,
+      sceneEditor?.getApplied().terrain.kind === "dem" ? -1000 : 0,
       Math.min(100, latest.target.altitude + input.climb * 2 * dt),
     ),
   };
@@ -1992,6 +2085,7 @@ function updatePilot(now) {
   }
 }
 function setReplayControls(disabled) {
+  demEditor?.setReadonly(disabled || externalActive);
   renderGimbal();
   renderTutorial();
   document
@@ -2026,7 +2120,10 @@ function renderScene(value, viewOnly) {
     return;
   lastRenderedSceneKey = key;
   lastRenderedSceneReadonly = viewOnly;
+  runwayCompatible = createTerrain(value.terrain).runwayCompatible;
   sceneEditor?.setScene(value, viewOnly);
+  demEditor?.setScene(value);
+  demEditor?.setReadonly(viewOnly || externalActive || !!replay);
   showSceneControls(value);
   scene?.setTerrain(value.terrain);
   scene?.setEnvironment(value.environment);
@@ -2069,7 +2166,8 @@ const sensorLabels = {
   dropout: "丟包率 (0–1)",
   originLatitudeDeg: "原點緯度 (°)",
   originLongitudeDeg: "原點經度 (°)",
-  originAltitudeM: "原點海拔 (m)",
+  originAltitudeM: "原點高程 (m)",
+  originVerticalDatum: "高程垂直基準",
   gpsNoiseM: "GPS 水平雜訊 (m)",
   gpsVerticalNoiseM: "GPS 垂直雜訊 (m)",
   gpsVelocityNoiseMps: "GPS 速度雜訊 (m/s)",
@@ -2135,9 +2233,20 @@ for (const key of Object.keys(DEFAULT_SENSOR_CONFIG)) {
   const label = document.createElement("label");
   label.htmlFor = `sensor-config-${key}`;
   label.textContent = sensorLabels[key] || key;
-  const input = document.createElement("input");
-  input.type = "number";
-  input.step = "any";
+  const input = document.createElement(
+    key === "originVerticalDatum" ? "select" : "input",
+  );
+  if (key === "originVerticalDatum") {
+    for (const [value, text] of [
+      ["unspecified", "未指定（模型高程）"],
+      ["ellipsoidal", "橢球高"],
+      ["orthometric", "正高／海拔"],
+    ])
+      input.add(new Option(text, value));
+  } else {
+    input.type = "number";
+    input.step = "any";
+  }
   input.required = true;
   input.id = label.htmlFor;
   if (key === "lidarChannels") {
@@ -2168,8 +2277,23 @@ $("lidar-preset-3d").onclick = () => {
   $("sensor-config-lidarVerticalMaxDeg").value = 10;
 };
 function populateSensorConfig(values) {
-  for (const key of Object.keys(DEFAULT_SENSOR_CONFIG))
-    $(`sensor-config-${key}`).value = values[key];
+  const origin = sceneEditor?.getApplied().geography?.origin;
+  const activeOrigin = origin
+    ? {
+        originLatitudeDeg: origin.latitudeDeg,
+        originLongitudeDeg: origin.longitudeDeg,
+        originAltitudeM: origin.altitudeM,
+        originVerticalDatum: origin.verticalDatum,
+      }
+    : null;
+  for (const key of Object.keys(DEFAULT_SENSOR_CONFIG)) {
+    const input = $(`sensor-config-${key}`);
+    input.value =
+      activeOrigin && ORIGIN_KEYS.includes(key)
+        ? activeOrigin[key]
+        : values[key];
+    input.disabled = !!activeOrigin && ORIGIN_KEYS.includes(key);
+  }
 }
 const sensorNames = {
   gps: "GPS",
@@ -2200,7 +2324,7 @@ function renderSensors() {
   const detail = {
     gps: (s) => [
       `緯度 / 經度 ${valueText(s.latitudeDeg, 6)} / ${valueText(s.longitudeDeg, 6)} °`,
-      `海拔 ${valueText(s.altitudeM)} m`,
+      `高程 ${valueText(s.altitudeM)} m（${{ unspecified: "垂直基準未指定", ellipsoidal: "橢球高", orthometric: "正高／海拔" }[s.verticalDatum] || "未指定"}）`,
       `NED 速度 ${vectorText(s.velocityNedMps)} m/s`,
     ],
     barometer: (s) => [
@@ -2422,7 +2546,7 @@ function applyCameraConfig(value) {
     throw new Error("相機設定必須是物件。");
   cameraConfig = validateCameraConfig({ ...cameraConfig, ...value });
   try {
-    localStorage.setItem("flight-lab-camera-v1", JSON.stringify(cameraConfig));
+    localStorage.setItem("flight-lab-camera-v2", JSON.stringify(cameraConfig));
   } catch {
     toast("此瀏覽器無法儲存相機設定。");
   }
@@ -2494,9 +2618,13 @@ async function captureCameraFrame() {
   const epoch = cameraEpoch;
   updateCameraStatus();
   try {
-    const frame = await scene.captureCamera(structuredClone(latest), {
-      ...cameraConfig,
-    });
+    const frame = await scene.captureCamera(
+      structuredClone(latest),
+      {
+        ...cameraConfig,
+      },
+      externalActive ? null : (sceneEditor?.getApplied().geography ?? null),
+    );
     if (epoch !== cameraEpoch || replay)
       throw new Error("實驗已切換，本次影像已取消。");
     showCameraFrame(frame);
@@ -2745,6 +2873,7 @@ $("ground-station-apply").onclick = async () => {
   }
 };
 function setExternalControls(disabled) {
+  demEditor?.setReadonly(disabled || !!replay);
   renderGimbal();
   renderTutorial();
   renderGroundStation(hilState);
@@ -2929,6 +3058,10 @@ $("hil-start").onclick = async () => {
       ["starting", "running", "paused", "fault"].includes(existing.phase) &&
       existing.snapshot;
     const binaryPath = $("hil-binary").value.trim();
+    if (sceneEditor?.getApplied().geography)
+      throw new Error(
+        "外部飛控目前使用平坦的本機場景；請先移除地理地形並重設，再啟動或接回。",
+      );
     const controller = reattach
       ? existing.controller.kind
       : $("hil-type").value;
@@ -3088,4 +3221,20 @@ sceneEditor = createSceneEditor({
   confirm: confirmAction,
   download,
   notify: toast,
+});
+demEditor = createDemEditor({
+  getReadonly: () => !!replay || externalActive,
+  onApply: async ({ terrain, geography }) => {
+    await applyScene(
+      {
+        ...sceneEditor.getApplied(),
+        terrain,
+        geography,
+        name: geography.source.name.slice(0, 80),
+        training: "free",
+      },
+      true,
+    );
+    return true;
+  },
 });

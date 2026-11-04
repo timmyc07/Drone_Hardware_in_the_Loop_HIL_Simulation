@@ -33,6 +33,7 @@ function record(airframe = "quadrotor", overrides = {}) {
     format: "flight-lab",
     version: RECORDING_VERSION,
     modelVersion: MODEL_VERSION,
+    termination: null,
     createdAt: "2026-11-04T00:00:00.000Z",
     config,
     scenario: "hover",
@@ -121,6 +122,7 @@ function tutorialRecording() {
     format: "flight-lab",
     version: RECORDING_VERSION,
     modelVersion: MODEL_VERSION,
+    termination: null,
     createdAt: "2026-11-05T00:00:00.000Z",
     config,
     scenario: "hover",
@@ -162,7 +164,7 @@ test("guided flight records seven observed stages without changing prior course 
   const rows = recordingToCsv(clean)
     .split("\n")
     .map((line) => line.split(","));
-  assert.ok(rows.every((row) => row.length === 164));
+  assert.ok(rows.every((row) => row.length === 165));
   const courseColumn = rows[0].indexOf("training_course_code");
   assert.ok(rows.slice(1).every((row) => row[courseColumn] === "7"));
   for (const mutate of [
@@ -196,7 +198,7 @@ test("guided flight records seven observed stages without changing prior course 
     assert.throws(() => validateRecording(bad));
   }
 });
-test("v10 round trip preserves multi-layer scans and exports 164 telemetry CSV columns", () => {
+test("v11 round trip preserves multi-layer scans and exports 165 telemetry CSV columns", () => {
   const input = record(),
     result = validateRecording(JSON.parse(JSON.stringify(input)));
   assert.deepEqual(result, JSON.parse(JSON.stringify(input)));
@@ -205,7 +207,7 @@ test("v10 round trip preserves multi-layer scans and exports 164 telemetry CSV c
     .map((row) => row.split(","));
   assert.equal(rows.length, 3);
   assert.equal(rows[0].length, rows[1].length);
-  assert.equal(rows[0].length, 164);
+  assert.equal(rows[0].length, 165);
   assert.equal(rows[0][44], "steps_count");
   for (const name of [
     "north_m",
@@ -494,7 +496,7 @@ test("sensor frames require exact parallel times and reject future/regressing ac
   for (const version of [1, 2, 3, 4, 5]) {
     const legacy = record();
     legacy.version = version;
-    assert.throws(() => validateRecording(legacy), /version 10 required/);
+    assert.throws(() => validateRecording(legacy), /version 11 required/);
   }
 });
 test("no-return and startup measurements retain explicit nulls and produce empty CSV sensor cells", () => {
@@ -652,7 +654,7 @@ test("terrain scene history restores ground and AGL targets without repeating gr
     mutate(bad);
     assert.throws(() => validateRecording(bad));
   }
-  assert.equal(recordingToCsv(restored).split("\n")[0].split(",").length, 164);
+  assert.equal(recordingToCsv(restored).split("\n")[0].split(",").length, 165);
 });
 
 test("rotor arrays follow the selected frame and inactive CSV channels remain empty", () => {
@@ -700,7 +702,7 @@ test("rotor arrays follow the selected frame and inactive CSV channels remain em
   }
 });
 
-test("all airframes preserve propulsion, surfaces and flight data in schema 10 JSON and CSV", () => {
+test("all airframes preserve propulsion, surfaces and flight data in schema 11 JSON and CSV", () => {
   for (const airframe of AIRFRAMES) {
     const input = record(airframe);
     if (["fixedwing", "vtol"].includes(airframe))
@@ -728,7 +730,7 @@ test("all airframes preserve propulsion, surfaces and flight data in schema 10 J
     const [header, row] = recordingToCsv(input)
       .split("\n")
       .map((line) => line.split(","));
-    assert.equal(header.length, 164);
+    assert.equal(header.length, 165);
     assert.equal(
       row[header.indexOf("airframe_code")],
       String(AIRFRAMES.indexOf(airframe)),
@@ -745,7 +747,7 @@ test("all airframes preserve propulsion, surfaces and flight data in schema 10 J
   }
 });
 
-test("schema 10 rejects mismatched airframes, malformed flight state and invalid transition or propulsion faults", () => {
+test("schema 11 rejects mismatched airframes, malformed flight state and invalid transition or propulsion faults", () => {
   const mutations = [
     (r) => (r.samples[0].airframe = "fixedwing"),
     (r) => delete r.samples[0].flight,
@@ -824,7 +826,7 @@ test("ground-start runway takeoff and abort history round trip with exact phase 
   const [header, ...rows] = recordingToCsv(input)
     .split("\n")
     .map((line) => line.split(","));
-  assert.equal(header.length, 164);
+  assert.equal(header.length, 165);
   const phase = header.indexOf("takeoff_phase_code"),
     brake = header.indexOf("wheel_brake_fraction");
   assert.ok(rows.some((row) => row[phase] === "6"));
@@ -893,6 +895,316 @@ test("scene epochs select immutable custom gate sources and reject forged totals
     mutate(bad);
     assert.throws(() => validateRecording(bad));
   }
-  for (const version of [1, 2, 3, 4, 5, 6, 7, 8, 9])
-    assert.throws(() => validateRecording({ ...input, version }), /version 10/);
+  for (const version of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    assert.throws(() => validateRecording({ ...input, version }), /version 11/);
+});
+
+function geographicRecord() {
+  const input = record();
+  input.setup.scene = {
+    ...DEFAULT_SCENE,
+    terrain: {
+      kind: "dem",
+      north: -1,
+      east: -1,
+      cellSize: 1,
+      rows: 3,
+      cols: 3,
+      heights: Array(9).fill(0),
+    },
+    geography: {
+      origin: {
+        latitudeDeg: 25.033,
+        longitudeDeg: 121.5654,
+        altitudeM: 20,
+        verticalDatum: "orthometric",
+      },
+      source: {
+        name: "terrain.tif",
+        sha256: "a".repeat(64),
+        crs: "EPSG:4326",
+        width: 3,
+        height: 3,
+        band: 1,
+        pixelInterpretation: "point",
+        heightUnit: "m",
+        scale: 1,
+        offset: 0,
+        resampling: "bilinear",
+        window: [0, 0, 3, 3],
+      },
+    },
+  };
+  input.setup.sensors = {
+    ...input.setup.sensors,
+    originVerticalDatum: "orthometric",
+  };
+  const suite = createSensorSuite(input.setup.sensors);
+  suite.setTerrain(input.setup.scene.terrain);
+  input.sensorFrames = input.samples.map((s) => suite.update(s));
+  return input;
+}
+
+test("schema 11 keeps geographic source and sensor origin fixed across scene and sensor epochs", () => {
+  const input = geographicRecord();
+  assert.equal(
+    validateRecording(input).setup.sensors.originVerticalDatum,
+    "orthometric",
+  );
+  const scene = {
+    ...structuredClone(input.setup.scene),
+    name: "same origin, new weather",
+    environment: { ...input.setup.scene.environment, rain: 0.5 },
+  };
+  input.events = [
+    { time: 0, type: "scene", value: scene },
+    {
+      time: 0,
+      type: "sensorConfig",
+      value: { ...input.setup.sensors, gpsHz: 10 },
+    },
+  ];
+  const clean = validateRecording(input);
+  assert.deepEqual(
+    validateRecording(JSON.parse(recordingToJson(input))),
+    clean,
+  );
+  for (const mutate of [
+    (r) => r.setup.sensors.originAltitudeM++,
+    (r) => (r.setup.sensors.originVerticalDatum = "ellipsoidal"),
+    (r) => (r.events[0].value.geography.source.sha256 = "b".repeat(64)),
+    (r) => r.events[0].value.geography.origin.altitudeM++,
+    (r) => (r.events[1].value.originLatitudeDeg = 25),
+    (r) => (r.events[1].value.originVerticalDatum = "unspecified"),
+  ]) {
+    const bad = structuredClone(input);
+    mutate(bad);
+    assert.throws(() => validateRecording(bad));
+  }
+  const before = structuredClone(input.setup);
+  assert.throws(
+    () =>
+      validateSetup(
+        { ...input.setup, sensors: { originAltitudeM: 30 } },
+        input.config,
+      ),
+    /must match/,
+  );
+  assert.deepEqual(input.setup, before);
+});
+
+test("GPS frame datum is mandatory for valid and invalid samples and appends a stable CSV code", () => {
+  for (const [datum, code] of [
+    ["unspecified", 0],
+    ["ellipsoidal", 1],
+    ["orthometric", 2],
+  ]) {
+    const input = record();
+    input.setup.sensors.originVerticalDatum = datum;
+    const suite = createSensorSuite(input.setup.sensors);
+    input.sensorFrames = input.samples.map((s) => suite.update(s));
+    const rows = recordingToCsv(input)
+      .split("\n")
+      .map((row) => row.split(","));
+    assert.equal(rows[0].length, 165);
+    assert.equal(rows[0][164], "gps_vertical_datum_code");
+    assert.equal(rows[1][164], String(code));
+    for (const replacement of [
+      undefined,
+      "msl",
+      datum === "orthometric" ? "ellipsoidal" : "orthometric",
+    ]) {
+      const bad = structuredClone(input.sensorFrames[0]);
+      bad.gps.verticalDatum = replacement;
+      assert.throws(() => validateSensorFrame(bad, input.setup.sensors));
+      bad.gps = {
+        ...bad.gps,
+        valid: false,
+        reason: "fault",
+        latitudeDeg: null,
+        longitudeDeg: null,
+        altitudeM: null,
+        velocityNedMps: null,
+      };
+      assert.throws(() => validateSensorFrame(bad, input.setup.sensors));
+    }
+    suite.setFault("gps", true);
+    const invalid = suite.update(input.samples.at(-1));
+    assert.equal(
+      validateSensorFrame(invalid, input.setup.sensors).gps.verticalDatum,
+      datum,
+    );
+  }
+});
+
+test("coverage termination is required, retains the last real DEM geometry and matches the final sim time", () => {
+  const input = geographicRecord(),
+    sim = createSimulation(input.config, {
+      terrain: input.setup.scene.terrain,
+    });
+  const trainer = createTrainer("free"),
+    suite = createSensorSuite(input.setup.sensors);
+  suite.setTerrain(input.setup.scene.terrain);
+  sim.setTargets({ roll: 0.2 });
+  input.events = [{ time: 0, type: "targets", value: { roll: 0.2 } }];
+  input.samples = [];
+  input.sensorFrames = [];
+  const capture = () => {
+    const s = sim.snapshot();
+    input.samples.push({ ...s, training: trainer.update(s) });
+    input.sensorFrames.push(suite.update(s));
+  };
+  capture();
+  let stopped = false;
+  for (let i = 1; i < 2000; i++) {
+    try {
+      sim.step();
+    } catch (error) {
+      assert.equal(error.code, "TERRAIN_COVERAGE");
+      stopped = true;
+      break;
+    }
+    if (i % 10 === 0) capture();
+  }
+  assert.ok(stopped);
+  if (input.samples.at(-1).time !== sim.snapshot().time) capture();
+  input.termination = { reason: "terrain-coverage", time: sim.snapshot().time };
+  const clean = validateRecording(input);
+  assert.equal(clean.termination.time, clean.samples.at(-1).time);
+  assert.deepEqual(
+    validateRecording(JSON.parse(recordingToJson(input))).termination,
+    input.termination,
+  );
+  assert.ok(clean.samples.at(-1).ground.clearanceM > 0);
+  for (const mutate of [
+    (r) => delete r.termination,
+    (r) => (r.termination.reason = "unknown"),
+    (r) => (r.termination.time -= 0.005),
+    (r) => (r.termination.extra = true),
+    (r) => (r.samples.at(-1).position[1] = 2),
+    (r) => (r.samples.at(-1).ground.heightM = 1),
+  ]) {
+    const bad = structuredClone(input);
+    mutate(bad);
+    assert.throws(() => validateRecording(bad));
+  }
+  const flat = record();
+  flat.termination = {
+    reason: "terrain-coverage",
+    time: flat.samples.at(-1).time,
+  };
+  assert.throws(() => validateRecording(flat), /DEM/);
+  assert.equal(validateRecording(record()).termination, null);
+});
+
+test("negative DEM datum targets, AGL valley flight, scene epochs and missions round trip with unchanged flat validation", () => {
+  const input = geographicRecord();
+  const profile = [0, 0, 0, -30, -60, -90, -110, -110, -110, -110, -110];
+  input.setup.scene.terrain = {
+    kind: "dem",
+    north: -10,
+    east: -10,
+    cellSize: 10,
+    rows: profile.length,
+    cols: 3,
+    heights: profile.flatMap((h) => [h, h, h]),
+  };
+  input.setup.sensors = {
+    ...input.setup.sensors,
+    lidarRays: 12,
+    lidarChannels: 1,
+    lidarVerticalMinDeg: -30,
+    lidarVerticalMaxDeg: -30,
+  };
+  const sim = createSimulation(input.config, {
+      terrain: input.setup.scene.terrain,
+    }),
+    trainer = createTrainer("free"),
+    sensors = createSensorSuite(input.setup.sensors);
+  sensors.setTerrain(input.setup.scene.terrain);
+  input.events = [];
+  input.samples = [];
+  input.sensorFrames = [];
+  const capture = () => {
+    const s = sim.snapshot(),
+      snapshot = { ...s, training: trainer.update(s) },
+      frame = sensors.update(s);
+    if (input.samples.at(-1)?.time === s.time) {
+      input.samples[input.samples.length - 1] = snapshot;
+      input.sensorFrames[input.sensorFrames.length - 1] = frame;
+    } else {
+      input.samples.push(snapshot);
+      input.sensorFrames.push(frame);
+    }
+  };
+  const run = (seconds) => {
+    for (let i = 0; i < Math.round(seconds / 0.005); i++) {
+      const s = sim.step();
+      trainer.update(s);
+      sensors.update(s);
+      if (s.metrics.steps % 10 === 0) capture();
+    }
+  };
+  const command = (type, value) => {
+    input.events.push({ time: sim.snapshot().time, type, value });
+    if (type === "mode") sim.setMode(value);
+    if (type === "position") sim.setPositionTarget(value);
+    if (type === "targets") sim.setTargets(value);
+    if (type === "mission") sim.setMission(value);
+    if (type === "scene") {
+      sim.setTerrain(value.terrain);
+      sensors.setTerrain(value.terrain);
+    }
+    capture();
+  };
+  capture();
+  command("mode", "position");
+  command("position", { north: 60, east: 0, altitude: 2 });
+  run(35);
+  command("scene", {
+    ...input.setup.scene,
+    name: "Valley weather",
+    environment: { ...input.setup.scene.environment, fog: 0.1 },
+  });
+  for (const altitude of [-8, -28, -48, -68, -88, -108]) {
+    command("targets", { altitude });
+    run(8);
+  }
+  command("position", {
+    north: 60,
+    east: 0,
+    altitude: 2,
+    altitudeReference: "agl",
+  });
+  run(5);
+  command("mission", [{ north: 70, east: 0, altitude: -108, hold: 0.5 }]);
+  command("mode", "mission");
+  run(18);
+  capture();
+  const clean = validateRecording(input),
+    restored = validateRecording(JSON.parse(recordingToJson(input)));
+  assert.deepEqual(restored, clean);
+  const last = clean.samples.at(-1);
+  assert.equal(last.navigation.completed, true);
+  assert.equal(last.status, "flying");
+  assert.ok(Math.abs(last.ground.clearanceM - 2) < 0.05);
+  assert.ok(Math.abs(-last.position[2] + 108) < 0.05);
+  assert.equal(last.navigation.waypoints[0].altitude, -108);
+  assert.ok(
+    clean.samples.some(
+      (s) =>
+        s.navigation.altitudeReference === "agl" && s.target.altitude < -100,
+    ),
+  );
+  for (const type of ["targets", "position", "mission"]) {
+    const bad = record();
+    const value =
+      type === "targets"
+        ? { altitude: -1 }
+        : type === "position"
+          ? { north: 0, east: 0, altitude: -1 }
+          : [{ north: 0, east: 0, altitude: -1, hold: 0 }];
+    bad.events = [{ time: 0, type, value }];
+    assert.throws(() => validateRecording(bad), /altitude/);
+  }
 });

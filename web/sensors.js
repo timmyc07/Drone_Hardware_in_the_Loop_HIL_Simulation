@@ -1,5 +1,6 @@
 import { bodyToNedMatrix } from "./sim.js";
 import { createTerrain } from "./terrain.js";
+import { localToGeographic, validateGeography } from "./geography.js";
 
 // Deterministic virtual observations only; independent of the flight controller.
 // References: https://microsoft.github.io/AirSim/sensors/ https://microsoft.github.io/AirSim/lidar/
@@ -18,6 +19,7 @@ export const DEFAULT_SENSOR_CONFIG = Object.freeze({
   originLatitudeDeg: 25.033,
   originLongitudeDeg: 121.5654,
   originAltitudeM: 20,
+  originVerticalDatum: "unspecified",
   gpsNoiseM: 1.5,
   gpsVerticalNoiseM: 2.5,
   gpsVelocityNoiseMps: 0.1,
@@ -96,6 +98,11 @@ function vector(value, length) {
 export function validateSensorConfig(value = {}) {
   object(value);
   for (const [key, entry] of Object.entries(value)) {
+    if (key === "originVerticalDatum") {
+      if (!["unspecified", "ellipsoidal", "orthometric"].includes(entry))
+        throw new Error("Invalid originVerticalDatum");
+      continue;
+    }
     if (!Object.hasOwn(bounds, key))
       throw new Error(`Unknown sensor configuration: ${key}`);
     number(entry, ...bounds[key], key);
@@ -118,6 +125,20 @@ export function validateSensorConfig(value = {}) {
       throw new Error(`${name} minimum must be below maximum`);
   return config;
 }
+export function assertGeographicSensors(scene, sensors) {
+  object(scene);
+  const config = validateSensorConfig(sensors);
+  if (scene.geography == null) return;
+  const { origin } = validateGeography(scene.geography);
+  for (const [field, key] of [
+    ["originLatitudeDeg", "latitudeDeg"],
+    ["originLongitudeDeg", "longitudeDeg"],
+    ["originAltitudeM", "altitudeM"],
+    ["originVerticalDatum", "verticalDatum"],
+  ])
+    if (config[field] !== origin[key])
+      throw new Error(`Geographic sensor ${field} must match the scene origin`);
+}
 const rotate = (r, v) =>
   [0, 1, 2].map(
     (i) => r[i * 3] * v[0] + r[i * 3 + 1] * v[1] + r[i * 3 + 2] * v[2],
@@ -128,7 +149,8 @@ const radians = (degrees) => (degrees * Math.PI) / 180;
 function nearestRay(origin, direction, obstacles, terrain, min, max) {
   const length = Math.hypot(...direction);
   direction = direction.map((v) => v / length);
-  let nearest = terrain.raycast(origin, direction, 0, max)?.distanceM ?? Infinity;
+  let nearest =
+    terrain.raycast(origin, direction, 0, max)?.distanceM ?? Infinity;
   for (const box of obstacles) {
     const { low, high } = box;
     let enter = -Infinity,
@@ -301,6 +323,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
     if (name === "gps")
       return {
         ...common,
+        verticalDatum: config.originVerticalDatum,
         latitudeDeg: null,
         longitudeDeg: null,
         altitudeM: null,
@@ -343,30 +366,24 @@ export function createSensorSuite(configuration = {}, seed = 42) {
   function measure(name, input, matrix) {
     const common = { time: input.time, valid: true, reason: "" };
     if (name === "gps") {
-      const latitude = radians(config.originLatitudeDeg),
-        sin = Math.sin(latitude),
-        eccentricity2 = 6.69437999014e-3;
-      const denominator = Math.sqrt(1 - eccentricity2 * sin * sin);
-      const primeRadius = 6378137 / denominator,
-        meridianRadius = (6378137 * (1 - eccentricity2)) / denominator ** 3;
-      const latitudeDeg =
-        config.originLatitudeDeg +
-        (((input.position[0] + noise(config.gpsNoiseM)) /
-          (meridianRadius + config.originAltitudeM)) *
-          180) /
-          Math.PI;
-      if (Math.abs(latitudeDeg) > 90)
+      let coordinates;
+      try {
+        coordinates = localToGeographic(
+          input.position[0] + noise(config.gpsNoiseM),
+          input.position[1] + noise(config.gpsNoiseM),
+          {
+            latitudeDeg: config.originLatitudeDeg,
+            longitudeDeg: config.originLongitudeDeg,
+            altitudeM: config.originAltitudeM,
+          },
+        );
+      } catch {
         return invalid(name, input.time, "no-return", input);
-      const longitude =
-        config.originLongitudeDeg +
-        (((input.position[1] + noise(config.gpsNoiseM)) /
-          ((primeRadius + config.originAltitudeM) * Math.cos(latitude))) *
-          180) /
-          Math.PI;
+      }
       return {
         ...common,
-        latitudeDeg,
-        longitudeDeg: ((((longitude + 180) % 360) + 360) % 360) - 180,
+        ...coordinates,
+        verticalDatum: config.originVerticalDatum,
         altitudeM:
           config.originAltitudeM -
           input.position[2] +

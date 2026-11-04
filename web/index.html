@@ -211,10 +211,86 @@
           aria-label="場景俯視圖，可選取、放置與拖曳；下方欄位可使用鍵盤編輯"
           role="img"
         ></canvas>
+        <section class="dem-editor" aria-labelledby="dem-title">
+          <h3 id="dem-title">匯入 GeoTIFF 地形</h3>
+          <p>檔案只在本機處理，不會上傳。預覽後可明確套用並重設實驗。</p>
+          <label
+            >GeoTIFF（最多 64 MiB）<input
+              id="dem-file"
+              type="file"
+              accept=".tif,.tiff,image/tiff"
+          /></label>
+          <div class="feature-actions">
+            <label
+              >範圍半徑 m<input
+                id="dem-radius"
+                type="number"
+                min="1"
+                max="500"
+                value="250"
+            /></label>
+            <label
+              >網格點數<select id="dem-grid">
+                <option>33</option>
+                <option selected>65</option>
+                <option>129</option>
+              </select></label
+            >
+            <label
+              >原點緯度（留空用檔案中心）<input
+                id="dem-latitude"
+                type="number"
+                min="-85"
+                max="85"
+                step="any"
+            /></label>
+            <label
+              >原點經度<input
+                id="dem-longitude"
+                type="number"
+                min="-180"
+                max="180"
+                step="any"
+            /></label>
+            <label
+              >波段<input
+                id="dem-band"
+                type="number"
+                min="1"
+                max="8"
+                step="1"
+                value="1"
+            /></label>
+            <label
+              >高程單位<select id="dem-unit">
+                <option value="auto">自動辨識</option>
+                <option value="m">公尺</option>
+                <option value="ft">英尺</option>
+                <option value="us-ft">美制測量英尺</option>
+              </select></label
+            >
+            <label
+              >垂直基準<select id="dem-datum">
+                <option value="auto">自動辨識</option>
+                <option value="ellipsoidal">橢球高</option>
+                <option value="orthometric">正高</option>
+                <option value="unspecified">未指定</option>
+              </select></label
+            >
+          </div>
+          <div class="feature-actions">
+            <button id="dem-preview">預覽地形</button
+            ><button id="dem-cancel" disabled>取消處理</button
+            ><button id="dem-apply" class="primary" disabled>
+              套用並重設實驗
+            </button>
+          </div>
+          <p id="dem-status" role="status">尚未選擇地形檔案。</p>
+        </section>
         <section aria-labelledby="terrain-title">
           <h3 id="terrain-title">地形高度網格</h3>
           <p>
-            高度為基準面公尺；邊界與跑道、家點保護區須為平地。障礙盒及訓練門仍使用基準面座標。
+            程序地形高度為基準面公尺，邊界與跑道、家點保護區須為平地；匯入 DEM 保留真實坡度。障礙盒及訓練門使用基準面座標。
           </p>
           <div class="feature-actions">
             <button id="terrain-flat">平地</button

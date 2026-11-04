@@ -7,7 +7,11 @@ import {
   isCourseSupported,
   resolveTrainingGates,
 } from "./training.js";
-import { createSensorSuite, validateSensorConfig } from "./sensors.js";
+import {
+  createSensorSuite,
+  validateSensorConfig,
+  assertGeographicSensors,
+} from "./sensors.js";
 import { exportLidarCsv, exportLidarPcd } from "./pointcloud.js";
 import {
   RECORDING_VERSION,
@@ -55,6 +59,7 @@ let sensorFrames = [sensorState];
 let recordBytes =
   JSON.stringify(samples[0]).length + JSON.stringify(sensorState).length;
 let storageLimited = false;
+let termination = null;
 let pending = [...samples];
 let events = [];
 let createdAt = new Date().toISOString();
@@ -98,6 +103,7 @@ function publish(message) {
       realTimeFactor: wallSeconds ? state.time / wallSeconds : 0,
     },
     storageLimited,
+    termination,
     message: storageLimited ? "storage-limit" : message,
   });
   pending = [];
@@ -168,6 +174,7 @@ function reset(nextConfig, nextScenario, nextSetup) {
   recordBytes =
     JSON.stringify(samples[0]).length + JSON.stringify(sensorState).length;
   storageLimited = false;
+  termination = null;
   pending = [...samples];
   events = [];
   createdAt = new Date().toISOString();
@@ -234,6 +241,7 @@ function recording() {
     events,
     samples: exported,
     sensorFrames: exportedSensors,
+    termination,
   };
 }
 
@@ -243,6 +251,7 @@ function inspectedState() {
     sensors: sensorState,
     setup,
     running,
+    termination,
     timing: {
       ...runtime(),
       realTimeFactor: wallSeconds ? sim.snapshot().time / wallSeconds : 0,
@@ -373,6 +382,13 @@ onmessage = ({ data }) => {
         break;
       case "scene": {
         const nextScene = validateScene(data.value, config.airframe);
+        if (
+          JSON.stringify(nextScene.geography) !==
+          JSON.stringify(setup.scene.geography)
+        )
+          throw new Error(
+            "Changing the geographic origin or DEM source requires a new experiment",
+          );
         const changed =
           setup.scene.training !== nextScene.training ||
           JSON.stringify(resolveTrainingGates(setup.scene, config.airframe)) !==
@@ -408,6 +424,7 @@ onmessage = ({ data }) => {
         break;
       case "sensorConfig": {
         const validated = validateSensorConfig(data.value);
+        assertGeographicSensors(setup.scene, validated);
         const next = createSensorSuite(
           validated,
           (config.seed ^ 0x9e3779b9) >>> 0,
@@ -442,6 +459,7 @@ onmessage = ({ data }) => {
             ? JSON.stringify({
                 modelVersion: MODEL_VERSION,
                 config: setup.sensors,
+                geography: setup.scene.geography,
                 sensors: sensorState,
               })
             : data.kind === "csv"
@@ -549,6 +567,7 @@ function tick() {
     try {
       while (accumulator >= DT && running) {
         const state = sim.step(DT);
+        termination = null;
         training = trainer.update(state);
         sensorState = sensorSuite.update(state);
         accumulator -= DT;
@@ -578,11 +597,16 @@ function tick() {
       if (now - lastPublish >= 50) publish();
     } catch (error) {
       running = false;
+      if (error.code === "TERRAIN_COVERAGE")
+        termination = { reason: "terrain-coverage", time: sim.snapshot().time };
       postMessage({
         type: "error",
-        message: `數值模擬已停止：${error.message}`,
+        message:
+          error.code === "TERRAIN_COVERAGE"
+            ? "已到達高程資料範圍，模擬已暫停。請調整航線或載入較大範圍的地形。"
+            : `數值模擬已停止：${error.message}`,
       });
-      publish();
+      publish(error.code === "TERRAIN_COVERAGE" ? "terrain-limit" : undefined);
     }
   }
   setTimeout(tick, 10);

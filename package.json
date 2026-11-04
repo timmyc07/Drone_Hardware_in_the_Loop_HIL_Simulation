@@ -1,6 +1,6 @@
 {
   "name": "drone-flight-lab",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "private": true,
   "type": "module",
   "packageManager": "npm@11.19.0",
@@ -15,7 +15,10 @@
     "companion": "node companion/server.js"
   },
   "dependencies": {
+    "@petamoriken/float16": "3.9.3",
+    "geotiff": "3.0.5",
     "node-mavlink": "2.3.0",
+    "proj4": "2.22.0",
     "three": "0.187.0",
     "ws": "8.22.1"
   },

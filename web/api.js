@@ -6,7 +6,7 @@ export function createFlightApi(request, onState) {
     structuredClone(await request(structuredClone(command)));
   const withValue = (type) => (value) => send({ type, value });
   return Object.freeze({
-    version: "1.8",
+    version: "1.9",
     getState: () => send({ type: "inspect" }),
     getSensors: () => send({ type: "inspectSensors" }),
     getScene: () => send({ type: "inspectScene" }),
