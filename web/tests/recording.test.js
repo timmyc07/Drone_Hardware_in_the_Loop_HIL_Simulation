@@ -12,6 +12,7 @@ import {
   validateSetup,
   validateRecording,
   validateSensorFrame,
+  compactSensorFrame,
   compactWorldSnapshot,
   worldSensorFrame,
   recordingWorldAt,
@@ -198,10 +199,10 @@ const geographicSensors = {
   originVerticalDatum: "orthometric",
 };
 
-test("World12 round trip keeps parallel vehicle frames and 167 stable CSV columns", () => {
+test("World13 round trip keeps parallel vehicle frames and 174 stable CSV columns", () => {
   const input = shortRecord({ vehicles: [{ id: "alpha" }, { id: "beta" }] });
   const clean = roundTrip(input);
-  assert.equal(RECORDING_VERSION, 12);
+  assert.equal(RECORDING_VERSION, 13);
   assert.deepEqual(
     clean.samples[0].vehicles.map((v) => v.id),
     ["alpha", "beta"],
@@ -210,7 +211,7 @@ test("World12 round trip keeps parallel vehicle frames and 167 stable CSV column
   const [header, ...rows] = recordingToCsv(input)
     .split("\n")
     .map((row) => row.split(","));
-  assert.equal(header.length, 167);
+  assert.equal(header.length, 174);
   assert.deepEqual(header.slice(0, 3), ["vehicle_id", "world_tick", "time_s"]);
   assert.equal(header[46], "steps_count");
   assert.equal(header[166], "gps_vertical_datum_code");
@@ -1150,4 +1151,85 @@ test("shared world recordings preserve fixed-wing runway takeoff and pilot abort
       delete stateAt(r).runway;
     },
   ]);
+});
+
+test("radar acquisitions survive configuration epochs, packed faults and full-world replay projection", () => {
+  const f = fixture({
+    vehicles: [
+      { id: "alpha", home: [0, 0] },
+      { id: "beta", home: [12, 0] },
+    ],
+    setup: {
+      sensors: {
+        radarAzimuthRays: 1,
+        radarElevationRays: 1,
+        radarNoiseM: 0,
+        radarVelocityNoiseMps: 0,
+      },
+    },
+  });
+  const first = sensorsAt(f.record).radar;
+  assert.equal(first.detections.length, 1);
+  assert.ok(first.detections[0].rangeM > 10 && first.detections[0].rangeM < 12);
+  assert.equal(first.detections[0].rangeRateMps, 0);
+  assert.equal(sensorsAt(f.record, 0, 1).radar.reason, "no-return");
+  f.command("mode", "position", "beta");
+  f.command("position", { north: 17, east: 0, altitude: 2 }, "beta");
+  f.step(200);
+  f.command(
+    "sensorConfig",
+    {
+      ...f.world.configuration.vehicles[0].setup.sensors,
+      radarAzimuthRays: 3,
+      radarElevationRays: 3,
+    },
+    "alpha",
+  );
+  f.command("sensorFault", { sensor: "radar", failed: true }, "beta");
+  f.step(20);
+  const clean = roundTrip(f.record),
+    last = recordingWorldAt(clean, clean.samples.length - 1);
+  assert.equal(last.vehicles[0].sensors.radar.azimuthCount, 3);
+  assert.equal(last.vehicles[1].sensors.radar.azimuthCount, 1);
+  assert.equal(last.vehicles[1].sensors.radar.reason, "fault");
+  assert.ok(
+    last.vehicles[0].sensors.radar.detections.some((d) => d.rangeRateMps > 0),
+  );
+  const compact = JSON.parse(recordingToJson(f.record)),
+    raw = sensorsAt(compact, -1, 1);
+  assert.equal(raw.faults, 64);
+  assert.equal(raw.radar.length, 6);
+  assert.deepEqual(validateRecording(compact), clean);
+  const direct = compactSensorFrame(sensorsAt(clean, -1, 1));
+  assert.deepEqual(
+    validateSensorFrame(direct, clean.world.vehicles[1].setup.sensors),
+    sensorsAt(clean, -1, 1),
+  );
+  for (const badMask of [-1, 128, 0.5, NaN, Infinity, null, undefined]) {
+    const bad = clone(compact);
+    sensorsAt(bad, -1, 1).faults = badMask;
+    assert.throws(() => validateRecording(bad));
+  }
+  const stale = clone(compact);
+  sensorsAt(stale).radar[0] = 0.005;
+  assert.throws(() => validateRecording(stale), /after/);
+  const prior = clone(compact);
+  prior.version = 12;
+  assert.throws(() => validateRecording(prior), /version 13/);
+  const rows = recordingToCsv(f.record)
+    .split("\n")
+    .map((r) => r.split(","));
+  assert.equal(rows[0].length, 174);
+  assert.deepEqual(rows[0].slice(167), [
+    "radar_sample_time_s",
+    "radar_valid_boolean",
+    "radar_return_count",
+    "radar_nearest_m",
+    "radar_nearest_range_rate_m_s",
+    "radar_nearest_azimuth_rad",
+    "radar_nearest_elevation_rad",
+  ]);
+  assert.equal(rows[1][169], "1");
+  assert.equal(rows[2][169], "0");
+  assert.equal(rows[2][170], "");
 });

@@ -280,11 +280,15 @@ export function createWorld(input) {
     };
   });
   const peers = () =>
-    vehicles.map((v) => ({
-      id: v.spec.id,
-      position: v.sim.snapshot().position,
-      radius: v.radius,
-    }));
+    vehicles.map((v) => {
+      const state = v.sim.snapshot();
+      return {
+        id: v.spec.id,
+        position: state.position,
+        velocity: state.velocity,
+        radius: v.radius,
+      };
+    });
   function updateSensors() {
     const targets = peers();
     for (const v of vehicles) {

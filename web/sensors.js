@@ -2,6 +2,13 @@ import { bodyToNedMatrix } from "./sim.js";
 import { rayPeerSphere } from "./peer-geometry.js";
 import { createTerrain } from "./terrain.js";
 import { localToGeographic, validateGeography } from "./geography.js";
+import {
+  RADAR_DEFAULT_CONFIG,
+  RADAR_BOUNDS,
+  validateRadarConfig,
+  radarMetadata,
+  radarDirections,
+} from "./radar.js";
 
 // Deterministic virtual observations only; independent of the flight controller.
 // References: https://microsoft.github.io/AirSim/sensors/ https://microsoft.github.io/AirSim/lidar/
@@ -40,17 +47,19 @@ export const DEFAULT_SENSOR_CONFIG = Object.freeze({
   lidarMaxM: 50,
   lidarNoiseM: 0.01,
   opticalFlowNoiseRadS: 0.01,
+  ...RADAR_DEFAULT_CONFIG,
 });
-const NAMES = [
+export const SENSOR_NAMES = Object.freeze([
   "gps",
   "barometer",
   "magnetometer",
   "rangefinder",
   "lidar",
   "opticalFlow",
-];
+  "radar",
+]);
 const bounds = {
-  ...Object.fromEntries(NAMES.map((name) => [`${name}Hz`, [1, 20]])),
+  ...Object.fromEntries(SENSOR_NAMES.map((name) => [`${name}Hz`, [1, 20]])),
   latency: [0, 1],
   dropout: [0, 1],
   originLatitudeDeg: [-85, 85],
@@ -75,6 +84,7 @@ const bounds = {
   lidarMaxM: [0.02, 200],
   lidarNoiseM: [0, 10],
   opticalFlowNoiseRadS: [0, 10],
+  ...RADAR_BOUNDS,
 };
 function object(value) {
   if (
@@ -124,6 +134,11 @@ export function validateSensorConfig(value = {}) {
   for (const name of ["rangefinder", "lidar"])
     if (config[`${name}MinM`] >= config[`${name}MaxM`])
       throw new Error(`${name} minimum must be below maximum`);
+  validateRadarConfig(
+    Object.fromEntries(
+      Object.keys(RADAR_DEFAULT_CONFIG).map((key) => [key, config[key]]),
+    ),
+  );
   return config;
 }
 export function assertGeographicSensors(scene, sensors) {
@@ -147,11 +162,13 @@ const rotate = (r, v) =>
 const inverseRotate = (r, v) =>
   [0, 1, 2].map((i) => r[i] * v[0] + r[3 + i] * v[1] + r[6 + i] * v[2]);
 const radians = (degrees) => (degrees * Math.PI) / 180;
-function nearestRay(origin, direction, obstacles, terrain, min, max, peers) {
+const STATIC_VELOCITY = Object.freeze([0, 0, 0]);
+function nearestHit(origin, direction, obstacles, terrain, min, max, peers) {
   const length = Math.hypot(...direction);
   direction = direction.map((v) => v / length);
   let nearest =
     terrain.raycast(origin, direction, 0, max)?.distanceM ?? Infinity;
+  let velocityNed = STATIC_VELOCITY;
   for (const box of obstacles) {
     const { low, high } = box;
     let enter = -Infinity,
@@ -169,15 +186,25 @@ function nearestRay(origin, direction, obstacles, terrain, min, max, peers) {
         exit = Math.min(exit, Math.max(a, b));
       }
     }
-    if (exit >= Math.max(0, enter))
-      nearest = Math.min(nearest, enter >= 0 ? enter : exit);
+    if (exit >= Math.max(0, enter)) {
+      const distance = enter >= 0 ? enter : exit;
+      if (distance < nearest) {
+        nearest = distance;
+        velocityNed = STATIC_VELOCITY;
+      }
+    }
   }
   for (const peer of peers) {
     const distance = rayPeerSphere(origin, direction, peer, 0, max);
-    if (distance !== null) nearest = Math.min(nearest, distance);
+    if (distance !== null && distance < nearest) {
+      nearest = distance;
+      velocityNed = peer.velocity;
+    }
   }
   // A surface inside the blind zone blocks distant returns; do not see through it.
-  return nearest >= min && nearest <= max ? nearest : null;
+  return nearest >= min && nearest <= max
+    ? { distanceM: nearest, velocityNed }
+    : null;
 }
 export function lidarPoints(reading) {
   object(reading);
@@ -269,6 +296,8 @@ export function lidarPoints(reading) {
 }
 export function createSensorSuite(configuration = {}, seed = 42) {
   const config = validateSensorConfig(configuration);
+  const radarInfo = radarMetadata(config),
+    radarBeams = radarDirections(config);
   const lidarMetadata = {
     channelCount: config.lidarChannels,
     azimuthCount: config.lidarRays,
@@ -304,6 +333,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
   if (!Number.isInteger(seed))
     throw new Error("Sensor seed must be an integer");
   let randomState,
+    radarRandomState,
     time,
     lastInputTime,
     readings,
@@ -318,14 +348,26 @@ export function createSensorSuite(configuration = {}, seed = 42) {
     randomState = (Math.imul(1664525, randomState) + 1013904223) >>> 0;
     return (randomState + 0.5) / 4294967296;
   }
-  const noise = (sigma) =>
+  function radarRandom() {
+    radarRandomState =
+      (Math.imul(1664525, radarRandomState) + 1013904223) >>> 0;
+    return (radarRandomState + 0.5) / 4294967296;
+  }
+  const noise = (sigma, rng = random) =>
     sigma === 0
       ? 0
-      : sigma *
-        Math.sqrt(-2 * Math.log(random())) *
-        Math.cos(2 * Math.PI * random());
+      : sigma * Math.sqrt(-2 * Math.log(rng())) * Math.cos(2 * Math.PI * rng());
   function invalid(name, at, reason, input) {
     const common = { time: at, valid: false, reason };
+    if (name === "radar")
+      return {
+        ...common,
+        positionNed: input ? [...input.position] : null,
+        quaternion: input ? [...input.quaternion] : null,
+        velocityNedMps: input ? [...input.velocity] : null,
+        detections: [],
+        ...radarInfo,
+      };
     if (name === "gps")
       return {
         ...common,
@@ -356,18 +398,20 @@ export function createSensorSuite(configuration = {}, seed = 42) {
   }
   function reset() {
     randomState = seed >>> 0;
+    // Deterministic stream partition from the one explicit suite seed; not a calibrated independence guarantee.
+    radarRandomState = (seed ^ 0x7f4a7c15) >>> 0;
     time = 0;
     lastInputTime = -1;
     obstacles = [];
     peers = [];
     terrain = createTerrain();
-    faults = Object.fromEntries(NAMES.map((name) => [name, false]));
+    faults = Object.fromEntries(SENSOR_NAMES.map((name) => [name, false]));
     readings = Object.fromEntries(
-      NAMES.map((name) => [name, invalid(name, 0, "startup")]),
+      SENSOR_NAMES.map((name) => [name, invalid(name, 0, "startup")]),
     );
     acquired = { ...readings };
-    queues = Object.fromEntries(NAMES.map((name) => [name, []]));
-    deadlines = Object.fromEntries(NAMES.map((name) => [name, 0]));
+    queues = Object.fromEntries(SENSOR_NAMES.map((name) => [name, []]));
+    deadlines = Object.fromEntries(SENSOR_NAMES.map((name) => [name, 0]));
     return snapshot();
   }
   function measure(name, input, matrix) {
@@ -433,7 +477,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
       };
     }
     if (name === "rangefinder") {
-      const distance = nearestRay(
+      const hit = nearestHit(
         input.position,
         rotate(matrix, [0, 0, 1]),
         obstacles,
@@ -442,22 +486,21 @@ export function createSensorSuite(configuration = {}, seed = 42) {
         config.rangefinderMaxM,
         peers,
       );
-      if (distance === null)
-        return invalid(name, input.time, "no-return", input);
+      if (hit === null) return invalid(name, input.time, "no-return", input);
       return {
         ...common,
         distanceM: Math.max(
           config.rangefinderMinM,
           Math.min(
             config.rangefinderMaxM,
-            distance + noise(config.rangefinderNoiseM),
+            hit.distanceM + noise(config.rangefinderNoiseM),
           ),
         ),
       };
     }
     if (name === "lidar") {
       const rangesM = lidarDirections.map((direction) => {
-        const distance = nearestRay(
+        const hit = nearestHit(
           input.position,
           rotate(matrix, direction),
           obstacles,
@@ -466,11 +509,14 @@ export function createSensorSuite(configuration = {}, seed = 42) {
           config.lidarMaxM,
           peers,
         );
-        return distance === null
+        return hit === null
           ? null
           : Math.max(
               config.lidarMinM,
-              Math.min(config.lidarMaxM, distance + noise(config.lidarNoiseM)),
+              Math.min(
+                config.lidarMaxM,
+                hit.distanceM + noise(config.lidarNoiseM),
+              ),
             );
       });
       return {
@@ -481,6 +527,51 @@ export function createSensorSuite(configuration = {}, seed = 42) {
         positionNed: [...input.position],
         quaternion: [...input.quaternion],
         ...lidarMetadata,
+      };
+    }
+    if (name === "radar") {
+      const detections = [];
+      for (const beam of radarBeams) {
+        const direction = rotate(matrix, beam.direction);
+        const hit = nearestHit(
+          input.position,
+          direction,
+          obstacles,
+          terrain,
+          config.radarMinM,
+          config.radarMaxM,
+          peers,
+        );
+        if (hit === null) continue;
+        const length = Math.hypot(...direction);
+        const rate = hit.velocityNed.reduce(
+          (sum, v, i) =>
+            sum + ((v - input.velocity[i]) * direction[i]) / length,
+          0,
+        );
+        detections.push({
+          beam: beam.beam,
+          rangeM: Math.max(
+            config.radarMinM,
+            Math.min(
+              config.radarMaxM,
+              hit.distanceM + noise(config.radarNoiseM, radarRandom),
+            ),
+          ),
+          azimuthRad: beam.azimuthRad,
+          elevationRad: beam.elevationRad,
+          rangeRateMps: rate + noise(config.radarVelocityNoiseMps, radarRandom),
+        });
+      }
+      return {
+        ...common,
+        valid: detections.length > 0,
+        reason: detections.length ? "" : "no-return",
+        positionNed: [...input.position],
+        quaternion: [...input.quaternion],
+        velocityNedMps: [...input.velocity],
+        detections,
+        ...radarInfo,
       };
     }
     // Geometric center flow, not an image/texture/calibration/weather model. Range is an explicit dependency.
@@ -517,7 +608,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
     time = input.time;
     lastInputTime = time;
     const matrix = bodyToNedMatrix(input.quaternion);
-    for (const name of NAMES) {
+    for (const name of SENSOR_NAMES) {
       if (time + 1e-10 >= deadlines[name]) {
         const period = 1 / config[`${name}Hz`];
         deadlines[name] +=
@@ -527,7 +618,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
           ) * period;
         const reading = faults[name]
           ? invalid(name, time, "fault", input)
-          : random() < config.dropout
+          : (name === "radar" ? radarRandom() : random()) < config.dropout
             ? invalid(name, time, "dropout", input)
             : measure(name, input, matrix);
         acquired[name] = reading;
@@ -586,9 +677,9 @@ export function createSensorSuite(configuration = {}, seed = 42) {
     const next = Array.from(value, (peer) => {
       object(peer);
       if (
-        Object.keys(peer).length !== 3 ||
+        Object.keys(peer).length !== 4 ||
         Object.keys(peer).some(
-          (key) => !["id", "position", "radius"].includes(key),
+          (key) => !["id", "position", "velocity", "radius"].includes(key),
         ) ||
         !validId(peer.id) ||
         seen.has(peer.id)
@@ -598,6 +689,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
       return {
         id: peer.id,
         position: vector(peer.position, 3),
+        velocity: vector(peer.velocity, 3),
         radius: number(peer.radius, 0.001, 1000, "Peer radius"),
       };
     });
@@ -610,7 +702,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
     terrain = next;
   }
   function setFault(name, failed) {
-    if (!NAMES.includes(name) || typeof failed !== "boolean")
+    if (!SENSOR_NAMES.includes(name) || typeof failed !== "boolean")
       throw new Error("Invalid sensor fault");
     faults[name] = failed;
     queues[name] = [];
@@ -625,12 +717,13 @@ export function createSensorSuite(configuration = {}, seed = 42) {
     // Acquisitions and geometry are owned immutable values; only maps and queues mutate.
     const saved = {
       randomState,
+      radarRandomState,
       time,
       lastInputTime,
       readings: { ...readings },
       acquired: { ...acquired },
       queues: Object.fromEntries(
-        NAMES.map((name) => [name, [...queues[name]]]),
+        SENSOR_NAMES.map((name) => [name, [...queues[name]]]),
       ),
       deadlines: { ...deadlines },
       faults: { ...faults },
@@ -644,6 +737,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
       used = true;
       ({
         randomState,
+        radarRandomState,
         time,
         lastInputTime,
         readings,

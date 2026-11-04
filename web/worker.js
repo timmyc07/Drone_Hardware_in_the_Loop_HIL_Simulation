@@ -1,10 +1,12 @@
 import { createWorld, defaultWorldConfig } from "./world.js";
+import { exportRadarData } from "./radar.js";
 import { exportVehiclePointCloud } from "./pointcloud.js";
 import {
   RECORDING_VERSION,
   MODEL_VERSION,
   compactWorldSnapshot,
   worldSensorFrame,
+  compactSensorFrame,
 } from "./recording.js";
 
 const DT = 0.005,
@@ -55,6 +57,7 @@ const VEHICLE_READS = [
   "inspectGimbal",
   "pointCloudExport",
   "sensorExport",
+  "radarExport",
 ];
 const READS = [
   "resetWorld",
@@ -128,6 +131,10 @@ function capture() {
   const value = state(),
     frame = compactWorldSnapshot(value),
     sensors = worldSensorFrame(value);
+  sensors.vehicles = sensors.vehicles.map((v) => ({
+    id: v.id,
+    sensors: compactSensorFrame(v.sensors),
+  }));
   const previous = samples.at(-1);
   if (previous?.tick === frame.tick) {
     recordBytes -=
@@ -329,6 +336,34 @@ onmessage = ({ data }) => {
             vehicleId: v.id,
           });
           break;
+        }
+        case "radarExport": {
+          if (data.requestId === undefined)
+            throw new Error("此操作需要程式介面請求編號");
+          if (!["json", "csv"].includes(data.value))
+            throw new Error("不支援的雷達匯出格式");
+          const value = state(),
+            v = selected(value, data.vehicleId);
+          const text = exportRadarData(
+            data.value,
+            v.sensors.radar,
+            { sourceVehicleId: v.id, worldTick: value.tick },
+            v.setup.sensors,
+          );
+          postMessage({
+            type: "apiReply",
+            requestId: data.requestId,
+            ok: true,
+            value: {
+              format: data.value,
+              sourceVehicleId: v.id,
+              exportWorldTick: value.tick,
+              time: v.sensors.radar.time,
+              detectionCount: v.sensors.radar.detections.length,
+              text,
+            },
+          });
+          return;
         }
         case "pointCloudExport": {
           if (data.requestId === undefined)

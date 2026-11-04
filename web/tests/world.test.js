@@ -356,3 +356,39 @@ test("a late vehicle rejecting a shared course edit rolls back earlier vehicle s
   assert.deepEqual(world.configuration, original);
   for (let i = 0; i < 20; i++) assert.deepEqual(world.step(), reference.step());
 });
+
+test("radar uses each peer's committed physical velocity, and a radar fault never substitutes controller feedback", () => {
+  const a = vehicle("a"),
+    b = vehicle("b", 10, 0);
+  for (const v of [a, b])
+    Object.assign(v.setup.sensors, {
+      radarAzimuthRays: 1,
+      radarElevationRays: 1,
+      radarNoiseM: 0,
+      radarVelocityNoiseMps: 0,
+    });
+  const world = createWorld(worldConfig([a, b]));
+  world.command("b", "targets", { pitch: -0.08 });
+  const state = advance(world, 0.5),
+    source = state.vehicles.find((v) => v.id === "a"),
+    target = state.vehicles.find((v) => v.id === "b");
+  const reading = source.sensors.radar;
+  assert.equal(reading.valid, true);
+  assert.equal(reading.detections.length, 1);
+  assert.ok(
+    target.snapshot.velocity[0] > 0.05,
+    "the peer must really move under its own plant",
+  );
+  near(reading.time, state.time, 1e-8);
+  near(
+    reading.detections[0].rangeRateMps,
+    target.snapshot.velocity[0] - source.snapshot.velocity[0],
+    1e-8,
+  );
+  assert.deepEqual(reading.velocityNedMps, source.snapshot.velocity);
+  const physical = world.getVehicle("a").snapshot;
+  world.command("a", "sensorFault", { sensor: "radar", failed: true });
+  assert.equal(world.getVehicle("a").sensors.radar.reason, "fault");
+  assert.deepEqual(world.getVehicle("a").snapshot, physical);
+  assert.equal(world.step().vehicles[0].snapshot.armed, true);
+});

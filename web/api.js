@@ -18,7 +18,7 @@ export function createFlightApi(request, onState) {
   const vehicleAction = (type) => (vehicleId) =>
     send({ type, vehicleId: id(vehicleId) });
   return Object.freeze({
-    version: "2.0",
+    version: "2.1",
     getWorldState: () => send({ type: "inspectWorld" }),
     getState: vehicleRead("inspect"),
     getSensors: vehicleRead("inspectSensors"),
@@ -30,6 +30,8 @@ export function createFlightApi(request, onState) {
         vehicleId: id(vehicleId),
         value: format,
       }),
+    exportRadarData: (vehicleId, format = "json") =>
+      send({ type: "radarExport", vehicleId: id(vehicleId), value: format }),
     getGimbal: vehicleRead("inspectGimbal"),
     setGimbal: vehicleValue("gimbal"),
     getCameraConfig: () => send({ type: "getCameraConfig" }),

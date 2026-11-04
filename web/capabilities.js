@@ -52,7 +52,7 @@ export const SOURCES = [
   },
   {
     name: "Isaac Sim RTX 感測器",
-    url: "https://docs.isaacsim.omniverse.nvidia.com/6.1.0/py/source/extensions/isaacsim.sensors.experimental.rtx/docs/index.html",
+    url: "https://github.com/carla-simulator/carla/blob/294096eb1c38eabf246e4f3a9cdab704e33a7f4c/Unreal/CarlaUE4/Plugins/Carla/Source/Carla/Sensor/Radar.cpp",
     kind: "官方文件",
   },
   {
@@ -604,8 +604,9 @@ export const CAPABILITIES = [
     id: "radar",
     category: "感測與通訊",
     title: "雷達",
-    description: "使用專用感測器模型輸出雷達資料。",
-    status: "planned",
+    description:
+      "前向幾何雷達輸出距離、角度及相對徑向速度，含地形、障礙與其他載具遮擋；非電波或雷達截面校準模型。",
+    status: "partial",
     sources: [
       "https://docs.isaacsim.omniverse.nvidia.com/6.1.0/py/source/extensions/isaacsim.sensors.experimental.rtx/docs/index.html",
     ],
@@ -783,7 +784,7 @@ export const CAPABILITIES = [
     id: "record-csv",
     category: "資料與整合",
     title: "CSV 飛行紀錄",
-    description: "可匯出 167 欄飛行及感測資料 CSV，標示載具 ID 與世界時間步。",
+    description: "可匯出 174 欄飛行及感測資料 CSV，標示載具 ID 與世界時間步。",
     status: "partial",
     sources: ["https://wiki.zephyr-sim.com/help/faqs"],
   },
@@ -792,7 +793,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "JSON 重播",
     description:
-      "版本 12 JSON 保存同一世界的全機隊、場景、地理來源與帶載具 ID 的事件；拒絕版本 1 至 11。",
+      "版本 13 JSON 保存同一世界的全機隊、場景、地理來源與帶載具 ID 的事件；拒絕版本 1 至 12。",
     status: "partial",
     sources: [
       "https://www.liftoff-game.com/news/full-release-liftoff-micro-drones",
@@ -865,7 +866,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "程式控制 API",
     description:
-      "同頁 API 2.0 明確指定載具 ID，共用世界時鐘、場景與風；外部 SITL 使用獨立本機服務。",
+      "同頁 API 2.1 明確指定載具 ID，共用世界時鐘、場景與風；外部 SITL 使用獨立本機服務。",
     status: "partial",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/apis.md"],
   },

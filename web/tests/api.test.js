@@ -11,17 +11,19 @@ test("vehicle operations require and preserve explicit vehicle IDs", async () =>
     },
     () => () => {},
   );
-  assert.equal(api.version, "2.0");
+  assert.equal(api.version, "2.1");
   await api.getState("one");
   const target = { altitude: 3 };
   await api.setTargets("two", target);
   target.altitude = 10;
   await api.takeoff("two");
+  await api.exportRadarData("two", "csv");
   await api.getWorldState();
   assert.deepEqual(calls, [
     { type: "inspect", vehicleId: "one" },
     { type: "targets", vehicleId: "two", value: { altitude: 3 } },
     { type: "takeoff", vehicleId: "two" },
+    { type: "radarExport", vehicleId: "two", value: "csv" },
     { type: "inspectWorld" },
   ]);
   assert.throws(() => api.getState(), /vehicleId/);

@@ -10,6 +10,7 @@ import {
 } from "./recording.js";
 import { readPilotInput, takeoffPlayAction } from "./input.js";
 import { exportVehiclePointCloud } from "./pointcloud.js";
+import { exportRadarData } from "./radar.js";
 import {
   createHilClient,
   isCompanionOrigin,
@@ -2574,6 +2575,15 @@ const sensorLabels = {
   lidarMaxM: "LiDAR 最大值 (m)",
   lidarNoiseM: "LiDAR 雜訊 (m)",
   opticalFlowNoiseRadS: "光流雜訊 (rad/s)",
+  radarHz: "雷達更新率 (Hz)",
+  radarAzimuthRays: "雷達水平方向射線數",
+  radarElevationRays: "雷達垂直方向射線數",
+  radarHorizontalFovDeg: "雷達水平視角 (°)",
+  radarVerticalFovDeg: "雷達垂直視角 (°)",
+  radarMinM: "雷達最小距離 (m)",
+  radarMaxM: "雷達最大距離 (m)",
+  radarNoiseM: "雷達距離雜訊 (m)",
+  radarVelocityNoiseMps: "雷達距離變化速度雜訊 (m/s)",
 };
 const sensorActions = $("sensor-fault-on").parentElement;
 for (const [kind, label] of [
@@ -2687,6 +2697,7 @@ const sensorNames = {
   magnetometer: "磁力計",
   rangefinder: "向下測距",
   lidar: "LiDAR",
+  radar: "雷達",
   opticalFlow: "光流",
 };
 const reasonsSensor = {
@@ -2726,6 +2737,10 @@ function renderSensors() {
       `仰角 ${valueText(s.elevationStartRad * DEG, 1)}° 至 ${valueText((s.elevationStartRad + (s.channelCount - 1) * s.elevationStepRad) * DEG, 1)}°`,
       `量測範圍 ${valueText(s.minM)}–${valueText(s.maxM)} m`,
     ],
+    radar: (s) => [
+      `回波 ${s.detections.length} 個`,
+      `量測範圍 ${valueText(s.minM)}–${valueText(s.maxM)} m`,
+    ],
     opticalFlow: (s) => [
       `光流 ${vectorText(s.flowRadS, 3)} rad/s`,
       `地面距離 ${valueText(s.groundDistanceM)} m`,
@@ -2733,6 +2748,17 @@ function renderSensors() {
   };
   for (const [key, name] of Object.entries(sensorNames)) {
     const item = sensors[key];
+    if (key === "radar" && externalActive) {
+      const card = document.createElement("article");
+      card.className = "sensor-card";
+      const title = document.createElement("h3");
+      title.textContent = name;
+      const state = document.createElement("p");
+      state.textContent = "外部飛控模式未提供雷達量測";
+      card.append(title, state);
+      readings.append(card);
+      continue;
+    }
     if (!item) continue;
     const card = document.createElement("article");
     card.className = "sensor-card";
@@ -2751,8 +2777,122 @@ function renderSensors() {
   }
   updateLidarExportButtons();
   drawLidar(sensors.lidar);
+  renderRadar(sensors.radar);
   scene?.setSensorScan($("sensor-scan-visible").checked ? sensors.lidar : null);
 }
+function renderRadar(reading) {
+  const canvas = $("radar-map"),
+    ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const buttons = [$("radar-export-json"), $("radar-export-csv")];
+  buttons.forEach((button) => {
+    button.disabled = externalActive || !reading;
+  });
+  if (externalActive || !reading) {
+    $("radar-status").textContent = externalActive
+      ? "外部飛控模式未提供雷達量測"
+      : "尚無雷達資料";
+    $("radar-pose").textContent = externalActive
+      ? "外部飛控模式未提供雷達量測"
+      : "尚無量測姿態";
+    $("radar-count").textContent = "";
+    $("radar-returns").replaceChildren();
+    return;
+  }
+  const age = Number.isFinite(reading.time)
+    ? Math.max(0, sensors.time - reading.time)
+    : null;
+  $("radar-status").textContent =
+    `來源 ${activeVehicleId} · ${reading.valid ? "有效" : `無效（${reasonsSensor[reading.reason] || "無資料"}）`} · 量測 ${valueText(reading.time, 3)} s · 齡期 ${valueText(age, 3)} s${sensors.faults?.radar ? " · 故障啟用" : ""}`;
+  $("radar-pose").textContent =
+    `NED 位置 ${vectorText(reading.positionNed)} m · 四元數 wxyz ${vectorText(reading.quaternion, 3)} · NED 速度 ${vectorText(reading.velocityNedMps)} m/s`;
+  const points = reading.detections;
+  const visibleRate = (value) => (Math.abs(value) < 0.005 ? 0 : value);
+  $("radar-count").textContent =
+    points.length > 100
+      ? `共 ${points.length} 個回波，表格顯示最近 100 個；匯出包含全部。`
+      : `共 ${points.length} 個回波。`;
+  const rows = [...points]
+    .sort((a, b) => a.rangeM - b.rangeM || a.beam - b.beam)
+    .slice(0, 100)
+    .map((point) => {
+      const row = document.createElement("tr");
+      for (const value of [
+        point.rangeM,
+        point.azimuthRad * DEG,
+        point.elevationRad * DEG,
+        visibleRate(point.rangeRateMps),
+      ]) {
+        const cell = document.createElement("td");
+        cell.textContent = valueText(value);
+        row.append(cell);
+      }
+      return row;
+    });
+  $("radar-returns").replaceChildren(...rows);
+  const x0 = canvas.width / 2,
+    y0 = canvas.height - 16;
+  const half = reading.horizontalFovRad / 2;
+  const radius = Math.min(
+    canvas.height - 32,
+    (x0 - 15) / Math.max(Math.sin(half), 0.01),
+  );
+  ctx.strokeStyle = "#537385";
+  ctx.lineWidth = 1;
+  for (const fraction of [0.25, 0.5, 0.75, 1]) {
+    ctx.beginPath();
+    ctx.arc(
+      x0,
+      y0,
+      radius * fraction,
+      -Math.PI / 2 - half,
+      -Math.PI / 2 + half,
+    );
+    ctx.stroke();
+  }
+  for (const angle of [-half, half]) {
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x0 + Math.sin(angle) * radius, y0 - Math.cos(angle) * radius);
+    ctx.stroke();
+  }
+  for (const point of points) {
+    const distance =
+      ((point.rangeM * Math.cos(point.elevationRad)) / reading.maxM) * radius;
+    ctx.fillStyle = visibleRate(point.rangeRateMps) < 0 ? "#ffad7d" : "#68daca";
+    ctx.beginPath();
+    ctx.arc(
+      x0 + Math.sin(point.azimuthRad) * distance,
+      y0 - Math.cos(point.azimuthRad) * distance,
+      2.5,
+      0,
+      Math.PI * 2,
+    );
+    ctx.fill();
+  }
+}
+for (const kind of ["json", "csv"])
+  $(`radar-export-${kind}`).onclick = () => {
+    try {
+      if (externalActive) throw new Error("外部飛控模式未提供雷達量測");
+      if (!sensors?.radar) throw new Error("尚無雷達資料");
+      const text = exportRadarData(
+        kind,
+        sensors.radar,
+        { sourceVehicleId: activeVehicleId, worldTick: worldState.tick },
+        sensorConfig,
+      );
+      download(
+        text,
+        kind,
+        kind === "json" ? "application/json" : "text/csv;charset=utf-8",
+        `flight-lab-radar-${activeVehicleId}-${Number.isFinite(sensors.radar.time) ? sensors.radar.time.toFixed(3) : "startup"}.${kind}`,
+      );
+    } catch (error) {
+      toast(`無法匯出雷達：${error.message}`);
+    }
+  };
+
 function drawLidar(reading) {
   const canvas = $("lidar-map"),
     ctx = canvas.getContext("2d"),
@@ -3489,6 +3629,7 @@ $("hil-start").onclick = async () => {
     displayedExternalMission = "";
     clearCameraPreview();
     externalActive = true;
+    renderRadar(null);
     groundStationSettingsKey = "";
     hilState = reattach
       ? existing

@@ -19,7 +19,7 @@ PX4 以同一來源回報 `MISSION_CURRENT`、`MISSION_ITEM_REACHED` 及 `EXTEND
 
 ## 隔離與記錄
 
-PX4 模擬感測器與執行器使用本機 TCP 4560；任務 MAVLink 只使用受控 loopback UDP 14560／14561，並使用 [PX4 loopback 修補](../companion/patches/README.md)。這不是通用地面站或遠端控制服務。模擬仍以 250 Hz（4 ms）運行；PX4 紀錄仍是獨立 `flight-lab-px4` 版本 1，不是內建 schema 12。回放僅重演物理輸入，不重跑 PX4。
+PX4 模擬感測器與執行器使用本機 TCP 4560；任務 MAVLink 只使用受控 loopback UDP 14560／14561，並使用 [PX4 loopback 修補](../companion/patches/README.md)。這不是通用地面站或遠端控制服務。模擬仍以 250 Hz（4 ms）運行；PX4 紀錄仍是獨立 `flight-lab-px4` 版本 1，不是內建 schema 13。回放僅重演物理輸入，不重跑 PX4。
 
 來源參考 [PX4 v1.17 Commander](https://github.com/PX4/PX4-Autopilot/blob/v1.17.0/src/modules/commander/Commander.cpp)、[任務通訊實作](https://github.com/PX4/PX4-Autopilot/blob/v1.17.0/src/modules/mavlink/mavlink_mission.cpp)與 [MAVLink 任務協定](https://mavlink.io/en/services/mission.html)。Context7 無該精確版本索引，已用標籤原始碼及安裝的 node-mavlink 2.3.0 訊息定義核對。模型未實機校準，測試結果不能作為實際飛行或安全認證。
 

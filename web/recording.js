@@ -3,6 +3,7 @@ import {
   DEFAULT_SENSOR_CONFIG,
   validateSensorConfig,
   assertGeographicSensors,
+  SENSOR_NAMES,
 } from "./sensors.js";
 import {
   TRAINING_COURSES,
@@ -12,6 +13,7 @@ import {
 } from "./training.js";
 import { DEFAULT_SCENE, validateScene } from "./scene-data.js";
 import { validateWorldConfig, validateVehicleSetup } from "./world.js";
+import { validateRadarReading, compactRadarReading } from "./radar.js";
 import { AIRFRAMES, rotorCount } from "./rotor-geometry.js";
 import { createTerrain } from "./terrain.js";
 import {
@@ -20,7 +22,7 @@ import {
   validateGimbalState,
 } from "./gimbal.js";
 
-export const RECORDING_VERSION = 12;
+export const RECORDING_VERSION = 13;
 export const MODEL_VERSION = "0.9.0";
 const MODES = ["attitude", "position", "mission", "rtl", "land", "takeoff"];
 const TAKEOFF_PHASES = [
@@ -595,21 +597,41 @@ export function compactSnapshot(snapshot) {
     },
   };
 }
-const SENSOR_NAMES = [
-  "gps",
-  "barometer",
-  "magnetometer",
-  "rangefinder",
-  "lidar",
-  "opticalFlow",
-];
+export function compactSensorFrame(value) {
+  return {
+    ...value,
+    faults: SENSOR_NAMES.reduce(
+      (mask, name, i) => mask | (Number(value.faults[name]) << i),
+      0,
+    ),
+    radar: compactRadarReading(value.radar),
+  };
+}
 export function validateSensorFrame(value, sensorConfig = {}) {
   object(value);
   const config = validateSensorConfig(sensorConfig),
     time = number(value.time, 0, 1800.001);
-  const result = { time },
-    faults = object(value.faults);
+  const result = { time };
+  const faults =
+    typeof value.faults === "number"
+      ? Object.fromEntries(
+          SENSOR_NAMES.map((name, i) => [
+            name,
+            Boolean(
+              count(value.faults, (1 << SENSOR_NAMES.length) - 1) & (1 << i),
+            ),
+          ]),
+        )
+      : object(value.faults);
+  exactKeys(faults, SENSOR_NAMES, "sensor faults");
   for (const name of SENSOR_NAMES) {
+    if (name === "radar") {
+      const radar = validateRadarReading(value.radar, config);
+      if (radar.time > time + 1e-8)
+        throw new Error("Radar acquisition is after its sensor frame");
+      result.radar = radar;
+      continue;
+    }
     const raw = object(value[name]);
     const valid = boolean(raw.valid),
       reason = choice(raw.reason, [
@@ -721,6 +743,9 @@ export function validateSensorFrame(value, sensorConfig = {}) {
     }
     result[name] = channel;
   }
+  for (const name of SENSOR_NAMES)
+    if (boolean(faults[name]) !== (result[name].reason === "fault"))
+      throw new Error("Sensor fault flag and reading reason disagree");
   result.faults = Object.fromEntries(
     SENSOR_NAMES.map((name) => [name, boolean(faults[name])]),
   );
@@ -826,7 +851,7 @@ export function validateRecording(value) {
   object(value);
   if (value.version !== RECORDING_VERSION)
     throw new Error(
-      "Unsupported recording version: version 12 required; legacy recordings are not supported",
+      "Unsupported recording version: version 13 required; legacy recordings are not supported",
     );
   exactKeys(
     value,
@@ -1112,6 +1137,13 @@ export function recordingToJson(record) {
   const clean = validateRecording(record);
   return JSON.stringify({
     ...clean,
+    sensorFrames: clean.sensorFrames.map((frame) => ({
+      ...frame,
+      vehicles: frame.vehicles.map((v) => ({
+        id: v.id,
+        sensors: compactSensorFrame(v.sensors),
+      })),
+    })),
     samples: clean.samples.map((frame) => ({
       ...frame,
       vehicles: frame.vehicles.map((v) => ({
@@ -1232,7 +1264,7 @@ export function recordingToCsv(record) {
     "training_complete_boolean",
     "training_score_points",
     "training_hold_s",
-    ...SENSOR_NAMES.flatMap((name) => [
+    ...SENSOR_NAMES.filter((name) => name !== "radar").flatMap((name) => [
       `${name}_sample_time_s`,
       `${name}_valid_boolean`,
     ]),
@@ -1306,6 +1338,13 @@ export function recordingToCsv(record) {
     "position_altitude_reference_code",
     "position_altitude_m",
     "gps_vertical_datum_code",
+    "radar_sample_time_s",
+    "radar_valid_boolean",
+    "radar_return_count",
+    "radar_nearest_m",
+    "radar_nearest_range_rate_m_s",
+    "radar_nearest_azimuth_rad",
+    "radar_nearest_elevation_rad",
   ];
   const rows = samples.map((s, index) =>
     [
@@ -1353,7 +1392,7 @@ export function recordingToCsv(record) {
       Number(s.training.complete),
       s.training.score,
       s.training.holdSeconds,
-      ...SENSOR_NAMES.flatMap((name) => [
+      ...SENSOR_NAMES.filter((name) => name !== "radar").flatMap((name) => [
         sensorFrames[index][name].time,
         Number(sensorFrames[index][name].valid),
       ]),
@@ -1409,6 +1448,7 @@ export function recordingToCsv(record) {
       ["unspecified", "ellipsoidal", "orthometric"].indexOf(
         sensorFrames[index].gps.verticalDatum,
       ),
+      ...radarCsv(sensorFrames[index].radar),
     ].join(","),
   );
   return [header.join(","), ...rows].join("\n");
@@ -1431,4 +1471,20 @@ function sensorCsv(frame) {
     ...(frame.opticalFlow.flowRadS ?? [null, null]),
     frame.opticalFlow.groundDistanceM,
   ].map((v) => v ?? "");
+}
+
+function radarCsv(reading) {
+  const nearest = reading.detections.reduce(
+    (best, d) => (!best || d.rangeM < best.rangeM ? d : best),
+    null,
+  );
+  return [
+    reading.time,
+    Number(reading.valid),
+    reading.detections.length,
+    nearest?.rangeM ?? "",
+    nearest?.rangeRateMps ?? "",
+    nearest?.azimuthRad ?? "",
+    nearest?.elevationRad ?? "",
+  ];
 }

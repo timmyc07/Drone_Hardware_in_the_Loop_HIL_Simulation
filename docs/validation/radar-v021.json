@@ -1,0 +1,168 @@
+{
+  "appVersion": "0.21.0",
+  "scope": "Forward body-CG geometric range/angle/range-rate sensor in the shared browser World",
+  "formats": {
+    "recording": 13,
+    "model": "0.9.0",
+    "scene": 4,
+    "camera": 4,
+    "api": "2.1",
+    "telemetryCsvColumns": 174,
+    "radarCsvColumns": 26,
+    "radarArtifact": 1,
+    "nativeRecordings": 1
+  },
+  "checks": {
+    "testsPassed": 309,
+    "testsFailed": 0,
+    "fullSuiteSeconds": 47.632053,
+    "build": "passed",
+    "diffCheck": "passed",
+    "finalAffectedTestsPassed": 34
+  },
+  "browserAnalyticCheck": {
+    "passed": true,
+    "reference": "Known two-vehicle QA fixture, not radar target identity inference",
+    "results": [
+      {
+        "phase": "away",
+        "sourceVehicleId": "drone-1",
+        "acquisitionTime": 6.5999999999998815,
+        "exportWorldTick": 1376,
+        "ageS": 0.2800000000001184,
+        "returns": 94,
+        "rangeM": 27.90774759815261,
+        "rangeRateMps": 0.21219498088987374,
+        "maxRangeErrorM": 0,
+        "maxRangeRateErrorMps": 0,
+        "staticClutterReturns": 93
+      },
+      {
+        "phase": "approach",
+        "sourceVehicleId": "drone-1",
+        "acquisitionTime": 9.100000000000023,
+        "exportWorldTick": 1863,
+        "ageS": 0.21499999999997677,
+        "returns": 94,
+        "rangeM": 23.860163665717174,
+        "rangeRateMps": -2.707573705377456,
+        "maxRangeErrorM": 0,
+        "maxRangeRateErrorMps": 0,
+        "staticClutterReturns": 93
+      }
+    ],
+    "faultCsv": {
+      "columns": 26,
+      "metadataRows": 1,
+      "fakeDetectionRows": 0
+    }
+  },
+  "fullRecording": {
+    "file": "final-browser-world.json",
+    "sha256": "b2637fc9b4c14ecd3f15b8c1889784dafa677410096a0c700f27375f3167e1c3"
+  },
+  "fullWorldReplay": {
+    "passed": true,
+    "vehicles": 2,
+    "frames": 608,
+    "ticks": 6045,
+    "simSeconds": 30.22499999999827,
+    "maximum": {
+      "positionM": 5.329070518200751e-15,
+      "quaternion": 8.847089727481716e-16,
+      "motors": 4.440892098500626e-16,
+      "allState": 2.3058637983772164e-12,
+      "sensors": 2.6716406864579767e-12
+    }
+  },
+  "browserReplay": {
+    "replayedFinalTimeS": 9.315,
+    "sourceVehicleId": "drone-1",
+    "acquisitionTimeS": 9.1,
+    "ageS": 0.215,
+    "nearestRangeM": 23.860163665717174,
+    "nearestRangeRateMps": -2.707573705377456,
+    "readOnlyFaultControls": true,
+    "liveArtifact": {
+      "file": "approach.json",
+      "sha256": "4dcf21ff5f3b58072a3cf3e31ebafed77ac2d5473932857e1a0a5da250c684d0"
+    },
+    "reexportedArtifact": {
+      "file": "release-export.json",
+      "sha256": "df8a5176e6f346dd24b220be98da3729dd32022b61a7bfa4c8ebd7ea95b364c4"
+    },
+    "reexportReadingConfigAndContextEqualsLiveArtifact": true,
+    "coordinateMetadata": {
+      "poseFrame": "NED",
+      "detectionFrame": "FRD"
+    }
+  },
+  "legacySixChannels": {
+    "passed": true,
+    "sourceBaseline": "f9d22ed371aeb22589aefd43831d299e4883eecb",
+    "checkedFrames": 61,
+    "steps": 601,
+    "legacyChannelDifference": 0
+  },
+  "limits": {
+    "timeS": 1800,
+    "ticks": 360000,
+    "frames": 36001,
+    "capacityBytes": 100663296,
+    "actualCapacityFixtureRetainedBytes": 100928901,
+    "capacityFrames": 211,
+    "capacityTick": 2100,
+    "overshoot": "less than one complete atomic World frame",
+    "demCoverage": "all vehicles roll back on a later vehicle coverage failure"
+  },
+  "nativeRegression": {
+    "capturedAt": "2026-11-04T23:15:18.157Z",
+    "nativeFormat": 1,
+    "results": [
+      {
+        "source": "gcs-proof-v017/px4-mavproxy-6/recording.json",
+        "sourceSha256": "6c107c01f36c676640230835e40d33792045625f2b8fed5d12136e5262e7a515",
+        "runtimeSeconds": 0.5147662499999999,
+        "passed": true,
+        "bootstrapTicks": 17,
+        "acceptedActuators": 23212,
+        "checkedSamples": 1859,
+        "simSeconds": 92.91600000002163,
+        "maxPositionErrorM": 0,
+        "maxQuaternionError": 0,
+        "maxMotorError": 0
+      },
+      {
+        "source": "gcs-proof-v017/ardupilot-mavproxy-4/recording.json",
+        "sourceSha256": "a166106b16aad525454452e4db517e6f49b728409a2343f6f93e75560b2f6a25",
+        "runtimeSeconds": 2.592229375,
+        "passed": true,
+        "bootstrapTicks": 1007,
+        "acceptedActuators": 148442,
+        "checkedSamples": 2970,
+        "simSeconds": 148.44200000034473,
+        "maxPositionErrorM": 0,
+        "maxQuaternionError": 0,
+        "maxMotorError": 0
+      }
+    ]
+  },
+  "performanceEvidence": {
+    "file": "radar-core-benchmark.json",
+    "sha256": "969c4517e5ad817308a2e34f74911b0fdc890647623928e21918168b13cb68aa"
+  },
+  "references": {
+    "carlaVersion": "0.9.16",
+    "carlaCommit": "294096eb1c38eabf246e4f3a9cdab704e33a7f4c",
+    "license": "MIT",
+    "interpretation": "Source dot(targetVelocity-sensorVelocity,outwardDirection): positive range rate is receding; documentation wording differs. No source code copied."
+  },
+  "limitations": [
+    "Geometric first-hit rays, not RF, RCS, signal strength, multipath, material/weather propagation or target identity.",
+    "Peers use conservative spheres; no lever arm, rotational surface velocity or micro-Doppler.",
+    "Fixed body-forward mount; no radar feed into internal or native flight controllers.",
+    "Full beam budget is 3321. Eight vehicles at maximum density measured approximately 0.376 real-time factor without renderer, Worker or recording serialization.",
+    "Schema 1..12 is not supported; native format 1 remains separate.",
+    "All-market capability goal remains incomplete."
+  ]
+}

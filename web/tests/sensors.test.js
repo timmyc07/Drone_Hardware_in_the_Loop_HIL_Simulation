@@ -1,5 +1,6 @@
 import test from "node:test";
 import { localToGeographic } from "../geography.js";
+import { validateRadarReading } from "../radar.js";
 import assert from "node:assert/strict";
 import {
   createSensorSuite,
@@ -7,6 +8,7 @@ import {
   DEFAULT_SENSOR_CONFIG,
   lidarPoints,
   MAX_LIDAR_POINTS,
+  SENSOR_NAMES,
   assertGeographicSensors,
 } from "../sensors.js";
 
@@ -651,9 +653,9 @@ test("geographic sensor origin and datum must match DEM provenance atomically", 
 test("peer spheres occlude range, flow and lidar while only the source vehicle is excluded", () => {
   const suite = createSensorSuite({ ...quiet, ...planar, lidarRays: 12 });
   const peers = [
-    { id: "self", position: [0, 0, -2], radius: 1 },
-    { id: "below", position: [0, 0, -1], radius: 0.25 },
-    { id: "north", position: [5, 0, -2], radius: 1 },
+    { id: "self", position: [0, 0, -2], velocity: [0, 0, 0], radius: 1 },
+    { id: "below", position: [0, 0, -1], velocity: [0, 0, 0], radius: 0.25 },
+    { id: "north", position: [5, 0, -2], velocity: [0, 0, 0], radius: 1 },
   ];
   suite.setPeers(peers, "self");
   peers[1].position[2] = -20;
@@ -663,9 +665,14 @@ test("peer spheres occlude range, flow and lidar while only the source vehicle i
   near(first.lidar.rangesM[6], 4);
   suite.setPeers(
     [
-      { id: "near", position: [0.25, 0, -2], radius: 0.2 },
-      { id: "far", position: [5, 0, -2], radius: 1 },
-      { id: "under", position: [0, 0, -1.8], radius: 0.15 },
+      { id: "near", position: [0.25, 0, -2], velocity: [0, 0, 0], radius: 0.2 },
+      { id: "far", position: [5, 0, -2], velocity: [0, 0, 0], radius: 1 },
+      {
+        id: "under",
+        position: [0, 0, -1.8],
+        velocity: [0, 0, 0],
+        radius: 0.15,
+      },
     ],
     "self",
   );
@@ -684,9 +691,9 @@ test("peer validation is atomic and peer order does not alter seeded acquisition
   const a = createSensorSuite(config, 77),
     b = createSensorSuite(config, 77);
   const peers = [
-    { id: "self", position: [0, 0, -2], radius: 1 },
-    { id: "b", position: [5, 0, -2], radius: 1 },
-    { id: "a", position: [0, 0, -1], radius: 0.25 },
+    { id: "self", position: [0, 0, -2], velocity: [0, 0, 0], radius: 1 },
+    { id: "b", position: [5, 0, -2], velocity: [0, 0, 0], radius: 1 },
+    { id: "a", position: [0, 0, -1], velocity: [0, 0, 0], radius: 0.25 },
   ];
   a.setPeers(peers, "self");
   b.setPeers([...peers].reverse(), "self");
@@ -696,6 +703,8 @@ test("peer validation is atomic and peer order does not alter seeded acquisition
     Array(9).fill(peers[0]),
     [peers[0], peers[0]],
     [{ ...peers[0], position: Array(3) }],
+    [{ ...peers[0], velocity: Array(3) }],
+    [{ ...peers[0], velocity: undefined }],
     [{ ...peers[0], radius: NaN }],
     [{ ...peers[0], radius: 0 }],
     [{ ...peers[0], id: "" }],
@@ -728,7 +737,14 @@ test("sensor checkpoint restores RNG, delayed acquisitions, faults and all scene
       { north: 60, east: 60, width: 2, depth: 2, height: 1 },
     ]);
     suite.setPeers(
-      [{ id: "peer", position: [60, 60, -7], radius: 0.5 }],
+      [
+        {
+          id: "peer",
+          position: [60, 60, -7],
+          velocity: [0, 0, 0],
+          radius: 0.5,
+        },
+      ],
       "self",
     );
     suite.update(state(0, { position: [60, 60, -10] }));
@@ -746,4 +762,281 @@ test("sensor checkpoint restores RNG, delayed acquisitions, faults and all scene
     const input = state(i * 0.005, { position: [60, 60, -10] });
     assert.deepEqual(a.update(input), b.update(input));
   }
+});
+
+const radarQuiet = {
+  ...quiet,
+  radarNoiseM: 0,
+  radarVelocityNoiseMps: 0,
+  radarAzimuthRays: 1,
+  radarElevationRays: 1,
+};
+const radarWall = { north: 10, east: 0, width: 2, depth: 100, height: 100 };
+const peer = (id, position, velocity = [0, 0, 0], radius = 1) => ({
+  id,
+  position,
+  velocity,
+  radius,
+});
+
+test("geometric radar reports actual closing/receding range rate including ego motion, co-motion and lateral motion", () => {
+  const wall = createSensorSuite(radarQuiet);
+  wall.setObstacles([radarWall]);
+  let reading = wall.update(state(0, { velocity: [5, 0, 0] })).radar;
+  near(reading.detections[0].rangeM, 9);
+  near(reading.detections[0].rangeRateMps, -5);
+  assert.equal(reading.detections[0].beam, 0);
+  assert.deepEqual(Object.keys(reading.detections[0]).sort(), [
+    "azimuthRad",
+    "beam",
+    "elevationRad",
+    "rangeM",
+    "rangeRateMps",
+  ]);
+  for (const [ego, target, expected] of [
+    [[0, 0, 0], [-3, 0, 0], -3],
+    [[2, 0, 0], [2, 0, 0], 0],
+    [[0, 0, 0], [0, 3, 0], 0],
+    [[2, 0, 0], [5, 0, 0], 3],
+  ]) {
+    const suite = createSensorSuite(radarQuiet);
+    suite.setPeers([peer("other", [10, 0, -2], target)], "self");
+    reading = suite.update(state(0, { velocity: ego })).radar;
+    assert.equal(reading.valid, true);
+    near(reading.detections[0].rangeM, 9);
+    near(reading.detections[0].rangeRateMps, expected);
+    assert.deepEqual(reading.velocityNedMps, ego);
+    assert.deepEqual(validateRadarReading(reading, radarQuiet), reading);
+  }
+});
+
+test("radar body axes, FOV grid and actual terrain agree with analytic rays without angular-motion fake Doppler", () => {
+  const suite = createSensorSuite({
+    ...radarQuiet,
+    radarAzimuthRays: 3,
+    radarElevationRays: 3,
+    radarHorizontalFovDeg: 90,
+    radarVerticalFovDeg: 60,
+  });
+  suite.setObstacles([radarWall]);
+  const reading = suite.update(
+    state(0, { position: [0, 0, -20], velocity: [2, 0, 0] }),
+  ).radar;
+  assert.equal(reading.detections.length, 9);
+  reading.detections.forEach((d, beam) => {
+    const azimuth = -Math.PI / 4 + ((beam % 3) * Math.PI) / 4,
+      elevation = -Math.PI / 6 + (Math.floor(beam / 3) * Math.PI) / 6;
+    near(d.azimuthRad, azimuth);
+    near(d.elevationRad, elevation);
+    const north = Math.cos(elevation) * Math.cos(azimuth);
+    near(d.rangeM, 9 / north);
+    near(d.rangeRateMps, -2 * north);
+  });
+  const rotated = createSensorSuite(radarQuiet),
+    half = Math.SQRT1_2;
+  rotated.setPeers([peer("east", [0, 10, -2], [0, -3, 0])], "self");
+  const yaw = rotated.update(
+    state(0, {
+      quaternion: [half, 0, 0, half],
+      velocity: [0, 2, 0],
+      rates: [0, 0, 4],
+    }),
+  ).radar;
+  near(yaw.detections[0].rangeM, 9);
+  near(yaw.detections[0].rangeRateMps, -5);
+  rotated.setPeers([peer("east", [0, 10, -2])], "self");
+  near(
+    rotated.update(
+      state(0.1, { quaternion: [half, 0, 0, half], rates: [1, 2, 3] }),
+    ).radar.detections[0].rangeRateMps,
+    0,
+  );
+  const heights = Array(25).fill(0);
+  heights[12] = 4;
+  const terrain = {
+    kind: "heightfield",
+    north: 40,
+    east: 40,
+    cellSize: 10,
+    rows: 5,
+    cols: 5,
+    heights,
+  };
+  const down = createSensorSuite(radarQuiet);
+  down.setTerrain(terrain);
+  const ground = down.update(
+    state(0, {
+      position: [60, 60, -10],
+      quaternion: [half, 0, -half, 0],
+      velocity: [0, 0, 2],
+    }),
+  ).radar;
+  near(ground.detections[0].rangeM, 6);
+  near(ground.detections[0].rangeRateMps, -2);
+});
+
+test("radar nearest-hit occlusion and stable ties do not leak farther moving targets or peer IDs", () => {
+  const suite = createSensorSuite(radarQuiet);
+  suite.setObstacles([radarWall]);
+  const peers = [
+    peer("self", [0, 0, -2], [99, 0, 0]),
+    peer("moving", [10, 0, -2], [7, 0, 0]),
+  ];
+  suite.setPeers(peers, "self");
+  peers[1].velocity[0] = 99;
+  const tied = suite.update(state()).radar;
+  near(tied.detections[0].rangeM, 9);
+  near(tied.detections[0].rangeRateMps, 0);
+  const a = createSensorSuite(radarQuiet),
+    b = createSensorSuite(radarQuiet);
+  const overlap = [
+    peer("b", [10, 0, -2], [3, 0, 0]),
+    peer("a", [10, 0, -2], [1, 0, 0]),
+  ];
+  a.setPeers(overlap, "self");
+  b.setPeers([...overlap].reverse(), "self");
+  const selected = a.update(state()).radar;
+  assert.deepEqual(b.update(state()).radar, selected);
+  near(selected.detections[0].rangeRateMps, 1);
+  a.setPeers(
+    [
+      peer("near", [0.3, 0, -2], [8, 0, 0], 0.15),
+      peer("far", [10, 0, -2], [20, 0, 0]),
+    ],
+    "self",
+  );
+  const blind = a.update(state(0.1)).radar;
+  assert.equal(blind.reason, "no-return");
+  assert.equal(blind.valid, false);
+  assert.deepEqual(blind.detections, []);
+  assert.notEqual(blind.positionNed, null);
+  const clone = createSensorSuite(radarQuiet),
+    moving = [peer("m", [10, 0, -2], [-3, 0, 0])];
+  clone.setPeers(moving, "self");
+  moving[0].position[0] = 20;
+  moving[0].velocity[0] = 100;
+  near(clone.update(state()).radar.detections[0].rangeRateMps, -3);
+});
+
+test("radar latency retains acquired source and target velocities and its fault/dropout pose contract", () => {
+  const config = { ...radarQuiet, latency: 0.15 },
+    suite = createSensorSuite(config);
+  suite.setPeers([peer("m", [10, 0, -2], [-3, 0, 0])], "self");
+  let reading = suite.update(state(0, { velocity: [5, 0, 0] })).radar;
+  assert.equal(reading.reason, "startup");
+  assert.equal(reading.positionNed, null);
+  assert.equal(reading.velocityNedMps, null);
+  suite.setPeers([peer("m", [20, 0, -2], [4, 0, 0])], "self");
+  suite.update(state(0.1, { velocity: [7, 0, 0] }));
+  reading = suite.update(state(0.15, { velocity: [9, 0, 0] })).radar;
+  assert.equal(reading.time, 0);
+  near(reading.detections[0].rangeM, 9);
+  near(reading.detections[0].rangeRateMps, -8);
+  assert.deepEqual(reading.velocityNedMps, [5, 0, 0]);
+  reading = suite.update(state(0.25)).radar;
+  near(reading.time, 0.1);
+  near(reading.detections[0].rangeM, 19);
+  near(reading.detections[0].rangeRateMps, -3);
+  suite.setFault("radar", true);
+  reading = suite.snapshot().radar;
+  assert.equal(reading.reason, "fault");
+  assert.equal(reading.positionNed, null);
+  validateRadarReading(reading, config);
+  suite.update(state(0.3));
+  reading = suite.update(state(0.5)).radar;
+  assert.equal(reading.reason, "fault");
+  assert.notEqual(reading.positionNed, null);
+  validateRadarReading(reading, config);
+  suite.setFault("radar", false);
+  assert.equal(suite.snapshot().radar.reason, "startup");
+  reading = suite.update(state(0.7)).radar;
+  assert.equal(reading.valid, false);
+  reading = suite.update(state(0.9)).radar;
+  assert.equal(reading.valid, true);
+  validateRadarReading(reading, config);
+  const dropout = createSensorSuite({ ...radarQuiet, dropout: 1 }).update(
+    state(),
+  ).radar;
+  assert.equal(dropout.reason, "dropout");
+  assert.deepEqual(dropout.detections, []);
+  assert.deepEqual(dropout.velocityNedMps, [0, 0, 0]);
+  validateRadarReading(dropout, radarQuiet);
+});
+
+test("radar noise/dropout/reset/checkpoint are deterministic and radar sampling never consumes the original six streams", () => {
+  const base = { latency: 0.07, dropout: 0.2, lidarRays: 12, ...planar };
+  const a = createSensorSuite(
+      { ...base, radarHz: 1, radarAzimuthRays: 1, radarElevationRays: 1 },
+      71,
+    ),
+    b = createSensorSuite(
+      {
+        ...base,
+        radarHz: 20,
+        radarAzimuthRays: 31,
+        radarNoiseM: 4,
+        radarVelocityNoiseMps: 5,
+      },
+      71,
+    );
+  for (const suite of [a, b]) suite.setObstacles([radarWall]);
+  const old = (frame) =>
+    Object.fromEntries(
+      SENSOR_NAMES.filter((name) => name !== "radar").map((name) => [
+        name,
+        frame[name],
+      ]),
+    );
+  for (let i = 0; i < 101; i++) {
+    const s = state(i * 0.005, { velocity: [0.2, 0, 0] });
+    assert.deepEqual(old(a.update(s)), old(b.update(s)));
+  }
+  const before = b.snapshot(),
+    restore = b.checkpoint();
+  const expected = b.update(state(0.6));
+  b.setFault("radar", true);
+  b.update(state(0.7));
+  restore();
+  assert.deepEqual(b.snapshot(), before);
+  assert.deepEqual(b.update(state(0.6)), expected);
+  const seedConfig = {
+    ...radarQuiet,
+    radarNoiseM: 1,
+    radarVelocityNoiseMps: 1,
+  };
+  const repeat = createSensorSuite(seedConfig, 19);
+  repeat.setObstacles([radarWall]);
+  const first = repeat.update(state());
+  repeat.reset();
+  repeat.setObstacles([radarWall]);
+  assert.deepEqual(repeat.update(state()), first);
+  assert.ok(Object.isFrozen(SENSOR_NAMES));
+  assert.equal(SENSOR_NAMES.at(-1), "radar");
+});
+
+test("the maximum radar beam budget produces bounded real returns with separate range and signed-velocity noise", () => {
+  const config = {
+    ...radarQuiet,
+    radarAzimuthRays: 81,
+    radarElevationRays: 41,
+    radarHorizontalFovDeg: 1,
+    radarVerticalFovDeg: 1,
+    radarNoiseM: 10,
+    radarVelocityNoiseMps: 10,
+    radarMaxM: 10,
+  };
+  const suite = createSensorSuite(config, 42);
+  suite.setObstacles([radarWall]);
+  const reading = suite.update(state(0, { position: [0, 0, -20] })).radar;
+  assert.equal(reading.detections.length, 3321);
+  assert.equal(reading.detections.at(-1).beam, 3320);
+  assert.ok(
+    reading.detections.every(
+      (d) =>
+        d.rangeM >= 0.2 && d.rangeM <= 10 && Number.isFinite(d.rangeRateMps),
+    ),
+  );
+  assert.ok(reading.detections.some((d) => d.rangeM === 0.2));
+  assert.ok(reading.detections.some((d) => d.rangeM === 10));
+  assert.deepEqual(validateRadarReading(reading, config), reading);
 });

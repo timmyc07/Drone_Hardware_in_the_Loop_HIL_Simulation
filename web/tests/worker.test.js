@@ -294,3 +294,71 @@ test("collision pauses the whole world and its final frame remains exportable", 
   assert.equal(record.samples.at(-1).tick, final.world.tick);
   replay(record);
 });
+
+test("radar exports identify the requested vehicle and retain delayed acquisition data without inventing returns", async (t) => {
+  const h = await harness(t),
+    input = fleet(2, false);
+  for (const v of input.vehicles)
+    v.setup.sensors = { ...v.setup.sensors, latency: 0.25 };
+  await h.call({ type: "resetWorld", value: input });
+  assert.equal(
+    (await h.send({ type: "radarExport", value: "json" })).ok,
+    false,
+  );
+  await h.call({ type: "play" });
+  await h.advance(10);
+  await h.call({ type: "pause" });
+  const inspected = await h.call({ type: "inspect", vehicleId: "drone-2" });
+  const json = await h.call({
+    type: "radarExport",
+    vehicleId: "drone-2",
+    value: "json",
+  });
+  const artifact = JSON.parse(json.text);
+  assert.equal(json.sourceVehicleId, "drone-2");
+  assert.equal(artifact.sourceVehicleId, "drone-2");
+  assert.equal(artifact.exportWorldTick, inspected.world.tick);
+  assert.deepEqual(artifact.reading, inspected.sensors.radar);
+  assert.ok(artifact.reading.time < inspected.world.time);
+  const csv = await h.call({
+    type: "radarExport",
+    vehicleId: "drone-2",
+    value: "csv",
+  });
+  assert.ok(csv.text.startsWith("source_vehicle_id,export_world_tick,"));
+  assert.equal(
+    (await h.send({ type: "radarExport", vehicleId: "drone-2", value: "pcd" }))
+      .ok,
+    false,
+  );
+  await h.call({
+    type: "sensorFault",
+    vehicleId: "drone-2",
+    value: { sensor: "radar", failed: true },
+  });
+  const faulted = JSON.parse(
+    (await h.call({ type: "radarExport", vehicleId: "drone-2", value: "json" }))
+      .text,
+  );
+  assert.equal(faulted.reading.reason, "fault");
+  assert.equal(faulted.reading.detections.length, 0);
+  const empty = await h.call({
+    type: "radarExport",
+    vehicleId: "drone-2",
+    value: "csv",
+  });
+  const rows = empty.text
+    .trimEnd()
+    .split("\n")
+    .map((r) => r.split(","));
+  assert.equal(rows.length, 2);
+  assert.ok(rows[1].slice(-5).every((v) => v === ""));
+  const raw = await h.call({ type: "apiExport" });
+  assert.equal(
+    typeof raw.sensorFrames.at(-1).vehicles[1].sensors.faults,
+    "number",
+  );
+  const record = validateRecording(raw);
+  assert.equal(record.version, 13);
+  replay(record);
+});

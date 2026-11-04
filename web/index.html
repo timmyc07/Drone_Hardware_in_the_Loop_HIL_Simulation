@@ -437,6 +437,16 @@
           </div>
           <p id="camera-legend">分類圖例依場景物件區分；影像為模擬資料。</p>
         </section>
+        <section aria-labelledby="radar-title">
+          <h3 id="radar-title">前向雷達</h3>
+          <p>固定朝機體前方的幾何量測；速度為相對距離變化：負值靠近、正值遠離。橙色回波表示靠近，青色表示遠離或零。此模型不包含電波、材質反射或目標識別，資料不控制飛行器。</p>
+          <p id="radar-status">尚未量測</p>
+          <canvas id="radar-map" width="480" height="300" role="img" aria-label="前向雷達俯視回波圖"></canvas>
+          <details><summary>量測姿態與速度</summary><p id="radar-pose">尚無量測姿態</p></details>
+          <div class="radar-table-wrap"><table><thead><tr><th>距離 m</th><th>方位 °</th><th>仰角 °</th><th>距離變化 m/s</th></tr></thead><tbody id="radar-returns"></tbody></table></div>
+          <p id="radar-count"></p>
+          <div class="feature-actions"><button type="button" id="radar-export-json" disabled>匯出雷達 JSON</button><button type="button" id="radar-export-csv" disabled>匯出雷達 CSV</button></div>
+        </section>
         <h3>LiDAR 多層掃描（俯視投影）</h3>
         <p>
           顏色表示掃描層：低仰角偏藍、高仰角偏橙；射線偵測地形、訓練障礙盒及其他飛行器的保守包圍範圍，不含建物裝飾、天氣、材質、強度或多重回波。資料不驅動內建飛控，也不輸入
@@ -462,6 +472,7 @@
               <option value="magnetometer">磁力計</option>
               <option value="rangefinder">測距計</option>
               <option value="lidar">LiDAR</option>
+              <option value="radar">雷達</option>
               <option value="opticalFlow">光流</option>
             </select></label
           >
