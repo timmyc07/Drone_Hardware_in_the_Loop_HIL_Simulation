@@ -151,6 +151,7 @@ test("ArduPilot mission gates upload and start on verified matching route", asyn
     await import("../hil-client.js");
   const points = [{ north: 5, east: 0, altitude: 3, hold: 1 }];
   const state = {
+    groundStation: { owner: "web" },
     phase: "running",
     controller: {
       kind: "ardupilot",
@@ -286,6 +287,7 @@ test("PX4 and ArduPilot mission sequences and hold rules use reported contract",
     },
   };
   const state = {
+    groundStation: { owner: "web" },
     phase: "running",
     controller: { kind: "px4", armed: false, verified: true },
     snapshot: { runway: { weightOnWheels: true } },
@@ -346,4 +348,55 @@ test("PX4 and ArduPilot mission sequences and hold rules use reported contract",
       .start,
     false,
   );
+});
+
+test("ground station configuration uses the authenticated request and ownership gates missions", async () => {
+  const { client } = makeClient();
+  await client.connect();
+  for (const targetPort of [1023, 4560, 5760, 9002, 14560, 14561, 65536])
+    await assert.rejects(client.configureGroundStation({ targetPort }), /UDP/);
+  const value = { enabled: true, targetPort: 14550, owner: "gcs" };
+  const pending = client.configureGroundStation(value);
+  assert.deepEqual(Socket.current.sent, {
+    id: 1,
+    type: "groundStation",
+    value,
+  });
+  Socket.current.reply({
+    type: "reply",
+    id: 1,
+    ok: true,
+    value: { owner: "gcs" },
+  });
+  assert.deepEqual(await pending, { owner: "gcs" });
+  client.close();
+  const { hilWebControlAllowed, externalMissionControls } =
+    await import("../hil-client.js");
+  const points = [{ north: 0, east: 0, altitude: 2, hold: 1 }];
+  const state = {
+    phase: "running",
+    groundStation: { owner: "web" },
+    controller: { kind: "px4", verified: true, armed: false },
+    snapshot: { runway: { weightOnWheels: true } },
+    mission: {
+      phase: "ready",
+      homeReady: true,
+      readyToUpload: true,
+      verified: true,
+      points,
+      limits: {
+        radius: 20,
+        height: 10,
+        minAltitude: 1,
+        holdRequiresInteger: false,
+      },
+    },
+  };
+  assert.equal(hilWebControlAllowed(state), true);
+  assert.equal(externalMissionControls(state, points).start, true);
+  const controlled = { ...state, groundStation: { owner: "gcs" } };
+  assert.equal(hilWebControlAllowed(controlled), false);
+  assert.equal(externalMissionControls(controlled, points).upload, false);
+  assert.equal(externalMissionControls(controlled, points).start, false);
+  assert.equal(hilWebControlAllowed({}), false);
 });

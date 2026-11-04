@@ -444,6 +444,41 @@
             ><button id="hil-return">回到內建模擬</button
             ><button id="hil-export">匯出 SITL JSON</button>
           </div>
+          <section aria-labelledby="ground-station-title">
+            <h3 id="ground-station-title">本機地面站橋接</h3>
+            <p>
+              僅本機迴圈
+              UDP。橋接啟用與收到地面站心跳為不同狀態；交給地面站後網頁僅保留暫停、繼續與停止。
+              切換控制權或關閉橋接前須在地面上鎖；接管須先收到地面站心跳。
+            </p>
+            <div id="ground-station-controls" class="feature-actions">
+              <label
+                ><input
+                  id="ground-station-enabled"
+                  type="checkbox"
+                  disabled
+                />啟用橋接</label
+              >
+              <label
+                >地面站 UDP 埠<input
+                  id="ground-station-port"
+                  type="number"
+                  disabled
+                  min="1024"
+                  max="65535"
+                  step="1"
+                  value="14550"
+              /></label>
+              <label
+                >控制權<select id="ground-station-owner" disabled>
+                  <option value="web">網頁</option>
+                  <option value="gcs">地面站</option>
+                </select></label
+              >
+              <button id="ground-station-apply" disabled>套用橋接設定</button>
+            </div>
+            <p id="ground-station-status" role="status">尚未啟用</p>
+          </section>
           <p id="hil-status" role="status">本機服務尚未連線</p>
           <p id="hil-controller"></p>
           <p id="hil-readiness"></p>

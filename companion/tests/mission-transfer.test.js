@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { MissionTransfer } from "../mission-transfer.js";
-const base = { targetSystem: 255, targetComponent: 190, missionType: 0 };
+const base = { targetSystem: 255, targetComponent: 191, missionType: 0 };
 const item = {
   seq: 0,
   frame: 6,
@@ -57,10 +57,23 @@ test("shared transfer rejects float packets and abort never throws when callback
 });
 
 test("invalid mission item lists never transmit a count", async () => {
-  for (const items of [[], Array(1), [{seq: 1}], Array.from({length:54}, (_,seq)=>({seq}))]) {
-    const sent=[], phases=[];
-    const transfer=new MissionTransfer({send:value=>sent.push(value),verifyItem:()=>{},diagnostic:()=>{},onPhase:phase=>phases.push(phase)});
+  for (const items of [
+    [],
+    Array(1),
+    [{ seq: 1 }],
+    Array.from({ length: 54 }, (_, seq) => ({ seq })),
+  ]) {
+    const sent = [],
+      phases = [];
+    const transfer = new MissionTransfer({
+      send: (value) => sent.push(value),
+      verifyItem: () => {},
+      diagnostic: () => {},
+      onPhase: (phase) => phases.push(phase),
+    });
     await assert.rejects(transfer.upload(items), /dense sequence/);
-    assert.deepEqual(sent, []); assert.deepEqual(phases,["error"]); assert.equal(transfer.phase,"error");
+    assert.deepEqual(sent, []);
+    assert.deepEqual(phases, ["error"]);
+    assert.equal(transfer.phase, "error");
   }
 });

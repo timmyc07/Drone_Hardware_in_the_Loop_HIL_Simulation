@@ -28,6 +28,79 @@ class FakeSession extends EventEmitter {
   }
 }
 
+test("ground station configuration is strict and ownership blocks queued web flight commands", async (t) => {
+  class GroundSession extends FakeSession {
+    owner = "web";
+    state() {
+      return { phase: "running", groundStation: { owner: this.owner } };
+    }
+    async configureGroundStation(value) {
+      this.actions.push(["groundStation", value]);
+      this.owner = value.owner;
+      return this.state();
+    }
+    async uploadMission(value) {
+      this.actions.push(["mission", value]);
+    }
+  }
+  const session = new GroundSession();
+  const app = await startCompanion({ port: 0, sessionFactory: () => session });
+  t.after(() => app.close());
+  const { port } = app.address,
+    host = `127.0.0.1:${port}`;
+  const token = JSON.parse((await http(port, "/api/bootstrap")).data).token;
+  const ws = await wsOpen(
+    `ws://${host}/bridge?token=${token}`,
+    `http://${host}`,
+  );
+  t.after(() => ws.terminate());
+  let sequence = 0;
+  const rpc = (type, value) =>
+    new Promise((resolve) => {
+      const id = ++sequence;
+      const receive = (data) => {
+        const message = JSON.parse(data);
+        if (message.type === "reply" && message.id === id) {
+          ws.off("message", receive);
+          resolve(message);
+        }
+      };
+      ws.on("message", receive);
+      ws.send(JSON.stringify({ id, type, value }));
+    });
+  const settings = { enabled: true, targetPort: 14550, owner: "web" };
+  for (const invalid of [
+    null,
+    {},
+    { ...settings, extra: 0 },
+    { ...settings, targetPort: 0 },
+    { ...settings, targetPort: 1024.5 },
+    { ...settings, targetPort: 65536 },
+    { ...settings, enabled: 1 },
+    { ...settings, owner: "other" },
+    { ...settings, enabled: false, owner: "gcs" },
+  ])
+    assert.equal((await rpc("groundStation", invalid)).ok, false);
+  assert.equal(session.actions.length, 0);
+  assert.equal((await rpc("groundStation", settings)).ok, true);
+  assert.equal(
+    (await rpc("groundStation", { ...settings, owner: "gcs" })).ok,
+    true,
+  );
+  const before = session.actions.length;
+  for (const action of ["arm", "takeoff", "land", "disarm", "mission"])
+    assert.equal((await rpc("command", action)).ok, false);
+  assert.equal(
+    (await rpc("mission", [{ north: 0, east: 0, altitude: 3, hold: 1 }])).ok,
+    false,
+  );
+  assert.equal(session.actions.length, before);
+  for (const action of ["pause", "resume", "stop"])
+    assert.equal((await rpc("command", action)).ok, true);
+  assert.equal((await rpc("groundStation", settings)).ok, true);
+  assert.equal((await rpc("command", "takeoff")).ok, true);
+});
+
 test(
   "mission uploads reach the selected controller and malformed payloads never reach either",
   { timeout: 5000 },
@@ -285,6 +358,75 @@ test("loopback token, origin, single controller, validation and disconnect prese
   while (!session.actions.includes("pause"))
     await new Promise((r) => setTimeout(r, 5));
   assert.deepEqual(session.record.samples, [1, 2, 3]);
+});
+
+test("disconnect checks queued ownership and GCS flight survives reconnect", async (t) => {
+  for (const owner of [undefined, "web", "gcs"]) {
+    await t.test(String(owner), async (t) => {
+      let release, entered;
+      const waiting = new Promise((resolve) => {
+        release = resolve;
+      });
+      const started = new Promise((resolve) => {
+        entered = resolve;
+      });
+      const session = new FakeSession();
+      session.owner = "web";
+      session.phase = "running";
+      session.state = () => ({
+        phase: session.phase,
+        groundStation: { owner: session.owner },
+      });
+      session.command = async (action) => {
+        session.actions.push(action);
+        if (action === "resume") {
+          entered();
+          await waiting;
+        }
+        if (action === "pause") session.phase = "paused";
+        return session.state();
+      };
+      const app = await startCompanion({
+        port: 0,
+        sessionFactory: () => session,
+      });
+      t.after(() => app.close());
+      const { port } = app.address,
+        host = `127.0.0.1:${port}`;
+      const token = JSON.parse((await http(port, "/api/bootstrap")).data).token;
+      const url = `ws://${host}/bridge?token=${token}`,
+        origin = `http://${host}`;
+      const ws = await wsOpen(url, origin);
+      ws.send(JSON.stringify({ id: 1, type: "command", value: "resume" }));
+      await started;
+      const closed = once(ws, "close");
+      ws.close();
+      await closed;
+      // Ownership changes while the disconnect cleanup waits for the command.
+      session.owner = owner;
+      release();
+      // Reconnect is accepted only after queued cleanup releases the old client.
+      let next;
+      for (let attempt = 0; attempt < 100 && !next; attempt++) {
+        try {
+          next = await wsOpen(url, origin);
+        } catch (error) {
+          assert.match(error.message, /409/);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+      }
+      assert.ok(next, "disconnect cleanup must release the client");
+      t.after(() => next.terminate());
+      const reply = once(next, "message");
+      next.send(JSON.stringify({ id: 2, type: "inspect" }));
+      const state = JSON.parse((await reply)[0]).value;
+      assert.equal(state.phase, owner === "gcs" ? "running" : "paused");
+      assert.deepEqual(
+        session.actions,
+        owner === "gcs" ? ["resume"] : ["resume", "pause"],
+      );
+    });
+  }
 });
 
 test("oversized incoming messages disconnect and pause", async (t) => {

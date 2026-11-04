@@ -1,4 +1,5 @@
 import { common } from "node-mavlink";
+import { INTERNAL_COMPONENT_ID } from "./mavlink.js";
 const family = (frame) =>
   [0, 5].includes(frame)
     ? "global"
@@ -63,9 +64,15 @@ export class MissionTransfer {
           }
       }, 1000);
       try {
-        if (!Array.isArray(items) || items.length < 1 || items.length > 53 ||
-            Array.from(items).some((item, index) => !item || item.seq !== index))
-          throw new Error("Mission items must be a dense sequence of 1..53 items");
+        if (
+          !Array.isArray(items) ||
+          items.length < 1 ||
+          items.length > 53 ||
+          Array.from(items).some((item, index) => !item || item.seq !== index)
+        )
+          throw new Error(
+            "Mission items must be a dense sequence of 1..53 items",
+          );
         this.onPhase("uploading");
         this.send(
           Object.assign(new common.MissionCount(), {
@@ -86,7 +93,7 @@ export class MissionTransfer {
       if (
         message.missionType !== 0 ||
         message.targetSystem !== 255 ||
-        ![0, 190].includes(message.targetComponent)
+        ![0, INTERNAL_COMPONENT_ID].includes(message.targetComponent)
       )
         throw Error("Unexpected mission transfer target/type");
       if (id === 39) throw Error("Float MISSION_ITEM download is not accepted");

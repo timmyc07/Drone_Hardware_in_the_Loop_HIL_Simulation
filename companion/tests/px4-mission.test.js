@@ -41,6 +41,17 @@ function fixture() {
   s.missionManager.handle(24, { fixType: 3 });
   return s;
 }
+function confirmClear(s, m, message) {
+  assert.equal(message.constructor.MSG_ID, 45);
+  m.handle(47, {
+    targetSystem: 255,
+    targetComponent: 191,
+    missionType: 0,
+    type: 0,
+  });
+  m.handle(42, { seq: 0, total: 65535, missionState: 1, missionId: 0 });
+  setTimeout(() => s.heartbeatEpoch++, 5);
+}
 test("PX4 mission uses seq0 takeoff, float hold, explicit capture radius and exact HIL GPS projection", () => {
   const c = validateConfig();
   const items = compileMission(validateMissionPoints(points, c));
@@ -176,26 +187,28 @@ test("PX4 GCS preserves HIL arming, decodes bytewise parameters and always rejec
     command: 300,
     result: 0,
     targetSystem: 255,
-    targetComponent: 190,
+    targetComponent: 191,
   });
   await assert.rejects(pending, /diagnostic cap/);
   assert.equal(g.pending.size, 0);
   await g.close();
 });
 
-test("PX4 upload rewinds the actual navigator after readback, preserves float holds and waits for a fresh heartbeat", async () => {
+test("PX4 upload clears then reloads the actual navigator, preserves float holds and waits for a fresh heartbeat", async () => {
   const s = fixture(),
     m = s.missionManager;
   const sent = [];
+  s.controller.flightMode = "PX4_4_3";
   m.transfer.upload = async () => {
     m.state.phase = "verifying";
     m.expectedMissionId = 123;
+    m.handle(42, { seq: 0, total: 3, missionState: 2, missionId: 123 });
+    setTimeout(() => s.heartbeatEpoch++, 5);
     return compileMission(points);
   };
   s.gcs.send = (message) => {
     sent.push(message);
-    m.handle(42, { seq: 0, total: 3, missionState: 4, missionId: 123 });
-    setTimeout(() => s.heartbeatEpoch++, 5);
+    confirmClear(s, m, message);
   };
   m.state.phase = "completed";
   m.state.currentSeq = 2;
@@ -205,9 +218,9 @@ test("PX4 upload rewinds the actual navigator after readback, preserves float ho
   assert.equal(uploaded.currentSeq, 0);
   assert.deepEqual(uploaded.reachedSeqs, []);
   assert.equal(uploaded.points[0].hold, 0.5);
-  assert.equal(sent[0].seq, 0);
+  assert.equal(sent[0].constructor.MSG_ID, 45);
   assert.equal(sent[0].targetSystem, 1);
-  assert.equal(s.heartbeatEpoch, 3);
+  assert.equal(s.heartbeatEpoch, 4);
   await assert.rejects(m.upload([{ ...points[0], hold: 61 }]), /limits/);
   assert.equal(m.state.verified, false);
   assert.equal(m.state.phase, "error");
@@ -216,13 +229,14 @@ test("PX4 upload rewinds the actual navigator after readback, preserves float ho
 test("PX4 upload mutex spans navigator confirmation and cancellation leaves an error without leaking a pending transfer", async () => {
   const s = fixture(),
     m = s.missionManager;
+  s.controller.flightMode = "PX4_4_3";
   m.transfer.upload = async () => {
     m.state.phase = "verifying";
     return compileMission(points);
   };
-  s.gcs.send = () => {};
+  s.gcs.send = (message) => confirmClear(s, m, message);
   const waiting = m.upload(points);
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 50));
   assert.equal(m.uploading, true);
   assert.equal(m.snapshot().readyToUpload, false);
   await assert.rejects(m.upload(points), /exclusive/);
@@ -266,4 +280,107 @@ test("PX4 mission stop during ACK or armed confirmation cannot become a successf
       true,
     );
   }
+});
+
+test("PX4 handback upload leaves AUTO_MISSION through a confirmed native HOLD before rewriting the route", async () => {
+  const s = fixture(),
+    m = s.missionManager,
+    commands = [];
+  let transferred = false;
+  s.gcs.command = async (id, params) => {
+    commands.push({ id, params });
+    assert.equal(transferred, false);
+    setTimeout(() => {
+      s.controller.flightMode = "PX4_4_3";
+      s.heartbeatEpoch++;
+      s.lastHeartbeat = Date.now();
+    }, 5);
+  };
+  m.transfer.upload = async () => {
+    assert.equal(s.controller.flightMode, "PX4_4_3");
+    transferred = true;
+    m.state.phase = "verifying";
+    m.handle(42, { seq: 0, total: 3, missionState: 2 });
+    setTimeout(() => s.heartbeatEpoch++, 5);
+    return compileMission(points);
+  };
+  s.gcs.send = (message) => confirmClear(s, m, message);
+  const result = await m.upload(points);
+  assert.equal(result.phase, "ready");
+  assert.deepEqual(commands, [{ id: 176, params: [1, 4, 3] }]);
+  assert.equal(result.currentSeq, 0);
+  assert.ok(s.record.missionEvents.some((e) => e.type === "holdBeforeUpload"));
+  const cancelled = fixture();
+  cancelled.gcs.command = async () => {
+    cancelled.missionManager.abort("Session stopped");
+    cancelled.phase = "stopped";
+    cancelled.controller.flightMode = "PX4_4_3";
+    cancelled.heartbeatEpoch++;
+  };
+  let sent = false;
+  cancelled.missionManager.transfer.upload = async () => {
+    sent = true;
+  };
+  await assert.rejects(cancelled.missionManager.upload(points), /readiness/);
+  assert.equal(sent, false);
+  assert.equal(cancelled.missionManager.state.verified, false);
+});
+
+test("PX4 replacement requires a real clear ACK and empty navigator state and never sends deprecated rewind or unsupported224", async () => {
+  for (const result of [1, 0]) {
+    const s = fixture(),
+      m = s.missionManager;
+    s.controller.flightMode = "PX4_4_3";
+    let transferred = false;
+    const sent = [];
+    m.transfer.upload = async () => {
+      transferred = true;
+    };
+    s.gcs.send = (message) => {
+      sent.push(message.constructor.MSG_ID);
+      m.handle(47, {
+        targetSystem: 255,
+        targetComponent: 191,
+        missionType: 0,
+        type: result,
+      });
+      if (result === 0)
+        m.handle(42, { seq: 2, total: 3, missionState: 5, missionId: 123 });
+    };
+    const pending = m.upload(points);
+    if (result === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      assert.equal(transferred, false);
+      m.abort("cancelled clear");
+    }
+    await assert.rejects(pending, /clear/);
+    assert.equal(transferred, false);
+    assert.deepEqual(sent, [45]);
+    assert.equal(m.state.verified, false);
+    assert.equal(m.uploading, false);
+    assert.equal(m.clearing, null);
+  }
+  const items = compileMission(points);
+  assert.equal(items[0].current, 1);
+  assert.ok(items.slice(1).every((item) => item.current === 0));
+});
+
+test("PX4 external ownership keeps native HOME/GPS observations fresh without consuming mission progress", async () => {
+  const { Px4Gcs } = await import("../px4-gcs.js");
+  const s = fixture(),
+    g = new Px4Gcs(s);
+  s.groundStation = { externalOwner: true };
+  const home = { latitude: 250330001, longitude: 1215654001, altitude: 19980 };
+  g.handle(242, home);
+  assert.deepEqual(s.missionManager.home, home);
+  g.handle(24, { fixType: 0 });
+  assert.equal(s.missionManager.gpsFix, 0);
+  assert.equal(s.missionManager.snapshot().homeReady, false);
+  const before = structuredClone(s.missionManager.state);
+  g.handle(42, { seq: 2, total: 3, missionState: 3 });
+  g.handle(46, { seq: 2 });
+  assert.deepEqual(s.missionManager.state, before);
+  g.handle(24, { fixType: 3 });
+  assert.equal(s.missionManager.snapshot().homeReady, true);
+  await g.close();
 });

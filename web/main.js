@@ -12,6 +12,8 @@ import {
   createHilClient,
   isCompanionOrigin,
   hilFlightReadiness,
+  hilWebControlAllowed,
+  validGroundStationPort,
   shouldFollowTakeoff,
   externalMissionIndex,
   externalMissionReachedCount,
@@ -185,7 +187,8 @@ function setPlaying(value) {
   const externalTakeoff =
     externalActive &&
     hilState?.phase === "running" &&
-    latest?.runway.weightOnWheels;
+    latest?.runway.weightOnWheels &&
+    hilWebControlAllowed(hilState);
   $("play").innerHTML = externalTakeoff
     ? `<span aria-hidden="true">▶</span> ${hilFlightReadiness(hilState).length ? "等待飛控準備" : `${hilControllerName()} 起飛`}`
     : value
@@ -592,7 +595,11 @@ async function launchFlight() {
 $("play").onclick = () => {
   if (externalActive) {
     if (hilState?.phase === "paused") sendHilCommand("resume");
-    else if (hilState?.phase === "running" && latest?.runway.weightOnWheels)
+    else if (
+      hilState?.phase === "running" &&
+      latest?.runway.weightOnWheels &&
+      hilWebControlAllowed(hilState)
+    )
       sendHilCommand("takeoff");
     else if (hilState?.phase === "running") sendHilCommand("pause");
     return;
@@ -1189,7 +1196,7 @@ document.addEventListener("visibilitychange", () => {
   }
   if (document.hidden && running) {
     if (externalActive) {
-      sendHilCommand("pause");
+      if (hilState?.groundStation?.owner !== "gcs") sendHilCommand("pause");
       return;
     }
     if (replay) setPlaying(false);
@@ -1459,9 +1466,11 @@ function updateMissionControls() {
     : !editable || invalidWaypointInputs.size > 0;
   $("mission-apply").textContent = externalActive ? "上傳任務" : "套用任務";
   $("mission-help").textContent = externalActive
-    ? controls.editable
-      ? `草稿與飛控已確認航線分開；本機飛控準備完成且地面未解鎖後可上傳。上傳後須確認路線一致才能開始。${hilState?.mission?.limits?.holdRequiresInteger === true ? "停留秒數須為整數。" : ""}`
-      : "等待支援的本機飛控任務狀態。"
+    ? hilState?.groundStation?.owner === "gcs"
+      ? "地面站管理飛行與任務；這裡的草稿僅供編輯與匯出，不能上傳或開始。"
+      : controls.editable
+        ? `草稿與飛控已確認航線分開；本機飛控準備完成且地面未解鎖後可上傳。上傳後須確認路線一致才能開始。${hilState?.mission?.limits?.holdRequiresInteger === true ? "停留秒數須為整數。" : ""}`
+        : "等待支援的本機飛控任務狀態。"
     : config.airframe === "fixedwing"
       ? "固定翼請先完成跑道起飛，再開始航點任務；套用任務會切換至任務模式。"
       : "開始任務會由地面起飛並啟動模擬；套用任務只切換任務模式。";
@@ -1477,9 +1486,11 @@ function updateMissionControls() {
     error: "錯誤",
   };
   const missionStatus =
-    externalActive && controls.editable && m
-      ? `${phases[m.phase] || "等待狀態"}${m.homeReady === true ? "" : " · 等待飛控定位及家點確認"} · 目前航點 ${externalMissionIndex(m) === null ? "—" : externalMissionIndex(m) + 1} / ${m.points?.length ?? 0} · 飛控回報到達 ${externalMissionReachedCount(m) ?? "—"} 點${m.error ? ` · ${m.error}` : ""}`
-      : "";
+    externalActive && hilState?.groundStation?.owner === "gcs"
+      ? "地面站管理任務；網頁不宣稱已核對航線或進度。"
+      : externalActive && controls.editable && m
+        ? `${phases[m.phase] || "等待狀態"}${m.homeReady === true ? "" : " · 等待飛控定位及家點確認"} · 目前航點 ${externalMissionIndex(m) === null ? "—" : externalMissionIndex(m) + 1} / ${m.points?.length ?? 0} · 飛控回報到達 ${externalMissionReachedCount(m) ?? "—"} 點${m.error ? ` · ${m.error}` : ""}`
+        : "";
   $("mission-status").textContent = missionStatus;
   $("flight-mission-status").textContent = missionStatus
     ? `飛控任務：${missionStatus}`
@@ -2636,9 +2647,107 @@ let hilOwned = false;
 let hilExportedPackets = 0;
 let hilPreviousGrounded;
 let hilFollowed = false;
+let groundStationBusy = false;
+let groundStationSettingsKey = "";
+function renderGroundStation(state) {
+  const station = state?.groundStation;
+  const ready =
+    externalActive &&
+    ["running", "paused"].includes(state?.phase) &&
+    state.controller?.verified === true &&
+    !!station &&
+    !groundStationBusy;
+  for (const element of $("ground-station-controls").querySelectorAll(
+    "input, select, button",
+  ))
+    element.disabled = !ready;
+  if (!station) {
+    $("ground-station-status").textContent = "等待本機飛控橋接狀態。";
+    return;
+  }
+  const key = JSON.stringify([
+    station.enabled,
+    station.targetPort,
+    station.owner,
+  ]);
+  if (
+    key !== groundStationSettingsKey &&
+    !$("ground-station-controls").contains(document.activeElement)
+  ) {
+    $("ground-station-enabled").checked = station.enabled;
+    $("ground-station-port").value = station.targetPort;
+    $("ground-station-owner").value = station.owner;
+    groundStationSettingsKey = key;
+  }
+  const age = Number.isFinite(station.lastHeartbeatAgeMs)
+    ? (station.lastHeartbeatAgeMs / 1000).toFixed(1) + " 秒"
+    : "—";
+  $("ground-station-status").textContent =
+    (station.enabled ? "橋接已啟用" : "橋接未啟用") +
+    " · " +
+    (station.connected ? "已收到地面站心跳" : "未收到地面站心跳") +
+    " · 控制權：" +
+    (station.owner === "gcs"
+      ? "地面站"
+      : station.owner === "web"
+        ? "網頁"
+        : "未知") +
+    " · 本機接收埠 " +
+    (station.localPort ?? "—") +
+    " · 目的地 127.0.0.1:" +
+    station.targetPort +
+    " · 心跳齡期 " +
+    age +
+    (station.stats
+      ? " · 接收 " +
+        station.stats.receivedPackets +
+        "／已轉送 " +
+        station.stats.forwardedPackets +
+        " 封包／拒絕 " +
+        station.stats.rejectedPackets +
+        "／遙測 " +
+        station.stats.telemetryPackets
+      : "") +
+    (station.lastRejection
+      ? " · 拒絕原因：" +
+        station.lastRejection.reason +
+        (station.lastRejection.messageId == null
+          ? ""
+          : "（訊息 " + station.lastRejection.messageId + "）")
+      : "");
+}
+$("ground-station-apply").onclick = async () => {
+  if (
+    !hilClient ||
+    !externalActive ||
+    groundStationBusy ||
+    !["running", "paused"].includes(hilState?.phase) ||
+    hilState.controller?.verified !== true
+  )
+    return;
+  const targetPort = Number($("ground-station-port").value);
+  if (!validGroundStationPort(targetPort))
+    return toast("地面站 UDP 埠須介於 1024 至 65535，且不可使用飛控保留埠。");
+  groundStationBusy = true;
+  renderGroundStation(hilState);
+  try {
+    await hilClient.configureGroundStation({
+      enabled: $("ground-station-enabled").checked,
+      targetPort,
+      owner: $("ground-station-owner").value,
+    });
+    toast("橋接設定已送出；請以回報狀態確認。");
+  } catch (error) {
+    toast("無法套用地面站設定：" + error.message);
+  } finally {
+    groundStationBusy = false;
+    renderGroundStation(hilState);
+  }
+};
 function setExternalControls(disabled) {
   renderGimbal();
   renderTutorial();
+  renderGroundStation(hilState);
   if (disabled && latest?.controlSource !== "external")
     $("ground-status").textContent = "等待外部飛控模型真值。";
   $("hil-type").disabled = disabled;
@@ -2656,6 +2765,7 @@ function setExternalControls(disabled) {
     button.disabled =
       disabled &&
       (hilState?.phase !== "running" ||
+        !hilWebControlAllowed(hilState) ||
         (unready && ["arm", "takeoff"].includes(button.dataset.command)));
   });
   updateMissionControls();
@@ -2665,14 +2775,18 @@ function setExternalControls(disabled) {
     (!["running", "paused"].includes(hilState?.phase) ||
       (hilState?.phase === "running" &&
         latest?.runway.weightOnWheels &&
+        hilWebControlAllowed(hilState) &&
         unready));
 }
 function presentHilState(state) {
   hilState = state;
+  renderGroundStation(state);
   for (const button of document.querySelectorAll("[data-hil-command]")) {
     const action = button.dataset.hilCommand;
     button.disabled =
       !externalActive ||
+      (!["pause", "resume", "stop"].includes(action) &&
+        !hilWebControlAllowed(state)) ||
       (["arm", "takeoff"].includes(action) &&
         hilFlightReadiness(state).length > 0) ||
       (action === "stop"
@@ -2720,6 +2834,7 @@ function presentHilState(state) {
   if (!externalActive) return;
   const confirmed =
     ["ardupilot", "px4"].includes(state.controller?.kind) &&
+    hilWebControlAllowed(state) &&
     state.mission?.verified
       ? state.mission.points
       : [];
@@ -2777,6 +2892,13 @@ function focusFlightView() {
 }
 async function sendHilCommand(command) {
   if (!hilClient || !externalActive) return;
+  if (
+    !["pause", "resume", "stop"].includes(command) &&
+    !hilWebControlAllowed(hilState)
+  ) {
+    toast("目前由地面站接管，網頁無法發送飛行命令。");
+    return;
+  }
   if (
     ["arm", "takeoff"].includes(command) &&
     hilFlightReadiness(hilState).length
@@ -2845,6 +2967,7 @@ $("hil-start").onclick = async () => {
     displayedExternalMission = "";
     clearCameraPreview();
     externalActive = true;
+    groundStationSettingsKey = "";
     hilState = reattach
       ? existing
       : { phase: "starting", controller: { kind: controller } };
@@ -2910,6 +3033,7 @@ async function returnInternal(stop = true) {
   }
   clearCameraPreview();
   externalActive = false;
+  renderGroundStation(hilState);
   hilOwned = false;
   config = internalSaved.config;
   scenario = internalSaved.scenario;

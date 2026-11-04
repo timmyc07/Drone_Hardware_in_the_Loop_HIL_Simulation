@@ -843,7 +843,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "MAVLink 模擬介面",
     description:
-      "支援指定 PX4 感測器及執行器通訊，以及 ArduCopter 任務讀寫；不提供通用地面站連接或實體 HIL。",
+      "支援指定 PX4／ArduCopter 模擬通訊及受限本機地面站橋接；非通用地面站服務或實體 HIL。",
     status: "partial",
     sources: [
       "https://github.com/PX4/PX4-Autopilot/blob/main/docs/en/simulation/index.md",
@@ -901,8 +901,9 @@ export const CAPABILITIES = [
     id: "flight-stack-ground",
     category: "資料與整合",
     title: "地面站連接",
-    description: "以外部地面站觀察及操控模擬載具。",
-    status: "external",
+    description:
+      "受限本機橋接已以 MAVProxy 驗證兩種飛控任務與交接；QGroundControl 已驗遙測，GUI 控制待驗。",
+    status: "partial",
     sources: [
       "https://github.com/PX4/PX4-Autopilot/blob/main/docs/en/simulation/index.md",
     ],

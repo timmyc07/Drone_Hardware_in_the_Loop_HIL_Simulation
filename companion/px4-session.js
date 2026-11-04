@@ -1,3 +1,4 @@
+import { GroundStationBridge } from "./gcs-bridge.js";
 import { EventEmitter } from "node:events";
 import net from "node:net";
 import { createHash } from "node:crypto";
@@ -54,10 +55,15 @@ export class Px4Session extends EventEmitter {
     };
     this.sequence = 0;
     this.bytes = 0;
+    this.groundStation = new GroundStationBridge(this, {
+      sendRaw: (buffer) => this.gcs.sendRaw(buffer),
+      nativeReady: () => Boolean(this.gcs?.socket && !this.gcs.closed),
+    });
   }
   state() {
     return {
       phase: this.phase,
+      groundStation: this.groundStation.snapshot(),
       clock: { stepUs: Math.round(DT * 1e6) },
       snapshot: this.sim?.snapshot() ?? null,
       controller: { ...this.controller },
@@ -355,7 +361,7 @@ export class Px4Session extends EventEmitter {
     this.sim.applyExternalActuators(accepted);
     const snapshot = this.sim.stepExternal(DT);
     this.controller.armed = input.armed;
-    this.missionManager?.update();
+    if (!this.groundStation.externalOwner) this.missionManager?.update();
     this.phase = "running";
     const entry = { ...accepted, ...input };
     const size = Buffer.byteLength(JSON.stringify(entry)) + 1;
@@ -380,7 +386,12 @@ export class Px4Session extends EventEmitter {
       if (this.phase === "running") this.sendSensors();
     }, 4);
   }
+  configureGroundStation(settings) {
+    return this.groundStation.configure(settings);
+  }
   uploadMission(points) {
+    if (this.groundStation.externalOwner)
+      throw new Error("Ground station owns mission control");
     return this.missionManager.upload(points);
   }
   async command(action) {
@@ -400,6 +411,11 @@ export class Px4Session extends EventEmitter {
     if (action !== "stop" && this.record?.events.length >= 100000)
       throw new Error("PX4 session event limit reached");
     if (action === "stop") return this.close().then(() => ({ sent: true }));
+    if (
+      this.groundStation.externalOwner &&
+      !["pause", "resume"].includes(action)
+    )
+      throw new Error("Ground station owns flight control");
     if (
       (this.missionManager?.transfer.active ||
         this.missionManager?.uploading) &&
@@ -462,6 +478,8 @@ export class Px4Session extends EventEmitter {
     else samples.push(finalSnapshot);
     return structuredClone({
       ...this.record,
+      groundStation: this.groundStation.snapshot(),
+      groundStationEvents: this.record.groundStationEvents ?? [],
       firmware: { ...this.controller },
       mission: this.missionManager?.snapshot() ?? null,
       samples,
@@ -475,6 +493,7 @@ export class Px4Session extends EventEmitter {
     this.closePromise = (async () => {
       this.phase = "stopped";
       this.missionManager?.abort("Session stopped");
+      await this.groundStation.close();
       await this.gcs?.close();
       for (const timer of [this.watchdog, this.publisher, this.bootstrap])
         clearInterval(timer);

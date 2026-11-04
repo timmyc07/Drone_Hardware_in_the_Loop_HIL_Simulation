@@ -41,7 +41,7 @@ function fixture(mismatch = false) {
   s.writeMavlink = (message) =>
     queueMicrotask(() => {
       const id = message.constructor.MSG_ID,
-        base = { targetSystem: 255, targetComponent: 190, missionType: 0 };
+        base = { targetSystem: 255, targetComponent: 191, missionType: 0 };
       if (id === 44) mission.handle(40, { ...base, seq: 0 });
       else if (id === 73) {
         uploaded[message.seq] = { ...message };
@@ -145,7 +145,7 @@ test("mission upload answers40/51 with INT payload and requires verified downloa
   const floatPending = float.mission.upload(points);
   float.mission.handle(39, {
     targetSystem: 255,
-    targetComponent: 190,
+    targetComponent: 191,
     missionType: 0,
   });
   await assert.rejects(floatPending, /Float MISSION_ITEM/);
@@ -154,7 +154,7 @@ test("mission upload answers40/51 with INT payload and requires verified downloa
   const promise = early.mission.upload(points);
   early.mission.handle(47, {
     targetSystem: 255,
-    targetComponent: 190,
+    targetComponent: 191,
     missionType: 0,
     type: 0,
   });
@@ -162,9 +162,9 @@ test("mission upload answers40/51 with INT payload and requires verified downloa
 });
 test("mission transfer rejects target/type/sequence mismatch, timeout and cancellation without retaining readiness", async (t) => {
   for (const message of [
-    { targetSystem: 2, targetComponent: 190, missionType: 0, seq: 0 },
-    { targetSystem: 255, targetComponent: 190, missionType: 1, seq: 0 },
-    { targetSystem: 255, targetComponent: 190, missionType: 0, seq: 2 },
+    { targetSystem: 2, targetComponent: 191, missionType: 0, seq: 0 },
+    { targetSystem: 255, targetComponent: 191, missionType: 1, seq: 0 },
+    { targetSystem: 255, targetComponent: 191, missionType: 0, seq: 2 },
   ]) {
     const f = fixture();
     f.s.writeMavlink = () => {};

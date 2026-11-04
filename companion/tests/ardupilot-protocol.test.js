@@ -167,3 +167,48 @@ test("pause holds fresh frame until resume, export includes final accepted state
   assert.equal(limited.exportRecording().finalSnapshot.time, 0.001);
   await assert.rejects(() => limited.command("resume"));
 });
+
+test("GCS ownership keeps actual native HOME/GPS fresh without consuming internal mission progress", async () => {
+  const { compileMission, verifyMissionItem } =
+    await import("../ardupilot-mission.js");
+  const s = new ArduPilotSession();
+  const oldHome = {
+    latitude: 250329999,
+    longitude: 1215654000,
+    altitude: 20000,
+  };
+  s.onTelemetry(242, oldHome);
+  s.groundStation.settings = { enabled: true, targetPort: 14550, owner: "gcs" };
+  const actualHome = {
+    latitude: 250329998,
+    longitude: 1215654001,
+    altitude: 19980,
+  };
+  s.onTelemetry(242, actualHome);
+  s.onTelemetry(24, { fixType: 3 });
+  assert.deepEqual(s.missionManager.home, actualHome);
+  assert.equal(s.missionManager.gpsFix, 3);
+  const expected = compileMission([
+    { north: 8, east: 0, altitude: 3, hold: 1 },
+  ])[0];
+  const downloaded = {
+    ...expected,
+    x: actualHome.latitude,
+    y: actualHome.longitude,
+    z: 19.97999954,
+  };
+  assert.doesNotThrow(() =>
+    verifyMissionItem(downloaded, expected, s.missionManager.home),
+  );
+  assert.throws(
+    () => verifyMissionItem(downloaded, expected, oldHome),
+    /HOME_POSITION/,
+  );
+  const before = structuredClone(s.missionManager.state);
+  s.onTelemetry(42, { seq: 2, total: 4, missionState: 3 });
+  s.onTelemetry(46, { seq: 2 });
+  assert.deepEqual(s.missionManager.state, before);
+  s.onTelemetry(24, { fixType: 0 });
+  assert.equal(s.missionManager.gpsFix, 0);
+  await s.close();
+});

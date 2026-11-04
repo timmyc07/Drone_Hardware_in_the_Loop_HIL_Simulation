@@ -230,6 +230,19 @@ export async function startCompanion({ port = 8787, sessionFactory } = {}) {
                 forwardState(session.state());
               }
             } else if (
+              command.type === "groundStation" &&
+              keys(command, ["id", "type", "value"]) &&
+              keys(command.value, ["enabled", "targetPort", "owner"]) &&
+              typeof command.value.enabled === "boolean" &&
+              Number.isInteger(command.value.targetPort) &&
+              command.value.targetPort >= 1024 &&
+              command.value.targetPort <= 65535 &&
+              ["web", "gcs"].includes(command.value.owner) &&
+              (command.value.enabled || command.value.owner === "web") &&
+              typeof session.configureGroundStation === "function"
+            ) {
+              value = await session.configureGroundStation(command.value);
+            } else if (
               command.type === "mission" &&
               keys(command, ["id", "type", "value"]) &&
               typeof session.uploadMission === "function" &&
@@ -242,6 +255,10 @@ export async function startCompanion({ port = 8787, sessionFactory } = {}) {
                   Object.values(point).every(Number.isFinite),
               )
             ) {
+              if (session.state().groundStation?.owner === "gcs")
+                throw Error(
+                  "The external ground station owns flight and mission control",
+                );
               value = await session.uploadMission(command.value);
             } else if (
               command.type === "command" &&
@@ -256,9 +273,16 @@ export async function startCompanion({ port = 8787, sessionFactory } = {}) {
                 "stop",
                 "mission",
               ].includes(command.value)
-            )
+            ) {
+              if (
+                session.state().groundStation?.owner === "gcs" &&
+                !["pause", "resume", "stop"].includes(command.value)
+              )
+                throw Error(
+                  "The external ground station owns flight and mission control",
+                );
               value = await session.command(command.value);
-            else throw Error("Invalid command");
+            } else throw Error("Invalid command");
             send(ws, {
               type: "reply",
               id: command.id,
@@ -284,7 +308,7 @@ export async function startCompanion({ port = 8787, sessionFactory } = {}) {
     ws.on("close", () => {
       clearInterval(heartbeat);
       chain.finally(async () => {
-        if (!closing) {
+        if (!closing && session.state().groundStation?.owner !== "gcs") {
           try {
             await session.command("pause");
           } catch {}

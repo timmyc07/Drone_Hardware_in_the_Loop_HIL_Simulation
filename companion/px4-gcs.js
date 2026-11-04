@@ -1,7 +1,12 @@
 import dgram from "node:dgram";
 import { PassThrough } from "node:stream";
 import { common, minimal } from "node-mavlink";
-import { packetReader, mavlinkEncoder, commandMessage } from "./mavlink.js";
+import {
+  packetReader,
+  mavlinkEncoder,
+  commandMessage,
+  INTERNAL_COMPONENT_ID,
+} from "./mavlink.js";
 const PARAMETERS = Object.freeze({ THR_MDL_FAC: 1, COM_RC_IN_MODE: 4 });
 export class Px4Gcs {
   constructor(session) {
@@ -15,9 +20,17 @@ export class Px4Gcs {
     this.input = new PassThrough();
     this.streams = packetReader(
       this.input,
-      (header, message) => {
+      (header, message, packet) => {
         if (header.sysid !== 1 || header.compid !== 1) return;
         try {
+          if (
+            this.session.groundStation?.nativePacket(
+              header,
+              message,
+              packet,
+            ) === false
+          )
+            return;
           this.handle(header.msgid, message);
         } catch (error) {
           this.session.fail(error);
@@ -44,8 +57,14 @@ export class Px4Gcs {
       if (error && !this.closed) this.session.fail(error);
     });
   }
+  sendRaw(buffer) {
+    if (!this.socket || this.closed) throw Error("PX4 GCS transport closed");
+    this.socket.send(buffer, 14560, "127.0.0.1", (error) => {
+      if (error && !this.closed) this.session.fail(error);
+    });
+  }
   poll() {
-    if (this.closed) return;
+    if (this.closed || this.session.groundStation?.externalOwner) return;
     try {
       this.send(
         Object.assign(new minimal.Heartbeat(), {
@@ -89,7 +108,7 @@ export class Px4Gcs {
         sub = (m.customMode >>> 24) & 255;
       s.controller.flightMode =
         main === 4 && sub === 4 ? "AUTO_MISSION" : `PX4_${main}_${sub}`;
-      s.missionManager?.update();
+      if (!s.groundStation?.externalOwner) s.missionManager?.update();
     } else if (id === 22) {
       const key = String(m.paramId).replace(/\0.*$/, "");
       if (Object.hasOwn(PARAMETERS, key)) {
@@ -113,7 +132,7 @@ export class Px4Gcs {
     } else if (id === 77) {
       if (
         ![0, 255].includes(m.targetSystem) ||
-        ![0, 190].includes(m.targetComponent)
+        ![0, INTERNAL_COMPONENT_ID].includes(m.targetComponent)
       )
         return;
       const waiter = this.pending.get(m.command);
@@ -140,7 +159,9 @@ export class Px4Gcs {
           );
       }
     }
-    s.missionManager?.handle(id, m);
+    // Source observations remain fresh; external ownership still excludes internal mission transactions/progress.
+    if (!s.groundStation?.externalOwner || id === 242 || id === 24)
+      s.missionManager?.handle(id, m);
   }
   command(command, params = []) {
     if (this.pending.has(command))

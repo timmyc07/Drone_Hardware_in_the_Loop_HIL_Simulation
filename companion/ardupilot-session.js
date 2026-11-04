@@ -1,3 +1,4 @@
+import { GroundStationBridge } from "./gcs-bridge.js";
 import { EventEmitter } from "node:events";
 import dgram from "node:dgram";
 import net from "node:net";
@@ -8,7 +9,12 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { common, minimal } from "node-mavlink";
-import { packetReader, mavlinkEncoder, commandMessage } from "./mavlink.js";
+import {
+  packetReader,
+  mavlinkEncoder,
+  commandMessage,
+  INTERNAL_COMPONENT_ID,
+} from "./mavlink.js";
 import { createSimulation, validateConfig } from "../web/sim.js";
 import {
   ARDUPILOT_SOURCE_SHA,
@@ -33,6 +39,14 @@ export class ArduPilotSession extends EventEmitter {
     this.heartbeatEpoch = -1;
     this.armingAckEpoch = -1;
     this.missionManager = new ArduPilotMission(this);
+    this.groundStation = new GroundStationBridge(this, {
+      sendRaw: (buffer) => {
+        if (!this.telemetry || this.telemetry.destroyed)
+          throw new Error("ArduPilot MAVLink disconnected");
+        this.telemetry.write(buffer);
+      },
+      nativeReady: () => Boolean(this.telemetry && !this.telemetry.destroyed),
+    });
     this.controller = {
       kind: "ardupilot",
       version: null,
@@ -65,6 +79,7 @@ export class ArduPilotSession extends EventEmitter {
   state() {
     return {
       phase: this.phase,
+      groundStation: this.groundStation.snapshot(),
       clock: { stepUs: 1000 },
       snapshot: this.sim?.snapshot() ?? null,
       mission: this.missionManager.snapshot(),
@@ -297,7 +312,11 @@ export class ArduPilotSession extends EventEmitter {
       this.startedAt = Date.now();
       this.publisher = setInterval(() => this.publish(), 50);
       this.heartbeatTimer = setInterval(() => {
-        if (this.telemetry && !this.telemetry.destroyed) {
+        if (
+          this.telemetry &&
+          !this.telemetry.destroyed &&
+          !this.groundStation.externalOwner
+        ) {
           this.writeMavlink(
             Object.assign(new minimal.Heartbeat(), {
               type: 6,
@@ -354,9 +373,13 @@ export class ArduPilotSession extends EventEmitter {
     socket.setNoDelay(true);
     this.streams = packetReader(
       socket,
-      (header, message) => {
+      (header, message, packet) => {
         if (header.sysid !== 1 || header.compid !== 1) return;
         try {
+          if (
+            this.groundStation.nativePacket(header, message, packet) === false
+          )
+            return;
           this.onTelemetry(header.msgid, message);
         } catch (error) {
           this.fail(error);
@@ -379,7 +402,9 @@ export class ArduPilotSession extends EventEmitter {
   }
   onTelemetry(id, message) {
     this.telemetryEpoch++;
-    this.missionManager.handle(id, message);
+    // Native home/GPS observations remain current even while another GCS owns mission execution.
+    if (!this.groundStation.externalOwner || id === 242 || id === 24)
+      this.missionManager.handle(id, message);
     if (id === 0) {
       this.controller.armed = Boolean(message.baseMode & 128);
       this.controller.armedKnown = true;
@@ -390,13 +415,14 @@ export class ArduPilotSession extends EventEmitter {
       this.lastHeartbeat = Date.now();
       this.heartbeatEpoch = this.telemetryEpoch;
       if (
+        !this.groundStation.externalOwner &&
         !this.missionManager.startingFlight &&
         this.controller.flightMode !== "AUTO"
       )
         this.missionManager.interrupt(
           `Autopilot mode changed to ${this.controller.flightMode}`,
         );
-      this.missionManager.update();
+      if (!this.groundStation.externalOwner) this.missionManager.update();
     } else if (id === 148) {
       const identity = autopilotIdentity(message);
       Object.assign(this.controller, identity);
@@ -418,6 +444,11 @@ export class ArduPilotSession extends EventEmitter {
         this.record.confirmedParameters = { ...this.confirmedParameters };
       }
     } else if (id === 77) {
+      if (
+        ![0, 255].includes(message.targetSystem) ||
+        ![0, INTERNAL_COMPONENT_ID].includes(message.targetComponent)
+      )
+        return;
       const pending = this.pendingAcks.get(message.command);
       if (!pending) return;
       const previousSize = JSON.stringify(pending.log).length;
@@ -594,7 +625,12 @@ export class ArduPilotSession extends EventEmitter {
       }
     });
   }
+  configureGroundStation(settings) {
+    return this.groundStation.configure(settings);
+  }
   async uploadMission(points) {
+    if (this.groundStation.externalOwner)
+      throw new Error("Ground station owns mission control");
     return this.missionManager.upload(points);
   }
   async command(action) {
@@ -615,6 +651,11 @@ export class ArduPilotSession extends EventEmitter {
       await this.close();
       return { sent: true };
     }
+    if (
+      this.groundStation.externalOwner &&
+      !["pause", "resume"].includes(action)
+    )
+      throw new Error("Ground station owns flight control");
     if (this.record?.events.length >= 100000)
       throw new Error("Session event limit reached");
     if (
@@ -683,6 +724,8 @@ export class ArduPilotSession extends EventEmitter {
     else samples.push(finalSnapshot);
     return structuredClone({
       ...this.record,
+      groundStation: this.groundStation.snapshot(),
+      groundStationEvents: this.record.groundStationEvents ?? [],
       firmware: { ...this.controller },
       samples,
       stats: this.stats,
@@ -695,6 +738,7 @@ export class ArduPilotSession extends EventEmitter {
     this.closePromise = (async () => {
       this.missionManager.abort("Session stopped");
       this.phase = "stopped";
+      await this.groundStation.close();
       for (const timer of [this.publisher, this.heartbeatTimer, this.watchdog])
         clearInterval(timer);
       clearTimeout(this.nextTick);

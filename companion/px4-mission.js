@@ -1,4 +1,5 @@
 import { common } from "node-mavlink";
+import { INTERNAL_COMPONENT_ID } from "./mavlink.js";
 import { MissionTransfer } from "./mission-transfer.js";
 import { DEFAULT_ORIGIN, projectNed } from "./px4-protocol.js";
 export function validateMissionPoints(points, config) {
@@ -42,7 +43,7 @@ export function compileMission(points, origin = DEFAULT_ORIGIN) {
     };
   };
   return [
-    item(0, 22, 0, 0, points[0].altitude),
+    { ...item(0, 22, 0, 0, points[0].altitude), current: 1 },
     ...points.map((p, i) =>
       item(i + 1, 16, p.north, p.east, p.altitude, p.hold),
     ),
@@ -174,6 +175,10 @@ export class Px4Mission {
       );
     this.uploading = true;
     this.cancelled = false;
+    this.uploadDeadlineTimer = setTimeout(() => {
+      this.cancelled = true;
+      this.transfer.abort("Mission upload total wall deadline exceeded");
+    }, 15000);
     try {
       return await this.uploadRoute(points);
     } catch (error) {
@@ -182,6 +187,7 @@ export class Px4Mission {
       this.state.error = error.message;
       throw error;
     } finally {
+      clearTimeout(this.uploadDeadlineTimer);
       this.uploading = false;
     }
   }
@@ -212,23 +218,75 @@ export class Px4Mission {
       home: this.home,
     });
     const deadline = Date.now() + 15000;
+    if (this.session.controller.flightMode === "AUTO_MISSION") {
+      const epoch = this.session.heartbeatEpoch ?? 0;
+      await this.session.gcs.command(176, [1, 4, 3]);
+      const until = Math.min(deadline, Date.now() + 5000);
+      while (
+        this.session.controller.flightMode !== "PX4_4_3" ||
+        (this.session.heartbeatEpoch ?? 0) <= epoch
+      ) {
+        if (
+          this.cancelled ||
+          this.session.phase !== "running" ||
+          Date.now() > until
+        )
+          throw new Error(
+            "PX4 HOLD heartbeat was not confirmed before mission upload",
+          );
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      if (this.cancelled || !this.readiness())
+        throw new Error(
+          "Mission upload readiness changed while selecting HOLD",
+        );
+      this.diagnostic("holdBeforeUpload", {
+        mode: this.session.controller.flightMode,
+      });
+    }
+    // Same-CRC uploads are not a restart in this PX4 tag. Clear through the mission service first.
+    const clear = new common.MissionClearAll();
+    Object.assign(clear, {
+      targetSystem: 1,
+      targetComponent: 1,
+      missionType: 0,
+    });
+    this.clearing = { acked: false, empty: false, error: null, epoch: null };
+    this.diagnostic("clearBeforeUpload", {});
+    let lastClear = 0;
+    try {
+      while (
+        !this.clearing.acked ||
+        !this.clearing.empty ||
+        this.clearing.epoch === null ||
+        (this.session.heartbeatEpoch ?? 0) <= this.clearing.epoch
+      ) {
+        if (
+          this.cancelled ||
+          this.session.phase !== "running" ||
+          Date.now() > deadline
+        )
+          throw new Error("PX4 mission clear was not confirmed before upload");
+        if (this.clearing.error) throw new Error(this.clearing.error);
+        if (!this.clearing.acked && Date.now() - lastClear >= 1000) {
+          lastClear = Date.now();
+          this.session.gcs.send(clear);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    } finally {
+      this.clearing = null;
+    }
+    if (this.cancelled || !this.readiness())
+      throw new Error(
+        "Mission upload readiness changed after clearing mission",
+      );
     this.state.missionState = null;
     this.state.total = null;
     this.expectedMissionId = null;
     await this.transfer.upload(this.items);
-    // PX4 MISSION_START validates param1 but does not rewind an earlier completed route.
-    this.state.currentSeq = null;
-    this.state.missionState = null;
-    this.session.gcs.send(
-      Object.assign(new common.MissionSetCurrent(), {
-        targetSystem: 1,
-        targetComponent: 1,
-        seq: 0,
-      }),
-    );
-    this.diagnostic("rewind", { seq: 0 });
     while (
-      ![2, 4, 5].includes(this.state.missionState) ||
+      this.state.missionState !== 2 ||
       this.state.currentSeq !== 0 ||
       this.state.total !== this.items.length
     ) {
@@ -262,6 +320,37 @@ export class Px4Mission {
     return this.snapshot();
   }
   handle(id, m) {
+    if (this.clearing && id === 47) {
+      if (
+        m.targetSystem !== 255 ||
+        ![0, INTERNAL_COMPONENT_ID].includes(m.targetComponent) ||
+        m.missionType !== 0
+      ) {
+        this.clearing.error = "Unexpected PX4 mission-clear ACK target/type";
+        return;
+      }
+      this.diagnostic("clearAck", { result: m.type });
+      if (m.type === 0) this.clearing.acked = true;
+      else this.clearing.error = `PX4 mission clear rejected (${m.type})`;
+      if (
+        this.clearing.acked &&
+        this.clearing.empty &&
+        this.clearing.epoch === null
+      )
+        this.clearing.epoch = this.session.heartbeatEpoch ?? 0;
+      return;
+    }
+    if (this.clearing && id === 42) {
+      this.clearing.empty =
+        m.seq === 0 &&
+        m.total === 65535 &&
+        m.missionId === 0 &&
+        m.missionState === 1;
+      if (!this.clearing.empty) this.clearing.epoch = null;
+      else if (this.clearing.acked && this.clearing.epoch === null)
+        this.clearing.epoch = this.session.heartbeatEpoch ?? 0;
+      return;
+    }
     if (id === 242) {
       const o = this.session.origin ?? DEFAULT_ORIGIN;
       if (![m.latitude, m.longitude, m.altitude].every(Number.isInteger))

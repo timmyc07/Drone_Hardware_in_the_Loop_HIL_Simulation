@@ -133,6 +133,15 @@ export function createHilClient({
   return {
     connect,
     request,
+    configureGroundStation(value) {
+      if (!validGroundStationPort(value?.targetPort))
+        return Promise.reject(
+          new Error(
+            "地面站 UDP 埠須介於 1024 至 65535，且不可使用飛控保留埠。",
+          ),
+        );
+      return request("groundStation", value);
+    },
     recording,
     close() {
       socket?.close();
@@ -140,6 +149,19 @@ export function createHilClient({
       token = undefined;
     },
   };
+}
+
+export function validGroundStationPort(port) {
+  return (
+    Number.isInteger(port) &&
+    port >= 1024 &&
+    port <= 65535 &&
+    ![4560, 5760, 9002, 14560, 14561].includes(port)
+  );
+}
+
+export function hilWebControlAllowed(state) {
+  return state?.groundStation?.owner === "web";
 }
 
 export function hilFlightReadiness(state) {
@@ -231,6 +253,7 @@ export function externalMissionControls(
     );
   const ready =
     editable &&
+    hilWebControlAllowed(state) &&
     state.phase === "running" &&
     mission?.homeReady === true &&
     mission.readyToUpload === true &&
