@@ -8,7 +8,7 @@ import {
   CAMERA_DATASET_MAX_BYTES,
   CAMERA_DATASET_MAX_IMPORT_BYTES,
   validateCameraConfig,
-  cameraMetadata,
+  cameraMetadata as strictCameraMetadata,
   validateCameraFrame,
   cameraPreview,
   cameraFrameBytes,
@@ -16,6 +16,11 @@ import {
   parseCameraDataset,
 } from "../camera.js";
 
+const cameraMetadata = (snapshot, config, geography = null) =>
+  strictCameraMetadata(snapshot, config, geography, {
+    sourceVehicleId: "drone-1",
+    worldTick: Math.round(snapshot.time * 200),
+  });
 const snapshot = {
   time: 2,
   airframe: "quadrotor",
@@ -127,7 +132,7 @@ test("camera frame validation checks metadata, lengths, finite depth and exact c
     (f) => (f.depthM[0] = NaN),
     (f) => (f.depthM[0] = 501),
     (f) => (f.depthM[0] = 0.01),
-    (f) => (f.classes[0] = 7),
+    (f) => (f.classes[0] = 8),
     (f) => (f.classes[0] = 0),
     (f) => (f.depthM[0] = 0),
     (f) => (f.extra = "unknown"),
@@ -157,7 +162,7 @@ test("camera metadata uses the acquired joints while a commanded target is still
   acquired.gimbal.trackingErrorRad = Math.PI / 2;
   acquired.gimbal.rateLimited.yaw = true;
   const metadata = cameraMetadata(acquired);
-  assert.equal(metadata.version, 3);
+  assert.equal(metadata.version, 4);
   assert.equal(metadata.gimbal.target.yaw, Math.PI / 2);
   assert.equal(metadata.gimbal.actual.yaw, 0);
   [1, 0, 0].forEach((v, row) =>
@@ -206,7 +211,7 @@ test("camera datasets round trip exact byte buffers and little-endian float32 de
 test("camera dataset trust boundaries reject malformed buffers, schemas and limits", () => {
   const valid = JSON.parse(cameraDatasetToJson([frame()]));
   for (const mutate of [
-    (d) => (d.version = 2),
+    (d) => (d.version = 3),
     (d) => (d.format = "other"),
     (d) => (d.extra = 1),
     (d) => (d.classes[1].name = "wrong"),
@@ -215,7 +220,7 @@ test("camera dataset trust boundaries reject malformed buffers, schemas and limi
     (d) => (d.frames[0].classes = "A".repeat(d.frames[0].classes.length)),
     (d) => (d.frames[0].config.width = 640),
     (d) => (d.frames[0].intrinsics.cx = 0),
-    (d) => (d.frames[0].version = 2),
+    (d) => (d.frames[0].version = 3),
     (d) => delete d.frames[0].gimbal,
     (d) => (d.frames = Array(CAMERA_DATASET_MAX_FRAMES + 1).fill(d.frames[0])),
   ]) {
@@ -275,7 +280,7 @@ test("geographic camera metadata survives dataset roundtrip and rejects malforme
   const restored = parseCameraDataset(cameraDatasetToJson([acquired]))[0];
   assert.equal(restored.geography.origin.latitudeDeg, 25.033);
   assert.equal(restored.geography.source.sha256, "a".repeat(64));
-  assert.equal(restored.version, 3);
+  assert.equal(restored.version, 4);
   assert.equal(
     parseCameraDataset(cameraDatasetToJson([base]))[0].geography,
     null,

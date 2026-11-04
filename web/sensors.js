@@ -1,4 +1,5 @@
 import { bodyToNedMatrix } from "./sim.js";
+import { rayPeerSphere } from "./peer-geometry.js";
 import { createTerrain } from "./terrain.js";
 import { localToGeographic, validateGeography } from "./geography.js";
 
@@ -146,7 +147,7 @@ const rotate = (r, v) =>
 const inverseRotate = (r, v) =>
   [0, 1, 2].map((i) => r[i] * v[0] + r[3 + i] * v[1] + r[6 + i] * v[2]);
 const radians = (degrees) => (degrees * Math.PI) / 180;
-function nearestRay(origin, direction, obstacles, terrain, min, max) {
+function nearestRay(origin, direction, obstacles, terrain, min, max, peers) {
   const length = Math.hypot(...direction);
   direction = direction.map((v) => v / length);
   let nearest =
@@ -170,6 +171,10 @@ function nearestRay(origin, direction, obstacles, terrain, min, max) {
     }
     if (exit >= Math.max(0, enter))
       nearest = Math.min(nearest, enter >= 0 ? enter : exit);
+  }
+  for (const peer of peers) {
+    const distance = rayPeerSphere(origin, direction, peer, 0, max);
+    if (distance !== null) nearest = Math.min(nearest, distance);
   }
   // A surface inside the blind zone blocks distant returns; do not see through it.
   return nearest >= min && nearest <= max ? nearest : null;
@@ -307,7 +312,8 @@ export function createSensorSuite(configuration = {}, seed = 42) {
     deadlines,
     faults,
     obstacles,
-    terrain;
+    terrain,
+    peers;
   function random() {
     randomState = (Math.imul(1664525, randomState) + 1013904223) >>> 0;
     return (randomState + 0.5) / 4294967296;
@@ -353,6 +359,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
     time = 0;
     lastInputTime = -1;
     obstacles = [];
+    peers = [];
     terrain = createTerrain();
     faults = Object.fromEntries(NAMES.map((name) => [name, false]));
     readings = Object.fromEntries(
@@ -433,6 +440,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
         terrain,
         config.rangefinderMinM,
         config.rangefinderMaxM,
+        peers,
       );
       if (distance === null)
         return invalid(name, input.time, "no-return", input);
@@ -456,6 +464,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
           terrain,
           config.lidarMinM,
           config.lidarMaxM,
+          peers,
         );
         return distance === null
           ? null
@@ -568,6 +577,34 @@ export function createSensorSuite(configuration = {}, seed = 42) {
       };
     });
   }
+  function setPeers(value, sourceVehicleId) {
+    const validId = (id) =>
+      typeof id === "string" && id.length > 0 && id.length <= 64;
+    if (!Array.isArray(value) || value.length > 8 || !validId(sourceVehicleId))
+      throw new Error("Invalid sensor peers or source vehicle ID");
+    const seen = new Set();
+    const next = Array.from(value, (peer) => {
+      object(peer);
+      if (
+        Object.keys(peer).length !== 3 ||
+        Object.keys(peer).some(
+          (key) => !["id", "position", "radius"].includes(key),
+        ) ||
+        !validId(peer.id) ||
+        seen.has(peer.id)
+      )
+        throw new Error("Invalid or duplicate sensor peer");
+      seen.add(peer.id);
+      return {
+        id: peer.id,
+        position: vector(peer.position, 3),
+        radius: number(peer.radius, 0.001, 1000, "Peer radius"),
+      };
+    });
+    peers = next
+      .filter((peer) => peer.id !== sourceVehicleId)
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  }
   function setTerrain(value) {
     const next = createTerrain(value);
     terrain = next;
@@ -584,6 +621,51 @@ export function createSensorSuite(configuration = {}, seed = 42) {
   function snapshot() {
     return structuredClone({ time, ...readings, faults });
   }
+  function checkpoint() {
+    // Acquisitions and geometry are owned immutable values; only maps and queues mutate.
+    const saved = {
+      randomState,
+      time,
+      lastInputTime,
+      readings: { ...readings },
+      acquired: { ...acquired },
+      queues: Object.fromEntries(
+        NAMES.map((name) => [name, [...queues[name]]]),
+      ),
+      deadlines: { ...deadlines },
+      faults: { ...faults },
+      obstacles,
+      terrain,
+      peers,
+    };
+    let used = false;
+    return () => {
+      if (used) throw new Error("Sensor checkpoint already restored");
+      used = true;
+      ({
+        randomState,
+        time,
+        lastInputTime,
+        readings,
+        acquired,
+        queues,
+        deadlines,
+        faults,
+        obstacles,
+        terrain,
+        peers,
+      } = saved);
+    };
+  }
   reset();
-  return { update, snapshot, reset, setObstacles, setTerrain, setFault };
+  return {
+    update,
+    snapshot,
+    reset,
+    setObstacles,
+    setTerrain,
+    setPeers,
+    setFault,
+    checkpoint,
+  };
 }

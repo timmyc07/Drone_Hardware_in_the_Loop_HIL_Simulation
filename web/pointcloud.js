@@ -61,3 +61,33 @@ export function exportLidarPcd(reading) {
     ].join("\n") + "\n"
   );
 }
+
+export function exportVehiclePointCloud(
+  kind,
+  reading,
+  { sourceVehicleId, worldTick },
+) {
+  if (
+    typeof sourceVehicleId !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/.test(sourceVehicleId) ||
+    !Number.isSafeInteger(worldTick) ||
+    worldTick < 0
+  )
+    throw new Error("Invalid point cloud identity");
+  if (kind === "pcd")
+    return (
+      `# source_vehicle_id ${sourceVehicleId}\n# world_tick ${worldTick}\n` +
+      exportLidarPcd(reading)
+    );
+  if (kind === "csv") {
+    const lines = exportLidarCsv(reading).trimEnd().split("\n");
+    return (
+      `vehicle_id,world_tick,${lines[0]}\n` +
+      lines
+        .slice(1)
+        .map((line) => `${sourceVehicleId},${worldTick},${line}\n`)
+        .join("")
+    );
+  }
+  throw new Error("Invalid point cloud format");
+}

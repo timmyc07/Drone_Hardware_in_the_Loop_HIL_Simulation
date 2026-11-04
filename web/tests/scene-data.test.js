@@ -12,7 +12,6 @@ test("scene artifacts round trip all geometry with isolated clones and frozen de
   const scene = {
     ...DEFAULT_SCENE,
     name: "自訂場景",
-    training: "custom",
     customGates: [gate],
     obstacles: [{ north: 8, east: 0, width: 2, depth: 2, height: 4 }],
   };
@@ -22,8 +21,7 @@ test("scene artifacts round trip all geometry with isolated clones and frozen de
   assert.equal(gate.north, 5);
   assert.ok(Object.isFrozen(DEFAULT_SCENE.environment));
   assert.ok(Object.isFrozen(DEFAULT_SCENE.customGates));
-  for (const frame of ["quadrotor", "fixedwing", "vtol"])
-    assert.equal(validateScene(scene, frame).training, "custom");
+  assert.equal(Object.hasOwn(validateScene(scene), "training"), false);
 });
 test("scene boundary rejects unknown, missing, sparse and invalid geometry and artifact headers", () => {
   for (const scene of [
@@ -51,9 +49,7 @@ test("scene boundary rejects unknown, missing, sparse and invalid geometry and a
   const missing = { ...DEFAULT_SCENE };
   delete missing.customGates;
   assert.throws(() => validateScene(missing));
-  assert.throws(() =>
-    validateScene({ ...DEFAULT_SCENE, training: "hover" }, "fixedwing"),
-  );
+  assert.throws(() => validateScene({ ...DEFAULT_SCENE, training: "hover" }));
   const artifact = JSON.parse(sceneToJson(DEFAULT_SCENE));
   for (const patch of [
     { version: 1 },
@@ -107,7 +103,7 @@ test("DEM scene round trips its full grid and provenance and enforces covered ze
   };
   const scene = { ...DEFAULT_SCENE, terrain, geography };
   const text = sceneToJson(scene);
-  assert.equal(JSON.parse(text).version, 3);
+  assert.equal(JSON.parse(text).version, 4);
   assert.deepEqual(parseSceneJson(text), scene);
   assert.ok(new TextEncoder().encode(text).length <= SCENE_MAX_IMPORT_BYTES);
   for (const invalid of [

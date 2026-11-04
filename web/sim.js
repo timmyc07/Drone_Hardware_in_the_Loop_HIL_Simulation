@@ -197,11 +197,12 @@ export function createSimulation(configuration = {}, options = {}) {
     !options ||
     Object.getPrototypeOf(options) !== Object.prototype ||
     Object.keys(options).some(
-      (key) => !["controlSource", "gimbal", "terrain"].includes(key),
+      (key) =>
+        !["controlSource", "gimbal", "terrain", "spawn", "home"].includes(key),
     )
   )
     throw new Error(
-      "Simulation options must contain only controlSource, gimbal and terrain",
+      "Simulation options must contain only controlSource, gimbal, terrain, spawn and home",
     );
   const controlSource = options.controlSource ?? "internal";
   if (!["internal", "external"].includes(controlSource))
@@ -210,6 +211,49 @@ export function createSimulation(configuration = {}, options = {}) {
   if (external && Object.hasOwn(options, "gimbal"))
     throw new Error(
       "External control supports only the default fixed camera mount",
+    );
+  if (
+    external &&
+    (Object.hasOwn(options, "spawn") || Object.hasOwn(options, "home"))
+  )
+    throw new Error(
+      "External control supports only the default spawn and home",
+    );
+  const worldCoordinates =
+    Object.hasOwn(options, "spawn") || Object.hasOwn(options, "home");
+  const initialHome = options.home === undefined ? [0, 0] : options.home;
+  if (
+    !Array.isArray(initialHome) ||
+    initialHome.length !== 2 ||
+    ![0, 1].every(
+      (i) =>
+        Object.hasOwn(initialHome, i) &&
+        Number.isFinite(initialHome[i]) &&
+        Math.abs(initialHome[i]) <= 500,
+    )
+  )
+    throw new Error("Home must be a finite N/E pair within 500m");
+  const home = [...initialHome];
+  const initialSpawn =
+    options.spawn === undefined ? undefined : structuredClone(options.spawn);
+  if (
+    initialSpawn !== undefined &&
+    (!initialSpawn ||
+      ![Object.prototype, null].includes(Object.getPrototypeOf(initialSpawn)) ||
+      Reflect.ownKeys(initialSpawn).sort().join(",") !==
+        "altitude,east,heading,north" ||
+      !Object.values(initialSpawn).every(Number.isFinite) ||
+      Math.abs(initialSpawn.north) > 500 ||
+      Math.abs(initialSpawn.east) > 500 ||
+      initialSpawn.altitude < 0 ||
+      initialSpawn.altitude > 500 ||
+      Math.abs(initialSpawn.heading) > Math.PI ||
+      (config.startOnGround
+        ? initialSpawn.altitude !== 0
+        : initialSpawn.altitude <= 0))
+  )
+    throw new Error(
+      "Invalid physical spawn; altitude is AGL and must match ground/air start",
     );
   const initialGimbal = validateGimbalSettings(options.gimbal);
   const initialTerrain = createTerrain(options.terrain).data;
@@ -224,6 +268,9 @@ export function createSimulation(configuration = {}, options = {}) {
       ? { heightM: 0, normalNed: [0, 0, -1] }
       : terrain.sample(s[0], s[1]);
   const groundDown = (s = state) => (flatGround() ? 0 : -groundAt(s).heightM);
+  const homeHeight = () =>
+    flatGround() ? 0 : terrain.sample(home[0], home[1]).heightM;
+  const ceiling = () => homeHeight() + config.geofenceHeight;
   if (external && (config.airframe !== "quadrotor" || !config.startOnGround))
     throw new Error(
       "External control requires quadrotor and startOnGround=true",
@@ -436,7 +483,7 @@ export function createSimulation(configuration = {}, options = {}) {
       waypoints: [],
       index: 0,
       completed: false,
-      home: [0, 0],
+      home: [...home],
       targetPosition: [0, 0],
       fenceBreached: false,
       reason: "",
@@ -527,6 +574,38 @@ export function createSimulation(configuration = {}, options = {}) {
         observed.altitude = -state[2];
       }
     }
+    if (initialSpawn !== undefined) {
+      const { north, east, altitude, heading } = initialSpawn;
+      state[0] = north;
+      state[1] = east;
+      const height = groundAt().heightM + altitude;
+      const pitch =
+        fixedWing && !config.startOnGround ? wingTrim(config).alpha : 0;
+      const cy = Math.cos(heading / 2),
+        sy = Math.sin(heading / 2),
+        cp = Math.cos(pitch / 2),
+        sp = Math.sin(pitch / 2);
+      state.splice(
+        6,
+        4,
+        ...[cy * cp, -sy * sp, cy * sp, sy * cp].map((v) => (v === 0 ? 0 : v)),
+      );
+      state[2] = -height;
+      if (fixedWing && !config.startOnGround) {
+        state[3] = config.cruiseAirspeed * Math.cos(heading) + wind[0];
+        state[4] = config.cruiseAirspeed * Math.sin(heading) + wind[1];
+      }
+      target.altitude = height;
+      baseTarget = { ...target };
+      positionTarget = { north, east, altitude: height };
+      navigation.targetPosition = [north, east];
+      missionLegStart = [north, east];
+      observed.position = [north, east];
+      observed.velocity = state.slice(3, 5);
+      observed.altitude = height;
+      observed.attitude = [0, pitch, heading];
+    }
+    homeHeight();
     observed.airspeed = aero().airspeedMps;
     gimbal = createGimbal(initialGimbal, state.slice(6, 10));
     battery = batterySnapshot();
@@ -1190,7 +1269,10 @@ export function createSimulation(configuration = {}, options = {}) {
     )
       throw new Error("Targets must be an object");
     const limits = {
-      altitude: [terrain.data.kind === "dem" ? -1000 : 0, 500],
+      altitude: [
+        terrain.data.kind === "dem" || worldCoordinates ? -1000 : 0,
+        worldCoordinates ? Math.min(1500, ceiling()) : 500,
+      ],
       airspeed: [0, 40],
       roll: [-Math.PI / 6, Math.PI / 6],
       pitch: [-Math.PI / 6, Math.PI / 6],
@@ -1234,15 +1316,21 @@ export function createSimulation(configuration = {}, options = {}) {
       north: [-500, 500],
       east: [-500, 500],
       altitude: [
-        terrain.data.kind === "dem" && reference === "datum" ? -1000 : 0,
-        500,
+        (terrain.data.kind === "dem" || worldCoordinates) &&
+        reference === "datum"
+          ? -1000
+          : 0,
+        worldCoordinates && reference === "datum"
+          ? Math.min(1500, ceiling())
+          : 500,
       ],
     };
     if (hold) fields.hold = [0, 300];
     const value = validateFields(point, fields, "Waypoint");
     if (
-      Math.hypot(value.north, value.east) > config.geofenceRadius ||
-      value.altitude > config.geofenceHeight
+      Math.hypot(value.north - home[0], value.east - home[1]) >
+        config.geofenceRadius ||
+      value.altitude > (reference === "agl" ? config.geofenceHeight : ceiling())
     )
       throw new Error("Waypoint is outside the geofence");
     return value;
@@ -1273,7 +1361,7 @@ export function createSimulation(configuration = {}, options = {}) {
     if (
       reference === "agl" &&
       terrain.sample(checked.north, checked.east).heightM + checked.altitude >
-        config.geofenceHeight
+        ceiling()
     )
       throw new Error("AGL target is above geofence height");
     positionTarget = checked;
@@ -1337,8 +1425,8 @@ export function createSimulation(configuration = {}, options = {}) {
         north: state[0],
         east: state[1],
         altitude: Math.min(
-          config.geofenceHeight - 0.25,
-          Math.max(3, -state[2]),
+          ceiling() - 0.25,
+          Math.max(homeHeight() + 3, -state[2]),
         ),
       };
     } else if (mode === "land") {
@@ -1351,9 +1439,9 @@ export function createSimulation(configuration = {}, options = {}) {
     if (hasWing && (fixedWing || transition === "cruise")) {
       if (mode === "rtl")
         positionTarget = {
-          north: 0,
-          east: 0,
-          altitude: Math.max(20, -state[2]),
+          north: home[0],
+          east: home[1],
+          altitude: Math.max(homeHeight() + 20, -state[2]),
         };
       if (mode === "land") {
         landing = landingPlan();
@@ -1367,8 +1455,8 @@ export function createSimulation(configuration = {}, options = {}) {
       transition = "hover";
       transitionPhase = "decelerating";
       positionTarget = {
-        north: mode === "rtl" ? 0 : state[0],
-        east: mode === "rtl" ? 0 : state[1],
+        north: mode === "rtl" ? home[0] : state[0],
+        east: mode === "rtl" ? home[1] : state[1],
         altitude: Math.max(8, -state[2]),
       };
     }
@@ -1637,7 +1725,9 @@ export function createSimulation(configuration = {}, options = {}) {
       east: state[1],
       altitude:
         fixedWing || (hasWing && transition === "cruise")
-          ? 30
+          ? worldCoordinates
+            ? groundAt().heightM + 30
+            : 30
           : groundAt().heightM + 2,
     };
     explicitPosition = true;
@@ -1682,6 +1772,7 @@ export function createSimulation(configuration = {}, options = {}) {
   }
   function setTerrain(data) {
     const next = createTerrain(data);
+    next.sample(home[0], home[1]);
     if (
       fixedWing &&
       !next.runwayCompatible &&
@@ -1696,7 +1787,7 @@ export function createSimulation(configuration = {}, options = {}) {
       altitudeReference === "agl" &&
       next.sample(positionTarget.north, positionTarget.east).heightM +
         positionTarget.altitude >
-        config.geofenceHeight
+        next.sample(home[0], home[1]).heightM + config.geofenceHeight
     )
       throw new Error(
         "Terrain update would raise the AGL target above geofence height",
@@ -1806,8 +1897,9 @@ export function createSimulation(configuration = {}, options = {}) {
     else if (safetyReason !== "critical-battery") {
       if (faults.linkLost && !safetyReason) safetyMode("rtl", "link-loss");
       if (
-        (Math.hypot(state[0], state[1]) > config.geofenceRadius ||
-          -state[2] > config.geofenceHeight) &&
+        (Math.hypot(state[0] - home[0], state[1] - home[1]) >
+          config.geofenceRadius ||
+          -state[2] > ceiling()) &&
         !navigation.fenceBreached
       ) {
         navigation.fenceBreached = true;
@@ -1854,17 +1946,20 @@ export function createSimulation(configuration = {}, options = {}) {
         Math.abs(positionTarget.altitude - observed.altitude) < 0.4
       ) {
         rtlPhase = "return";
-        positionTarget.north = 0;
-        positionTarget.east = 0;
+        positionTarget.north = home[0];
+        positionTarget.east = home[1];
       }
       if (
         rtlPhase === "return" &&
-        Math.hypot(...observed.position) < 0.75 &&
+        Math.hypot(
+          observed.position[0] - home[0],
+          observed.position[1] - home[1],
+        ) < 0.75 &&
         Math.hypot(...observed.velocity) < 0.5
       ) {
         enterMode("land", navigation.reason || "rtl");
-        positionTarget.north = 0;
-        positionTarget.east = 0;
+        positionTarget.north = home[0];
+        positionTarget.east = home[1];
       }
     }
     if (
@@ -2025,10 +2120,10 @@ export function createSimulation(configuration = {}, options = {}) {
       ),
     };
   }
-  function integrate(dt) {
-    if (terrain.data.kind !== "dem") return integrateUnchecked(dt);
-    // Coverage is a trust boundary: rejected ticks must not consume PID, noise or sensor state.
-    const checkpoint = structuredClone({
+  function checkpoint() {
+    const ground = terrain;
+    const restoreGimbal = gimbal.checkpoint();
+    const saved = structuredClone({
       state,
       time,
       target,
@@ -2083,10 +2178,18 @@ export function createSimulation(configuration = {}, options = {}) {
       runwayBrake,
       launchAuthorized,
       altitudeReference,
+      externalInput,
+      externalPending,
+      externalTimeUs,
+      config,
     });
-    try {
-      return integrateUnchecked(dt);
-    } catch (error) {
+    let used = false;
+    return () => {
+      if (used) throw new Error("Simulation rollback was already used");
+      used = true;
+      Object.assign(config, saved.config);
+      terrain = ground;
+      restoreGimbal();
       ({
         state,
         time,
@@ -2142,7 +2245,19 @@ export function createSimulation(configuration = {}, options = {}) {
         runwayBrake,
         launchAuthorized,
         altitudeReference,
-      } = checkpoint);
+        externalInput,
+        externalPending,
+        externalTimeUs,
+      } = saved);
+    };
+  }
+  function integrate(dt) {
+    if (terrain.data.kind !== "dem") return integrateUnchecked(dt);
+    const rollback = checkpoint();
+    try {
+      return integrateUnchecked(dt);
+    } catch (error) {
+      rollback();
       throw error;
     }
   }
@@ -2484,6 +2599,31 @@ export function createSimulation(configuration = {}, options = {}) {
       wind: [...wind],
     };
   }
+  function setWind(value) {
+    if (
+      !value ||
+      Reflect.ownKeys(value).sort().join(",") !== "direction,speed" ||
+      !Number.isFinite(value.speed) ||
+      value.speed < 0 ||
+      value.speed > 30 ||
+      !Number.isFinite(value.direction) ||
+      value.direction < 0 ||
+      value.direction > 360
+    )
+      throw new Error("Invalid world wind");
+    config.wind = value.speed;
+    config.windDirection = value.direction;
+    wind = currentWind();
+  }
+  function crash(reason = "vehicle-collision") {
+    if (reason !== "vehicle-collision")
+      throw new Error("Invalid peer collision reason");
+    crashed = true;
+    disarm();
+    navigation.reason = reason;
+    state.splice(3, 3, 0, 0, 0);
+    for (let i = 10; i < stateSize; i++) state[i] = 0;
+  }
   const internalCommand =
     (fn) =>
     (...args) => {
@@ -2492,6 +2632,9 @@ export function createSimulation(configuration = {}, options = {}) {
     };
   reset();
   return {
+    checkpoint,
+    crash: internalCommand(crash),
+    setWind: internalCommand(setWind),
     setTerrain: internalCommand(setTerrain),
     setGimbal: internalCommand((settings) => gimbal.set(settings)),
     setTargets: internalCommand(setTargets),

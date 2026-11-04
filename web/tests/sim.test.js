@@ -2171,3 +2171,141 @@ test("existing slope support does not excuse a new airborne steep landing or inv
     "finite mu=.8 cannot cancel all downslope gravity on a 45-degree surface",
   );
 });
+
+test("physical spawn and per-vehicle home drive rotated flight, local navigation, geofence and RTL without renderer offsets", () => {
+  const options = {
+    spawn: { north: 100, east: 50, altitude: 2, heading: Math.PI / 2 },
+    home: [100, 50],
+  };
+  const sim = createSimulation({ geofenceRadius: 30 }, options);
+  const initial = sim.snapshot();
+  assert.deepEqual(initial.position, [100, 50, -2]);
+  near(initial.attitude[2], Math.PI / 2);
+  assert.deepEqual(initial.navigation.home, [100, 50]);
+  options.spawn.north = 200;
+  options.home[0] = 200;
+  sim.setMode("position");
+  sim.setPositionTarget({ north: 108, east: 50, altitude: 2 });
+  advance(sim, 18);
+  near(sim.snapshot().position[0], 108, 0.2);
+  assert.equal(sim.snapshot().navigation.fenceBreached, false);
+  const before = sim.snapshot();
+  assert.throws(
+    () => sim.setMission([{ north: 0, east: 0, altitude: 2, hold: 0 }]),
+    /geofence/,
+  );
+  assert.deepEqual(sim.snapshot(), before);
+  sim.setMode("rtl");
+  const landed = advance(sim, 35);
+  assert.equal(landed.navigation.completed, true);
+  assert.equal(landed.armed, false);
+  near(landed.position[0], 100, 0.7);
+  near(landed.position[1], 50, 0.7);
+  sim.reset();
+  assert.deepEqual(sim.snapshot(), initial);
+});
+
+test("spawn AGL and manual datum limits use actual home terrain while external plants reject offset frames", () => {
+  const heights = Array(9).fill(0);
+  heights[4] = 100;
+  const terrain = {
+    kind: "heightfield",
+    north: 40,
+    east: 40,
+    cellSize: 10,
+    rows: 3,
+    cols: 3,
+    heights,
+  };
+  const options = {
+    terrain,
+    home: [50, 50],
+    spawn: { north: 50, east: 50, altitude: 2, heading: 0 },
+  };
+  const sim = createSimulation({ geofenceHeight: 50 }, options);
+  assert.equal(sim.snapshot().ground.heightM, 100);
+  assert.equal(sim.snapshot().position[2], -102);
+  assert.doesNotThrow(() => sim.setTargets({ altitude: 149 }));
+  assert.throws(() => sim.setTargets({ altitude: 151 }), /altitude/);
+  sim.setMode("position");
+  assert.doesNotThrow(() =>
+    sim.setPositionTarget({ north: 50, east: 50, altitude: 149 }),
+  );
+  assert.throws(
+    () => sim.setPositionTarget({ north: 50, east: 50, altitude: 151 }),
+    /altitude|geofence/,
+  );
+  const wing = createSimulation(
+    { airframe: "fixedwing" },
+    {
+      spawn: { north: 20, east: 30, altitude: 30, heading: Math.PI / 2 },
+      home: [20, 30],
+    },
+  );
+  near(wing.snapshot().velocity[0], 0);
+  near(wing.snapshot().velocity[1], 15);
+  const highWing = createSimulation(
+    { airframe: "fixedwing" },
+    { ...options, spawn: { ...options.spawn, altitude: 30 } },
+  );
+  highWing.takeoff();
+  assert.equal(highWing.snapshot().navigation.positionAltitude, 130);
+  assert.throws(
+    () =>
+      createSimulation(
+        { startOnGround: true },
+        { controlSource: "external", home: [0, 0] },
+      ),
+    /default spawn/,
+  );
+  assert.throws(
+    () =>
+      createSimulation(
+        { startOnGround: true },
+        { spawn: { north: 0, east: 0, altitude: 1, heading: 0 } },
+      ),
+    /spawn/,
+  );
+});
+
+test("opaque simulation rollback includes gimbal filters, wind configuration and internal/external input clocks", () => {
+  const config = { noise: 0.2, turbulence: 0.3, seed: 51 };
+  const sim = createSimulation(config),
+    reference = createSimulation(config);
+  const before = sim.snapshot(),
+    rollback = sim.checkpoint();
+  sim.setWind({ speed: 3, direction: 90 });
+  sim.gust();
+  sim.setGimbal({
+    mode: "body",
+    target: { yaw: 1, pitch: 0.2, roll: 0.1 },
+    maxRate: { yaw: 0.3, pitch: 0.3, roll: 0.3 },
+  });
+  advance(sim, 0.5);
+  rollback();
+  assert.deepEqual(sim.snapshot(), before);
+  assert.throws(rollback, /already/);
+  for (let i = 0; i < 30; i++) assert.deepEqual(sim.step(), reference.step());
+  const external = createSimulation(
+      { startOnGround: true },
+      { controlSource: "external" },
+    ),
+    restore = external.checkpoint();
+  external.applyExternalActuators({
+    sequence: 1,
+    timeUs: 0,
+    armed: true,
+    rotorSpeedCommands: [0.7, 0.7, 0.7, 0.7],
+  });
+  external.stepExternal();
+  restore();
+  assert.equal(external.readSensors().timeUs, 0);
+  assert.doesNotThrow(() =>
+    external.applyExternalActuators({
+      sequence: 1,
+      timeUs: 0,
+      armed: true,
+      rotorSpeedCommands: [0.7, 0.7, 0.7, 0.7],
+    }),
+  );
+});

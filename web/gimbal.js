@@ -296,6 +296,29 @@ export function createGimbal(
       trackingErrorRad,
     });
   }
+  function checkpoint() {
+    const saved = structuredClone({
+      settings,
+      actual,
+      limited,
+      rateLimited,
+      trackingErrorRad,
+      lastQuaternion,
+    });
+    let used = false;
+    return () => {
+      if (used) throw new Error("Gimbal rollback was already used");
+      used = true;
+      ({
+        settings,
+        actual,
+        limited,
+        rateLimited,
+        trackingErrorRad,
+        lastQuaternion,
+      } = saved);
+    };
+  }
   reset();
-  return { set, update: advance, snapshot, reset };
+  return { set, update: advance, snapshot, reset, checkpoint };
 }

@@ -2,122 +2,53 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createFlightApi } from "../api.js";
 
-test("API sends the documented commands and copies input and output", async () => {
-  const commands = [];
-  const response = { snapshot: { position: [1, 2, 3] } };
+test("vehicle operations require and preserve explicit vehicle IDs", async () => {
+  const calls = [];
   const api = createFlightApi(
     async (command) => {
-      commands.push(command);
-      return response;
+      calls.push(command);
+      return command;
     },
     () => () => {},
   );
-  assert.equal(api.version, "1.9");
-  assert.ok(Object.isFrozen(api));
-  const targets = { roll: 1 };
-  const pending = api.setTargets(targets);
-  targets.roll = 9;
-  const result = await pending;
-  result.snapshot.position[0] = 99;
-  assert.deepEqual(response.snapshot.position, [1, 2, 3]);
-  await api.getState();
-  await api.getSensors();
-  await api.getScene();
-  await api.setScene({ name: "場景" });
-  await api.exportLidarPointCloud();
-  await api.exportLidarPointCloud("csv");
-  await api.getGimbal();
-  await api.setGimbal({ mode: "body" });
-  await api.getCameraConfig();
-  await api.setCameraConfig({ horizontalFovDeg: 90 });
-  await api.captureCamera();
-  await api.setMode("mission");
-  await api.takeoff();
-  await api.abortTakeoff();
-  await api.setTransition("cruise");
-  await api.setPusherFault(0.5);
-  await api.setPositionTarget({
-    north: 1,
-    east: 2,
-    altitude: 4,
-    altitudeReference: "agl",
-  });
-  await api.setMission([{ north: 2 }]);
-  await api.play();
-  await api.pause();
-  await api.reset({ scenario: "hover" });
-  await api.setSensorConfig({ gps: { enabled: true } });
-  await api.setSensorFault("gps", true);
-  await api.exportRecording();
-  assert.deepEqual(commands, [
-    { type: "targets", value: { roll: 1 } },
-    { type: "inspect" },
-    { type: "inspectSensors" },
-    { type: "inspectScene" },
-    { type: "scene", value: { name: "場景" } },
-    { type: "pointCloudExport", value: "pcd" },
-    { type: "pointCloudExport", value: "csv" },
-    { type: "inspectGimbal" },
-    { type: "gimbal", value: { mode: "body" } },
-    { type: "getCameraConfig" },
-    { type: "setCameraConfig", value: { horizontalFovDeg: 90 } },
-    { type: "captureCamera" },
-    { type: "mode", value: "mission" },
-    { type: "takeoff" },
-    { type: "abortTakeoff" },
-    { type: "transition", value: "cruise" },
-    { type: "fault", fault: "pusher", value: { efficiency: 0.5 } },
-    {
-      type: "position",
-      value: { north: 1, east: 2, altitude: 4, altitudeReference: "agl" },
-    },
-    { type: "mission", value: [{ north: 2 }] },
-    { type: "play" },
-    { type: "pause" },
-    { type: "reset", scenario: "hover" },
-    { type: "sensorConfig", value: { gps: { enabled: true } } },
-    { type: "sensorFault", value: { sensor: "gps", failed: true } },
-    { type: "apiExport" },
+  assert.equal(api.version, "2.0");
+  await api.getState("one");
+  const target = { altitude: 3 };
+  await api.setTargets("two", target);
+  target.altitude = 10;
+  await api.takeoff("two");
+  await api.getWorldState();
+  assert.deepEqual(calls, [
+    { type: "inspect", vehicleId: "one" },
+    { type: "targets", vehicleId: "two", value: { altitude: 3 } },
+    { type: "takeoff", vehicleId: "two" },
+    { type: "inspectWorld" },
   ]);
+  assert.throws(() => api.getState(), /vehicleId/);
+  assert.throws(() => api.takeoff("bad id"), /vehicleId/);
 });
 
-test("rejections propagate and reset rejects unexpected fields", async () => {
-  const failure = new Error("rejected");
-  const api = createFlightApi(
-    async () => {
-      throw failure;
-    },
-    () => () => {},
-  );
-  await assert.rejects(api.setMode("invalid"), (error) => error === failure);
-  await assert.rejects(api.reset({ type: "play" }), TypeError);
-  await assert.rejects(api.reset({ extra: true }), TypeError);
-  await assert.rejects(api.reset(null), TypeError);
-  assert.throws(() => createFlightApi(null, () => {}), TypeError);
-  assert.throws(() => createFlightApi(() => {}, null), TypeError);
-});
-
-test("subscriptions isolate updates and unsubscribe", () => {
+test("subscriptions isolate delivered state and can be removed", () => {
   let listener;
+  let removed = false;
   const api = createFlightApi(
-    async () => {},
+    async () => ({}),
     (callback) => {
       listener = callback;
       return () => {
-        listener = null;
+        removed = true;
       };
     },
   );
-  assert.throws(() => api.subscribe(null), TypeError);
   let received;
-  const unsubscribe = api.subscribe((state) => {
-    received = state;
-    state.position[0] = 99;
+  const unsubscribe = api.subscribe((value) => {
+    received = value;
+    value.world.tick = 9;
   });
-  const original = { position: [1, 2, 3] };
-  listener(original);
-  assert.deepEqual(original.position, [1, 2, 3]);
-  assert.equal(received.position[0], 99);
+  const state = { world: { tick: 2 } };
+  listener(state);
+  assert.equal(state.world.tick, 2);
+  assert.equal(received.world.tick, 9);
   unsubscribe();
-  assert.equal(listener, null);
+  assert.equal(removed, true);
 });

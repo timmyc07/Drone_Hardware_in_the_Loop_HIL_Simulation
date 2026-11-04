@@ -21,6 +21,7 @@ export const CAMERA_CLASSES = Object.freeze(
     ["structure", "結構", [80, 140, 230]],
     ["obstacle", "障礙", [245, 155, 60]],
     ["gate", "訓練門", [210, 70, 220]],
+    ["aircraft", "其他飛行器", [90, 180, 245]],
   ].map(([name, label, color], id) =>
     Object.freeze({ id, name, label, color: Object.freeze(color) }),
   ),
@@ -120,8 +121,20 @@ export function cameraMetadata(
   snapshot,
   input = DEFAULT_CAMERA_CONFIG,
   geography = null,
+  identity,
 ) {
   plain(snapshot);
+  plain(identity);
+  if (
+    typeof identity.sourceVehicleId !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/.test(identity.sourceVehicleId) ||
+    !Number.isSafeInteger(identity.worldTick) ||
+    identity.worldTick < 0 ||
+    Object.keys(identity).some(
+      (key) => !["sourceVehicleId", "worldTick"].includes(key),
+    )
+  )
+    throw new Error("Invalid camera source identity");
   const config = validateCameraConfig(input),
     { width, height, horizontalFovDeg, nearM, farM } = config;
   const positionNed = vector(snapshot.position, 3),
@@ -150,7 +163,9 @@ export function cameraMetadata(
   );
   const fx = width / (2 * Math.tan((horizontalFovDeg * Math.PI) / 360));
   return {
-    version: 3,
+    version: 4,
+    sourceVehicleId: identity.sourceVehicleId,
+    worldTick: identity.worldTick,
     geography: geography === null ? null : validateGeography(geography),
     time: finite(snapshot.time, 0, 1800.001),
     airframe: snapshot.airframe,
@@ -190,6 +205,7 @@ function checkFrame(value) {
     },
     value.config,
     value.geography,
+    { sourceVehicleId: value.sourceVehicleId, worldTick: value.worldTick },
   );
   for (const key of Object.keys(metadata)) {
     // Trigonometric results can differ by a few ULPs across browser and Node engines.
@@ -320,7 +336,7 @@ export function cameraDatasetToJson(frames) {
   });
   return JSON.stringify({
     format: "flight-lab-camera-dataset",
-    version: 3,
+    version: 4,
     encoding,
     classes: classLegend,
     frames: encoded,
@@ -332,7 +348,7 @@ export function parseCameraDataset(text) {
   const data = plain(JSON.parse(text));
   if (
     data.format !== "flight-lab-camera-dataset" ||
-    data.version !== 3 ||
+    data.version !== 4 ||
     !same(data.encoding, encoding) ||
     !same(data.classes, classLegend) ||
     !Array.isArray(data.frames) ||

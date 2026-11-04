@@ -647,3 +647,103 @@ test("geographic sensor origin and datum must match DEM provenance atomically", 
     );
   assert.deepEqual({ geography, config }, before);
 });
+
+test("peer spheres occlude range, flow and lidar while only the source vehicle is excluded", () => {
+  const suite = createSensorSuite({ ...quiet, ...planar, lidarRays: 12 });
+  const peers = [
+    { id: "self", position: [0, 0, -2], radius: 1 },
+    { id: "below", position: [0, 0, -1], radius: 0.25 },
+    { id: "north", position: [5, 0, -2], radius: 1 },
+  ];
+  suite.setPeers(peers, "self");
+  peers[1].position[2] = -20;
+  const first = suite.update(state());
+  near(first.rangefinder.distanceM, 0.75);
+  near(first.opticalFlow.groundDistanceM, 0.75);
+  near(first.lidar.rangesM[6], 4);
+  suite.setPeers(
+    [
+      { id: "near", position: [0.25, 0, -2], radius: 0.2 },
+      { id: "far", position: [5, 0, -2], radius: 1 },
+      { id: "under", position: [0, 0, -1.8], radius: 0.15 },
+    ],
+    "self",
+  );
+  const blind = suite.update(state(0.1));
+  assert.equal(blind.lidar.rangesM[6], null);
+  assert.equal(blind.rangefinder.distanceM, null);
+  assert.equal(blind.opticalFlow.valid, false);
+  suite.setPeers([], "self");
+  const cleared = suite.update(state(0.2));
+  near(cleared.rangefinder.distanceM, 2);
+  assert.equal(cleared.lidar.rangesM[6], null);
+});
+
+test("peer validation is atomic and peer order does not alter seeded acquisitions", () => {
+  const config = { ...planar, lidarRays: 12, latency: 0.1, dropout: 0.2 };
+  const a = createSensorSuite(config, 77),
+    b = createSensorSuite(config, 77);
+  const peers = [
+    { id: "self", position: [0, 0, -2], radius: 1 },
+    { id: "b", position: [5, 0, -2], radius: 1 },
+    { id: "a", position: [0, 0, -1], radius: 0.25 },
+  ];
+  a.setPeers(peers, "self");
+  b.setPeers([...peers].reverse(), "self");
+  for (const invalid of [
+    null,
+    Array(1),
+    Array(9).fill(peers[0]),
+    [peers[0], peers[0]],
+    [{ ...peers[0], position: Array(3) }],
+    [{ ...peers[0], radius: NaN }],
+    [{ ...peers[0], radius: 0 }],
+    [{ ...peers[0], id: "" }],
+    [{ ...peers[0], extra: true }],
+  ])
+    assert.throws(() => a.setPeers(invalid, "self"));
+  assert.throws(() => a.setPeers(peers, ""));
+  for (let i = 0; i <= 100; i++)
+    assert.deepEqual(a.update(state(i * 0.005)), b.update(state(i * 0.005)));
+});
+
+test("sensor checkpoint restores RNG, delayed acquisitions, faults and all scene geometry", () => {
+  const config = { latency: 0.2, dropout: 0.25, lidarRays: 12 };
+  const a = createSensorSuite(config, 123),
+    b = createSensorSuite(config, 123);
+  const heights = Array(25).fill(0);
+  heights[12] = 4;
+  const terrain = {
+    kind: "heightfield",
+    north: 40,
+    east: 40,
+    cellSize: 10,
+    rows: 5,
+    cols: 5,
+    heights,
+  };
+  for (const suite of [a, b]) {
+    suite.setTerrain(terrain);
+    suite.setObstacles([
+      { north: 60, east: 60, width: 2, depth: 2, height: 1 },
+    ]);
+    suite.setPeers(
+      [{ id: "peer", position: [60, 60, -7], radius: 0.5 }],
+      "self",
+    );
+    suite.update(state(0, { position: [60, 60, -10] }));
+  }
+  const before = a.snapshot(),
+    rollback = a.checkpoint();
+  a.reset();
+  a.setFault("gps", true);
+  a.setFault("rangefinder", true);
+  a.update(state(0.6));
+  rollback();
+  assert.deepEqual(a.snapshot(), before);
+  assert.throws(rollback, /already restored/);
+  for (let i = 1; i <= 200; i++) {
+    const input = state(i * 0.005, { position: [60, 60, -10] });
+    assert.deepEqual(a.update(input), b.update(input));
+  }
+});

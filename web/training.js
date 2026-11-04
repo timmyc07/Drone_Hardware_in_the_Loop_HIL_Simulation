@@ -14,7 +14,7 @@ export const TUTORIAL_STEPS = deepFreeze([
   {
     id: "preflight",
     title: "地面檢查",
-    instruction: "開始模擬，保持原點地面、未解鎖，確認電量與故障狀態。",
+    instruction: "開始模擬，保持家點地面、未解鎖，確認電量與故障狀態。",
     holdSeconds: 2,
   },
   {
@@ -26,25 +26,27 @@ export const TUTORIAL_STEPS = deepFreeze([
   {
     id: "takeoff",
     title: "起飛至兩米",
-    instruction: "按起飛，等待機體在原點上方兩米穩定。",
+    instruction: "按起飛，等待機體在家點地面高度上方兩米穩定。",
     holdSeconds: 1,
   },
   {
     id: "hover",
     title: "穩定懸停",
-    instruction: "保持位置模式，在原點上方兩米連續懸停五秒。",
+    instruction: "保持位置模式，在家點地面高度上方兩米連續懸停五秒。",
     holdSeconds: 5,
   },
   {
     id: "move",
     title: "向北移動",
-    instruction: "在位置模式設定北8米、東0米、高度2米，抵達後停留三秒。",
+    instruction:
+      "在位置模式設定家點向北8米、東座標不變、高度為家點地面加2米，抵達後停留三秒。",
     holdSeconds: 3,
   },
   {
     id: "return",
     title: "返回原點",
-    instruction: "在位置模式設定北0米、東0米、高度2米，抵達後停留三秒。",
+    instruction:
+      "在位置模式設定家點北／東座標、高度為家點地面加2米，抵達後停留三秒。",
     holdSeconds: 3,
   },
   {
@@ -112,9 +114,9 @@ export function validateCustomGates(value) {
   if (!Array.isArray(value) || value.length > 50)
     throw new Error("Custom course requires at most 50 gates");
   const limits = {
-    north: [-500, 500],
-    east: [-500, 500],
-    altitude: [0.25, 500],
+    north: [-1000, 1000],
+    east: [-1000, 1000],
+    altitude: [-1000, 1500],
     yaw: [-Math.PI, Math.PI],
     radius: [0.25, 100],
   };
@@ -136,26 +138,53 @@ export function validateCustomGates(value) {
     );
   });
 }
-export function resolveTrainingGates(scene, airframe = "quadrotor") {
-  if (!scene || !isCourseSupported(scene.training, airframe))
+function validateHome(home, groundHeight) {
+  if (
+    !Array.isArray(home) ||
+    home.length !== 2 ||
+    !Array.from(home).every((v) => Number.isFinite(v) && Math.abs(v) <= 500) ||
+    !Number.isFinite(groundHeight) ||
+    Math.abs(groundHeight) > 1000
+  )
+    throw new Error("Invalid training home or ground height");
+  return [...home];
+}
+export function resolveTrainingGates(
+  scene,
+  airframe,
+  course,
+  home = [0, 0],
+  groundHeight = 0,
+) {
+  if (!scene || !isCourseSupported(course, airframe))
     throw new Error("Invalid or unsupported training course");
+  const checkedHome = validateHome(home, groundHeight);
   const custom = validateCustomGates(scene.customGates);
-  if (scene.training === "custom" && !custom.length)
+  if (course === "custom" && !custom.length)
     throw new Error("Custom training needs at least one gate");
-  return scene.training === "custom"
+  return course === "custom"
     ? custom
-    : TRAINING_COURSES[scene.training].gates.map((gate) => ({ ...gate }));
+    : TRAINING_COURSES[course].gates.map((gate) => ({
+        ...gate,
+        north: gate.north + checkedHome[0],
+        east: gate.east + checkedHome[1],
+        altitude: gate.altitude + groundHeight,
+      }));
 }
 export function createTrainer(
   course = "free",
   airframe = "quadrotor",
   customGates = [],
+  home = [0, 0],
+  groundHeight = 0,
 ) {
-  if (!isCourseSupported(course, airframe))
-    throw new Error("Invalid or unsupported training course");
+  home = validateHome(home, groundHeight);
   const gates = resolveTrainingGates(
-    { training: course, customGates },
+    { customGates },
     airframe,
+    course,
+    home,
+    groundHeight,
   );
   let previous,
     start,
@@ -242,7 +271,10 @@ export function createTrainer(
       throw new Error("Invalid tutorial snapshot");
     const clearance = ground.clearanceM,
       speed = Math.hypot(...snapshot.velocity),
-      distance = Math.hypot(...snapshot.position.slice(0, 2));
+      distance = Math.hypot(
+        snapshot.position[0] - home[0],
+        snapshot.position[1] - home[1],
+      );
     const healthy =
       snapshot.controlSource !== "external" &&
       snapshot.airframe === airframe &&
@@ -261,7 +293,7 @@ export function createTrainer(
       Math.abs(clearance) < 0.05 &&
       speed < 0.1 &&
       distance <= 0.25 &&
-      Math.abs(ground.heightM) < 0.01 &&
+      Math.abs(ground.heightM - groundHeight) < 0.01 &&
       Math.abs(attitude[0]) < 0.17 &&
       Math.abs(attitude[1]) < 0.17;
     if (!previous) {
@@ -320,15 +352,19 @@ export function createTrainer(
       snapshot.armed &&
       snapshot.status === "flying" &&
       nav.mode === "position" &&
-      Math.hypot(snapshot.position[0] - north, snapshot.position[1] - east) <=
-        0.5 &&
-      Math.abs(clearance - 2) <= 0.25 &&
+      Math.hypot(
+        snapshot.position[0] - home[0] - north,
+        snapshot.position[1] - home[1] - east,
+      ) <= 0.5 &&
+      Math.abs(-snapshot.position[2] - groundHeight - 2) <= 0.25 &&
       speed < maximumSpeed &&
       Math.abs(attitude[0]) < 0.26 &&
       Math.abs(attitude[1]) < 0.26;
     const commanded = (north, east) =>
-      Math.hypot(nav.targetPosition[0] - north, nav.targetPosition[1] - east) <
-      0.1;
+      Math.hypot(
+        nav.targetPosition[0] - home[0] - north,
+        nav.targetPosition[1] - home[1] - east,
+      ) < 0.1;
     const eligible = [
       () => parked && !snapshot.armed,
       () => parked && snapshot.armed,
@@ -388,12 +424,13 @@ export function createTrainer(
     const dt = previous ? snapshot.time - previous.time : 0;
     const [north, east, down] = snapshot.position;
     const altitude = -down;
-    const distance = Math.hypot(north, east);
+    const distance = Math.hypot(north - home[0], east - home[1]);
+    const homeAltitude = altitude - groundHeight;
     const speed = Math.hypot(...snapshot.velocity);
     if (snapshot.status === "crashed") {
       reason = "crashed";
       score = 0;
-      previous = snapshot;
+      previous = { time: snapshot.time, position: [...snapshot.position] };
       return result();
     }
     if (course === "runway") {
@@ -450,12 +487,12 @@ export function createTrainer(
     if (snapshot.navigation?.fenceBreached) fencePenalty = true;
     const penalty = fencePenalty ? 100 : 0;
     if (course === "hover" || course === "landing") {
-      if (altitude > 0.5) descended = true;
+      if (homeAltitude > 0.5) descended = true;
       const nowInside =
         course === "hover"
-          ? distance <= 0.5 && Math.abs(altitude - 2) <= 0.25 && speed < 0.3
+          ? distance <= 0.5 && Math.abs(homeAltitude - 2) <= 0.25 && speed < 0.3
           : descended &&
-            Math.abs(altitude) < 0.05 &&
+            Math.abs(homeAltitude) < 0.05 &&
             distance < 1 &&
             speed < 0.2;
       holdSeconds = nowInside ? holdSeconds + (inside ? dt : 0) : 0;
@@ -507,6 +544,43 @@ export function createTrainer(
     previous = { time: snapshot.time, position: [...snapshot.position] };
     return result();
   }
+  function checkpoint() {
+    const saved = structuredClone({
+      previous,
+      start,
+      passed,
+      misses,
+      complete,
+      score,
+      holdSeconds,
+      reason,
+      descended,
+      inside,
+      fencePenalty,
+      elapsed,
+      runwayStage,
+    });
+    let used = false;
+    return () => {
+      if (used) throw new Error("Training checkpoint already restored");
+      used = true;
+      ({
+        previous,
+        start,
+        passed,
+        misses,
+        complete,
+        score,
+        holdSeconds,
+        reason,
+        descended,
+        inside,
+        fencePenalty,
+        elapsed,
+        runwayStage,
+      } = saved);
+    };
+  }
   reset();
-  return { update, reset };
+  return { update, reset, checkpoint };
 }

@@ -7,9 +7,11 @@ import {
 import {
   TRAINING_COURSES,
   TUTORIAL_STEPS,
+  isCourseSupported,
   resolveTrainingGates,
 } from "./training.js";
 import { DEFAULT_SCENE, validateScene } from "./scene-data.js";
+import { validateWorldConfig, validateVehicleSetup } from "./world.js";
 import { AIRFRAMES, rotorCount } from "./rotor-geometry.js";
 import { createTerrain } from "./terrain.js";
 import {
@@ -18,8 +20,8 @@ import {
   validateGimbalState,
 } from "./gimbal.js";
 
-export const RECORDING_VERSION = 11;
-export const MODEL_VERSION = "0.8.0";
+export const RECORDING_VERSION = 12;
+export const MODEL_VERSION = "0.9.0";
 const MODES = ["attitude", "position", "mission", "rtl", "land", "takeoff"];
 const TAKEOFF_PHASES = [
   "idle",
@@ -47,6 +49,7 @@ export const DEFAULT_SETUP = Object.freeze({
   mode: "attitude",
   mission: Object.freeze([]),
   scene: DEFAULT_SCENE,
+  training: "free",
 });
 const object = (value) => {
   if (
@@ -83,40 +86,20 @@ const vector = (value, length, min = -1e9, max = 1e9) => {
 };
 export function validateSetup(value, config = {}) {
   const input = value === undefined ? DEFAULT_SETUP : object(value);
-  if (
-    Object.keys(input).some(
-      (key) => !["mode", "mission", "sensors", "scene", "gimbal"].includes(key),
-    )
-  )
+  if (Object.keys(input).some((key) => !Object.hasOwn(DEFAULT_SETUP, key)))
     throw new Error("Unknown setup field");
-  const merged = { ...DEFAULT_SETUP, ...input };
-  const gimbal = validateGimbalSettings(merged.gimbal);
-  const validatedConfig = validateConfig(object(config));
-  const scene = validateScene(merged.scene, validatedConfig.airframe);
-  const sensors = validateSensorConfig(merged.sensors);
-  assertGeographicSensors(scene, sensors);
-  const sim = createSimulation(validatedConfig, {
-    gimbal,
-    terrain: scene.terrain,
-  });
-  if (!Array.isArray(merged.mission))
-    throw new Error("Mission must be an array");
-  const mission = Array.from(merged.mission, (point) => ({ ...object(point) }));
-  if (mission.length) sim.setMission(mission);
-  const mode = choice(merged.mode, MODES);
-  sim.setMode(mode);
+  const { scene: sceneInput, ...setup } = { ...DEFAULT_SETUP, ...input };
+  const scene = validateScene(sceneInput);
   return {
-    mode,
-    mission,
+    ...validateVehicleSetup(setup, validateConfig(config), scene),
     scene,
-    sensors,
-    gimbal,
   };
 }
+
 function targets(value, partial = false, automatic = false) {
   object(value);
   const limits = {
-    altitude: [-1000, 500],
+    altitude: [-1000, 1500],
     roll: [-Math.PI / 6, Math.PI / 6],
     pitch: [-Math.PI / 6, Math.PI / 6],
     yawRate: [-2, 2],
@@ -134,12 +117,18 @@ function targets(value, partial = false, automatic = false) {
       );
   return result;
 }
-function training(value, airframe, scene) {
+function training(value, airframe, scene, activeCourse, home, groundHeight) {
   object(value);
   const course = choice(value.course, COURSES),
-    gates = resolveTrainingGates(scene, airframe),
+    gates = resolveTrainingGates(
+      scene,
+      airframe,
+      activeCourse,
+      home,
+      groundHeight,
+    ),
     total = course === "tutorial" ? TUTORIAL_STEPS.length : gates.length;
-  if (course !== scene.training)
+  if (course !== activeCourse)
     throw new Error("Training course does not match active scene");
   if (count(value.total, 50) !== total)
     throw new Error("Invalid training gate total");
@@ -184,9 +173,9 @@ function training(value, airframe, scene) {
   if (expectedGate) {
     const gate = object(value.nextGate);
     nextGate = {
-      north: number(gate.north, -500, 500),
-      east: number(gate.east, -500, 500),
-      altitude: number(gate.altitude, 0, 500),
+      north: number(gate.north, -1000, 1000),
+      east: number(gate.east, -1000, 1000),
+      altitude: number(gate.altitude, -1000, 1500),
       yaw: number(gate.yaw, -Math.PI, Math.PI),
       radius: number(gate.radius, 0.01, 100),
     };
@@ -221,6 +210,8 @@ function sample(
   scene,
   gimbalSettings,
   terrain,
+  expectedHome,
+  activeCourse,
 ) {
   object(value);
   if (
@@ -276,7 +267,8 @@ function sample(
   if (mode === "mission" && !route.length)
     throw new Error("Mission mode requires waypoints");
   const home = vector(nav.home, 2, -500, 500);
-  if (home.some((v) => v !== 0)) throw new Error("Invalid home position");
+  if (home.some((v, i) => v !== expectedHome[i]))
+    throw new Error("Invalid home position");
   let rawGimbal = value.gimbal;
   if (Array.isArray(rawGimbal)) {
     if (rawGimbal.length !== 6) throw new Error("Invalid compact gimbal pose");
@@ -394,6 +386,7 @@ function sample(
         "geofence",
         "link-loss",
         "obstacle-collision",
+        "vehicle-collision",
         "ground-impact",
         "terrain-impact",
         "takeoff-aborted",
@@ -423,7 +416,14 @@ function sample(
     controlSurfaces: surfaces(value.controlSurfaces),
     flight: flight(value.flight),
     runway: runway(value.runway),
-    training: training(value.training, airframe, scene),
+    training: training(
+      value.training,
+      airframe,
+      scene,
+      activeCourse,
+      expectedHome,
+      terrain.sample(...expectedHome).heightM,
+    ),
   };
 }
 function runway(value) {
@@ -527,11 +527,26 @@ function event(input, sim, initialScene) {
       result.value = Array.from(input.value, (point) => ({ ...object(point) }));
       sim.setMission(result.value);
       break;
+    case "training":
+      result.value = choice(input.value, COURSES);
+      break;
+    case "wind": {
+      const wind = object(input.value);
+      if (Object.keys(wind).sort().join(",") !== "direction,speed")
+        throw new Error("Invalid wind fields");
+      result.value = {
+        speed: number(wind.speed, 0, 30),
+        direction: number(wind.direction, 0, 360),
+      };
+      break;
+    }
     case "scene":
-      result.value = validateScene(input.value, sim.snapshot().airframe);
+      result.value = validateScene(input.value);
       if (
         JSON.stringify(result.value.geography ?? null) !==
-        JSON.stringify(initialScene.geography ?? null)
+          JSON.stringify(initialScene.geography ?? null) ||
+        JSON.stringify(result.value.terrain) !==
+          JSON.stringify(initialScene.terrain)
       )
         throw new Error(
           "Scene geography must remain fixed throughout a recording",
@@ -712,25 +727,146 @@ export function validateSensorFrame(value, sensorConfig = {}) {
   return result;
 }
 
+const GLOBAL_EVENTS = ["scene", "wind", "render"];
+const VEHICLE_EVENTS = [
+  "targets",
+  "gust",
+  "mode",
+  "gimbal",
+  "transition",
+  "position",
+  "mission",
+  "fault",
+  "clearFaults",
+  "takeoff",
+  "abortTakeoff",
+  "arm",
+  "disarm",
+  "training",
+  "sensorConfig",
+  "sensorFault",
+];
+function exactKeys(value, keys, label) {
+  object(value);
+  if (
+    Reflect.ownKeys(value).length !== keys.length ||
+    Reflect.ownKeys(value).some((key) => !keys.includes(key))
+  )
+    throw new Error(`Invalid ${label} fields`);
+}
+function frameTime(value) {
+  const tick = count(value.tick, 360000),
+    time = number(value.time, 0, 1800.001);
+  if (Math.abs(time - tick * 0.005) > 1e-7)
+    throw new Error("World tick and time disagree");
+  return { tick, time };
+}
+function orderedVehicles(input, roster, label) {
+  if (
+    !Array.isArray(input) ||
+    input.length !== roster.length ||
+    Array.from(input).some((entry, i) => object(entry).id !== roster[i].id)
+  )
+    throw new Error(`Invalid ${label} roster or order`);
+}
+function collisions(input, roster, tick, time) {
+  if (!Array.isArray(input) || input.length > 28)
+    throw new Error("Invalid collision list");
+  let previous = null;
+  return Array.from(input, (value) => {
+    exactKeys(value, ["time", "tick", "vehicleIds", "fraction"], "collision");
+    const pair = value.vehicleIds;
+    if (
+      !Array.isArray(pair) ||
+      pair.length !== 2 ||
+      typeof pair[0] !== "string" ||
+      pair[0] >= pair[1] ||
+      pair.some((id) => !roster.some((v) => v.id === id)) ||
+      (previous &&
+        (pair[0] < previous[0] ||
+          (pair[0] === previous[0] && pair[1] <= previous[1]))) ||
+      count(value.tick, 360000) !== tick ||
+      Math.abs(number(value.time, 0, 1800.001) - time) > 1e-8
+    )
+      throw new Error("Invalid collision identity or time");
+    previous = [...pair];
+    return {
+      time,
+      tick,
+      vehicleIds: [...pair],
+      fraction: number(value.fraction, 0, 1),
+    };
+  });
+}
+export function compactWorldSnapshot(world) {
+  return {
+    tick: world.tick,
+    time: world.time,
+    vehicles: world.vehicles.map((v) => ({
+      id: v.id,
+      snapshot: compactSnapshot({
+        ...v.snapshot,
+        training: v.training ?? v.snapshot.training,
+      }),
+    })),
+    collisions: structuredClone(world.collisions),
+  };
+}
+export function worldSensorFrame(world) {
+  return {
+    tick: world.tick,
+    time: world.time,
+    vehicles: world.vehicles.map((v) => ({
+      id: v.id,
+      sensors: structuredClone(v.sensors),
+    })),
+  };
+}
 export function validateRecording(value) {
   object(value);
   if (value.version !== RECORDING_VERSION)
     throw new Error(
-      "Unsupported recording version: version 11 required; legacy recordings are not supported",
+      "Unsupported recording version: version 12 required; legacy recordings are not supported",
     );
+  exactKeys(
+    value,
+    [
+      "format",
+      "version",
+      "modelVersion",
+      "createdAt",
+      "dt",
+      "world",
+      "runtime",
+      "events",
+      "samples",
+      "sensorFrames",
+      "termination",
+    ],
+    "recording",
+  );
   if (
     value.format !== "flight-lab" ||
     value.modelVersion !== MODEL_VERSION ||
     typeof value.createdAt !== "string" ||
-    !Number.isFinite(Date.parse(value.createdAt))
+    !Number.isFinite(Date.parse(value.createdAt)) ||
+    value.dt !== 0.005
   )
     throw new Error("Invalid recording header");
-  if (!["hover", "step", "gust"].includes(value.scenario) || value.dt !== 0.005)
-    throw new Error("Invalid recording settings");
-  object(object(value.setup).gimbal);
-  const config = validateConfig(object(value.config)),
-    setup = validateSetup(object(value.setup), config),
+  const world = validateWorldConfig(value.world),
     runtime = object(value.runtime);
+  exactKeys(
+    runtime,
+    [
+      "speed",
+      "wallSeconds",
+      "p95LateMs",
+      "lateTicks",
+      "skippedWallSeconds",
+      "renderEnabled",
+    ],
+    "runtime",
+  );
   const cleanRuntime = {
     speed: choice(runtime.speed, [0.5, 1, 2, 4]),
     wallSeconds: number(runtime.wallSeconds, 0),
@@ -744,165 +880,299 @@ export function validateRecording(value) {
     value.events.length > 100000 ||
     !Array.isArray(value.samples) ||
     !value.samples.length ||
-    value.samples.length > 36002
-  )
-    throw new Error("Invalid recording length");
-  if (
+    value.samples.length > 136002 ||
     !Array.isArray(value.sensorFrames) ||
     value.sensorFrames.length !== value.samples.length
   )
-    throw new Error("Sensor frames must match sample count");
-  const sim = createSimulation(config, {
-    gimbal: setup.gimbal,
-    terrain: setup.scene.terrain,
-  });
+    throw new Error("Invalid recording length");
+  const contexts = new Map(
+    world.vehicles.map((v) => [
+      v.id,
+      {
+        vehicle: v,
+        setup: structuredClone(v.setup),
+        routeText: JSON.stringify(v.setup.mission),
+        routeCache: new WeakMap(),
+        trainingEpochTime: 0,
+        previousTutorial: undefined,
+        channelTimes: {},
+        validator: createSimulation(v.config, {
+          gimbal: v.setup.gimbal,
+          terrain: world.scene.terrain,
+          spawn: v.spawn,
+          home: v.home,
+        }),
+      },
+    ]),
+  );
   let lastEvent = -1;
   const events = Array.from(value.events, (input) => {
-    const result = event(input, sim, setup.scene);
-    if (result.time < lastEvent) throw new Error("Events out of order");
-    lastEvent = result.time;
-    return result;
-  });
-  let lastTime = -1,
-    eventIndex = 0,
-    trainingEpochTime = 0,
-    previousTutorial,
-    activeScene = setup.scene,
-    activeTerrain = createTerrain(setup.scene.terrain),
-    gimbalSettings = setup.gimbal,
-    route = setup.mission,
-    routeText = JSON.stringify(route);
-  const routeCache = new WeakMap();
-  const samples = Array.from(value.samples, (input) => {
     object(input);
-    const time = number(input.time, 0, 1800.001);
-    if (time <= lastTime) throw new Error("Samples out of order");
-    while (
-      eventIndex < events.length &&
-      events[eventIndex].time <= time + 1e-8
-    ) {
-      if (events[eventIndex].type === "scene") {
-        const nextScene = events[eventIndex].value;
-        if (activeScene.training !== nextScene.training) {
-          trainingEpochTime = events[eventIndex].time;
-          previousTutorial = undefined;
-        }
-        activeScene = nextScene;
-        activeTerrain = createTerrain(activeScene.terrain);
-      }
-      if (events[eventIndex].type === "gimbal")
-        gimbalSettings = events[eventIndex].value;
-      if (events[eventIndex].type === "mission") {
-        route = events[eventIndex].value;
-        routeText = JSON.stringify(route);
-      }
-      eventIndex++;
-    }
-    const result = sample(
+    const { tick, time } = frameTime(input),
+      global = GLOBAL_EVENTS.includes(input.type);
+    if (!global && !VEHICLE_EVENTS.includes(input.type))
+      throw new Error("Invalid recording event");
+    const context = global
+      ? contexts.values().next().value
+      : contexts.get(input.vehicleId);
+    if (!context) throw new Error("Unknown event vehicleId");
+    const parsed = event(input, context.validator, world.scene);
+    const keys = [
+      "tick",
+      "time",
+      "type",
+      ...(!global ? ["vehicleId"] : []),
+      ...(Object.hasOwn(parsed, "value") ? ["value"] : []),
+      ...(Object.hasOwn(parsed, "fault") ? ["fault"] : []),
+    ];
+    exactKeys(input, keys, "event");
+    if (tick < lastEvent) throw new Error("Events out of order");
+    lastEvent = tick;
+    return {
+      ...parsed,
+      tick,
+      ...(!global ? { vehicleId: input.vehicleId } : {}),
+    };
+  });
+  let activeScene = world.scene,
+    activeTerrain = createTerrain(activeScene.terrain),
+    eventIndex = 0,
+    lastTick = -1,
+    lastTime = -1;
+  const sensorFrames = [];
+  const samples = Array.from(value.samples, (input, index) => {
+    exactKeys(
       input,
-      route,
-      routeText,
-      routeCache,
-      config.airframe,
-      activeScene,
-      gimbalSettings,
-      activeTerrain,
+      ["tick", "time", "vehicles", "collisions"],
+      "world sample",
     );
-    if (result.training.course === "tutorial") {
-      const progress = result.training;
-      if (
-        !previousTutorial
-          ? progress.passed !== 0 ||
-            progress.reason !== "" ||
-            progress.elapsed > 0.051
-          : time - lastTime > 0.051 ||
-            progress.passed < previousTutorial.passed ||
-            progress.passed > previousTutorial.passed + 1 ||
-            ((previousTutorial.complete || previousTutorial.reason) &&
-              JSON.stringify(progress) !== JSON.stringify(previousTutorial))
-      )
-        throw new Error("Invalid tutorial history");
-      if (
-        !progress.complete &&
-        !progress.reason &&
-        Math.abs(progress.elapsed - (time - trainingEpochTime)) > 1e-7
-      )
-        throw new Error("Tutorial time does not match its course epoch");
-      previousTutorial = progress;
-    }
-    lastTime = time;
-    return result;
-  });
-  let sensorConfig = setup.sensors,
-    sensorEventIndex = 0,
-    previousChannelTimes = {};
-  const sensorFrames = Array.from(value.sensorFrames, (input, index) => {
-    while (
-      sensorEventIndex < events.length &&
-      events[sensorEventIndex].time <= samples[index].time + 1e-8
-    ) {
-      if (events[sensorEventIndex].type === "sensorConfig") {
-        sensorConfig = events[sensorEventIndex].value;
-        // Recreating a sensor suite starts a new acquisition epoch; startup may legitimately be time zero.
-        previousChannelTimes = {};
+    const { tick, time } = frameTime(input);
+    if (tick <= lastTick || (index === 0 && tick !== 0))
+      throw new Error("Samples out of order or missing initial tick");
+    while (eventIndex < events.length && events[eventIndex].tick <= tick) {
+      const e = events[eventIndex++];
+      if (e.type === "scene") {
+        const changed =
+          JSON.stringify(activeScene.customGates) !==
+          JSON.stringify(e.value.customGates);
+        activeScene = e.value;
+        activeTerrain = createTerrain(activeScene.terrain);
+        if (changed)
+          for (const c of contexts.values())
+            if (c.setup.training === "custom") {
+              c.trainingEpochTime = e.time;
+              c.previousTutorial = undefined;
+            }
+      } else if (e.vehicleId) {
+        const c = contexts.get(e.vehicleId);
+        if (e.type === "training") {
+          c.setup.training = e.value;
+          c.trainingEpochTime = e.time;
+          c.previousTutorial = undefined;
+        }
+        if (["mission", "gimbal", "mode"].includes(e.type))
+          c.setup[e.type] = e.value;
+        if (e.type === "mission") c.routeText = JSON.stringify(e.value);
+        if (e.type === "sensorConfig") {
+          c.setup.sensors = e.value;
+          c.channelTimes = {};
+        }
       }
-      sensorEventIndex++;
     }
-    const result = validateSensorFrame(input, sensorConfig);
-    if (Math.abs(result.time - samples[index].time) > 1e-8)
-      throw new Error("Sensor frame time must match sample time");
-    for (const name of SENSOR_NAMES) {
-      if (result[name].time < (previousChannelTimes[name] ?? 0) - 1e-8)
-        throw new Error("Sensor acquisition time moved backwards");
-      previousChannelTimes[name] = result[name].time;
-    }
-    return result;
+    orderedVehicles(input.vehicles, world.vehicles, "sample");
+    const rawSensors = value.sensorFrames[index];
+    exactKeys(rawSensors, ["tick", "time", "vehicles"], "sensor frame");
+    frameTime(rawSensors);
+    if (rawSensors.tick !== tick || Math.abs(rawSensors.time - time) > 1e-8)
+      throw new Error("Sensor frame time must match world sample");
+    orderedVehicles(rawSensors.vehicles, world.vehicles, "sensor frame");
+    const sensorVehicles = [];
+    const vehicles = Array.from(input.vehicles, (entry, i) => {
+      exactKeys(entry, ["id", "snapshot"], "vehicle sample");
+      const c = contexts.get(entry.id),
+        v = c.vehicle;
+      if (
+        !isCourseSupported(c.setup.training, v.config.airframe) ||
+        (c.setup.training === "custom" && !activeScene.customGates.length) ||
+        (c.setup.training === "runway" && !activeTerrain.runwayCompatible)
+      )
+        throw new Error("Invalid active training course");
+      const state = sample(
+        entry.snapshot,
+        c.setup.mission,
+        c.routeText,
+        c.routeCache,
+        v.config.airframe,
+        activeScene,
+        c.setup.gimbal,
+        activeTerrain,
+        v.home,
+        c.setup.training,
+      );
+      if (Math.abs(state.time - time) > 1e-8 || state.metrics.steps !== tick)
+        throw new Error("Vehicle clock must match world clock");
+      if (state.training.course === "tutorial") {
+        const p = state.training,
+          old = c.previousTutorial;
+        if (
+          !old
+            ? p.passed !== 0 || p.reason !== "" || p.elapsed > 0.051
+            : time - lastTime > 0.051 ||
+              p.passed < old.passed ||
+              p.passed > old.passed + 1 ||
+              ((old.complete || old.reason) &&
+                JSON.stringify(p) !== JSON.stringify(old))
+        )
+          throw new Error("Invalid tutorial history");
+        if (
+          !p.complete &&
+          !p.reason &&
+          Math.abs(p.elapsed - (time - c.trainingEpochTime)) > 1e-7
+        )
+          throw new Error("Tutorial time does not match course epoch");
+        c.previousTutorial = p;
+      }
+      const sensorEntry = rawSensors.vehicles[i];
+      exactKeys(sensorEntry, ["id", "sensors"], "vehicle sensor frame");
+      const sensors = validateSensorFrame(sensorEntry.sensors, c.setup.sensors);
+      if (Math.abs(sensors.time - time) > 1e-8)
+        throw new Error("Vehicle sensors must match world clock");
+      for (const name of SENSOR_NAMES) {
+        if (sensors[name].time < (c.channelTimes[name] ?? 0) - 1e-8)
+          throw new Error("Sensor acquisition time moved backwards");
+        c.channelTimes[name] = sensors[name].time;
+      }
+      sensorVehicles.push({ id: entry.id, sensors });
+      return { id: entry.id, snapshot: state };
+    });
+    const contacts = collisions(input.collisions, world.vehicles, tick, time);
+    for (const contact of contacts)
+      for (const id of contact.vehicleIds) {
+        const state = vehicles.find((v) => v.id === id).snapshot;
+        if (
+          state.status !== "crashed" ||
+          state.navigation.reason !== "vehicle-collision"
+        )
+          throw new Error("Collision must crash both aircraft");
+      }
+    lastTick = tick;
+    lastTime = time;
+    sensorFrames.push({ tick, time, vehicles: sensorVehicles });
+    return { tick, time, vehicles, collisions: contacts };
   });
-  if (lastEvent > lastTime + 1e-8)
-    throw new Error("Event occurs after the last sample");
+  if (lastEvent > lastTick) throw new Error("Event occurs after last sample");
   let termination = null;
   if (value.termination !== null) {
-    const input = object(value.termination);
-    if (
-      Reflect.ownKeys(input).length !== 2 ||
-      Reflect.ownKeys(input).some((key) => !["reason", "time"].includes(key))
-    )
-      throw new Error("Invalid recording termination fields");
+    exactKeys(value.termination, ["reason", "time"], "termination");
     termination = {
-      reason: choice(input.reason, ["terrain-coverage"]),
-      time: number(input.time, 0, 1800.001),
+      reason: choice(value.termination.reason, [
+        "terrain-coverage",
+        "vehicle-collision",
+      ]),
+      time: number(value.termination.time, 0, 1800.001),
     };
-    if (termination.time !== lastTime || activeTerrain.data.kind !== "dem")
-      throw new Error(
-        "Terrain coverage termination requires the final DEM sample time",
-      );
+    if (termination.time !== lastTime)
+      throw new Error("Termination must match final world time");
+    if (
+      termination.reason === "terrain-coverage" &&
+      activeTerrain.data.kind !== "dem"
+    )
+      throw new Error("Coverage termination requires DEM");
+    if (
+      termination.reason === "vehicle-collision" &&
+      !samples.at(-1).collisions.length
+    )
+      throw new Error("Missing final collision");
   }
+  if (
+    samples.some(
+      (frame, i) =>
+        frame.collisions.length &&
+        (i !== samples.length - 1 ||
+          frame.tick === 0 ||
+          termination?.reason !== "vehicle-collision"),
+    )
+  )
+    throw new Error("Collision requires the final stopped world frame");
   return {
     format: "flight-lab",
     version: RECORDING_VERSION,
     modelVersion: MODEL_VERSION,
     createdAt: value.createdAt,
-    config,
-    scenario: value.scenario,
     dt: 0.005,
-    setup,
+    world,
     runtime: cleanRuntime,
-    termination,
     events,
     samples,
     sensorFrames,
+    termination,
   };
 }
 export function recordingToJson(record) {
   const clean = validateRecording(record);
   return JSON.stringify({
     ...clean,
-    samples: clean.samples.map(compactSnapshot),
+    samples: clean.samples.map((frame) => ({
+      ...frame,
+      vehicles: frame.vehicles.map((v) => ({
+        id: v.id,
+        snapshot: compactSnapshot(v.snapshot),
+      })),
+    })),
   });
 }
+export function recordingWorldAt(record, index) {
+  if (!Number.isInteger(index) || index < 0 || index >= record.samples.length)
+    throw new Error("Invalid recording frame index");
+  const frame = record.samples[index],
+    config = structuredClone(record.world);
+  for (const e of record.events) {
+    if (e.tick > frame.tick) break;
+    if (e.type === "scene") config.scene = e.value;
+    if (e.type === "wind") {
+      config.wind = e.value;
+      for (const v of config.vehicles) {
+        v.config.wind = e.value.speed;
+        v.config.windDirection = e.value.direction;
+      }
+    }
+    if (e.vehicleId) {
+      const v = config.vehicles.find((v) => v.id === e.vehicleId);
+      if (["mission", "gimbal", "mode", "training"].includes(e.type))
+        v.setup[e.type] = e.value;
+      if (e.type === "sensorConfig") v.setup.sensors = e.value;
+    }
+  }
+  return {
+    tick: frame.tick,
+    time: frame.time,
+    scene: config.scene,
+    wind: config.wind,
+    collisions: frame.collisions,
+    vehicles: config.vehicles.map((v, i) => ({
+      ...v,
+      setup: { ...v.setup, mode: frame.vehicles[i].snapshot.navigation.mode },
+      snapshot: frame.vehicles[i].snapshot,
+      sensors: record.sensorFrames[index].vehicles[i].sensors,
+      training: frame.vehicles[i].snapshot.training,
+    })),
+  };
+}
 export function recordingToCsv(record) {
-  const { samples, sensorFrames } = validateRecording(record);
+  const clean = validateRecording(record);
+  const samples = clean.samples.flatMap((frame) =>
+    frame.vehicles.map((v) => ({
+      ...v.snapshot,
+      vehicleId: v.id,
+      worldTick: frame.tick,
+    })),
+  );
+  const sensorFrames = clean.sensorFrames.flatMap((frame) =>
+    frame.vehicles.map((v) => v.sensors),
+  );
   const header = [
+    "vehicle_id",
+    "world_tick",
     "time_s",
     "north_m",
     "east_m",
@@ -1039,6 +1309,8 @@ export function recordingToCsv(record) {
   ];
   const rows = samples.map((s, index) =>
     [
+      s.vehicleId,
+      s.worldTick,
       s.time,
       ...s.position,
       ...s.velocity,

@@ -166,7 +166,10 @@ const config = { width: 64, height: 48 };
 test("capture uses physical camera pose, excludes annotations/ownship, restores state synchronously and flips GPU rows", async () => {
   const f = fixture({ defer: true }),
     capture = createCameraRenderer(f.renderer, f.scene);
-  const pending = capture.captureCamera(pose, config);
+  const pending = capture.captureCamera(pose, config, null, {
+    sourceVehicleId: "drone-1",
+    worldTick: 200,
+  });
   pose.gimbal.target.yaw = 1;
   assert.equal(f.passes.length, 3);
   assert.deepEqual(f.passes[0].visible, ["ground", "obstacle", "gate", "rain"]);
@@ -197,7 +200,10 @@ test("capture uses physical camera pose, excludes annotations/ownship, restores 
   assert.equal(f.targets[1].texture.colorSpace, THREE.NoColorSpace);
   assert.ok(f.targets.every((t) => t.samples === 0));
   await assert.rejects(
-    capture.captureCamera(pose, config),
+    capture.captureCamera(pose, config, null, {
+      sourceVehicleId: "drone-1",
+      worldTick: 200,
+    }),
     /already in progress/,
   );
   f.resolvers.forEach((resolve) => resolve());
@@ -214,14 +220,23 @@ test("capture uses physical camera pose, excludes annotations/ownship, restores 
   f.targets.forEach((t) => t.addEventListener("dispose", () => disposed++));
   capture.dispose();
   assert.equal(disposed, 3);
-  await assert.rejects(capture.captureCamera(pose, config), /disposed/);
+  await assert.rejects(
+    capture.captureCamera(pose, config, null, {
+      sourceVehicleId: "drone-1",
+      worldTick: 200,
+    }),
+    /disposed/,
+  );
 });
 
 test("render exceptions restore every mesh/material and release busy; context loss fails before rendering", async () => {
   const f = fixture({ failPass: 1 }),
     capture = createCameraRenderer(f.renderer, f.scene);
   await assert.rejects(
-    capture.captureCamera(pose, config),
+    capture.captureCamera(pose, config, null, {
+      sourceVehicleId: "drone-1",
+      worldTick: 200,
+    }),
     /injected render failure/,
   );
   assert.equal(f.ground.material, f.original.groundMaterial);
@@ -232,7 +247,13 @@ test("render exceptions restore every mesh/material and release busy; context lo
   assert.equal(f.renderer.getRenderTarget(), null);
   f.lose();
   const count = f.passes.length;
-  await assert.rejects(capture.captureCamera(pose, config), /context lost/);
+  await assert.rejects(
+    capture.captureCamera(pose, config, null, {
+      sourceVehicleId: "drone-1",
+      worldTick: 200,
+    }),
+    /context lost/,
+  );
   assert.equal(f.passes.length, count);
   capture.dispose();
 });
@@ -262,8 +283,37 @@ test("camera capture preserves the acquired geographic provenance", async () => 
       window: [0, 0, 100, 80],
     },
   };
-  const result = await camera.captureCamera(pose, config, geography);
+  const result = await camera.captureCamera(pose, config, geography, {
+    sourceVehicleId: "drone-1",
+    worldTick: 200,
+  });
   assert.deepEqual(result.geography, geography);
-  assert.equal(result.version, 3);
+  assert.equal(result.version, 4);
   camera.dispose();
+});
+
+test("camera excludes only the selected aircraft and includes its peer in every pass", async () => {
+  const f = fixture();
+  for (const id of ["drone-1", "drone-2"]) {
+    const group = new THREE.Group();
+    group.userData.cameraClass = 7;
+    group.userData.cameraVehicleId = id;
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(),
+      new THREE.MeshBasicMaterial(),
+    );
+    mesh.name = id;
+    group.add(mesh);
+    f.scene.add(group);
+  }
+  await createCameraRenderer(f.renderer, f.scene).captureCamera(
+    pose,
+    config,
+    null,
+    { sourceVehicleId: "drone-1", worldTick: 200 },
+  );
+  for (const pass of f.passes) {
+    assert.ok(!pass.visible.includes("drone-1"));
+    assert.ok(pass.visible.includes("drone-2"));
+  }
 });

@@ -259,7 +259,11 @@ test("custom gates preserve ordered continuous segment intersections and immutab
   miss.update(sample(0, [0, 0.8001, -2]));
   assert.equal(miss.update(sample(1, [4, 0.8001, -2])).misses, 1);
   assert.ok(Object.isFrozen(TRAINING_COURSES.gates.gates[0]));
-  const resolved = resolveTrainingGates({ training: "gates", customGates: [] });
+  const resolved = resolveTrainingGates(
+    { customGates: [] },
+    "quadrotor",
+    "gates",
+  );
   resolved[0].north = 99;
   assert.equal(TRAINING_COURSES.gates.gates[0].north, 8);
   assert.throws(() => createTrainer("custom"));
@@ -448,4 +452,108 @@ test("tutorial dwell cannot be earned while paused or through sample gaps, and a
   assert.equal(progress.passed, 6);
   assert.equal(progress.complete, false);
   assert.equal(progress.holdSeconds, 0);
+});
+
+test("built-in courses use each home and terrain height while custom gates stay in world coordinates", async () => {
+  const { resolveTrainingGates, validateCustomGates } =
+    await import("../training.js");
+  const home = [100, -40],
+    height = 350;
+  const gates = resolveTrainingGates(
+    { customGates: [] },
+    "quadrotor",
+    "gates",
+    home,
+    height,
+  );
+  assert.deepEqual(gates[0], {
+    north: 108,
+    east: -40,
+    altitude: 352,
+    yaw: 0,
+    radius: 1.5,
+  });
+  const custom = [
+    { north: -1000, east: 1000, altitude: -1000, yaw: 0, radius: 1 },
+  ];
+  assert.deepEqual(
+    resolveTrainingGates(
+      { customGates: custom },
+      "quadrotor",
+      "custom",
+      home,
+      height,
+    ),
+    custom,
+  );
+  assert.throws(() =>
+    resolveTrainingGates({ training: "gates", customGates: [] }, "quadrotor"),
+  );
+  assert.throws(() =>
+    createTrainer("hover", "quadrotor", [], Array(2), height),
+  );
+  assert.throws(() => createTrainer("hover", "quadrotor", [], home, Infinity));
+  assert.throws(() =>
+    validateCustomGates([{ ...custom[0], altitude: 1500.01 }]),
+  );
+  const hover = createTrainer("hover", "quadrotor", [], home, height);
+  home[0] = 0;
+  hover.update(sample(0, [100, -40, -352]));
+  assert.equal(hover.update(sample(10, [100, -40, -352])).complete, true);
+  const landing = createTrainer("landing", "quadrotor", [], [100, -40], height);
+  landing.update(sample(0, [100, -40, -351]));
+  landing.update(sample(1, [100.5, -40, -350]));
+  assert.equal(landing.update(sample(3, [100.5, -40, -350])).score, 950);
+  const trainer = createTrainer("gates", "quadrotor", [], [100, -40], height);
+  trainer.update(sample(0, [107, -40, -352]));
+  assert.equal(trainer.update(sample(1, [109, -40, -352])).passed, 1);
+});
+
+test("tutorial parking and commands are relative to an elevated home", () => {
+  const sim = createSimulation({ startOnGround: true });
+  const trainer = createTrainer("tutorial", "quadrotor", [], [100, -40], 350);
+  const shifted = (time, armed = false) => {
+    const value = sim.snapshot();
+    value.time = time;
+    value.armed = armed;
+    value.position = [100, -40, -350];
+    value.ground.heightM = 350;
+    value.navigation.targetPosition = [100, -40];
+    return value;
+  };
+  trainer.update(shifted(0));
+  let result;
+  for (let i = 1; i <= 400; i++) result = trainer.update(shifted(i * 0.005));
+  assert.equal(result.passed, 1);
+  for (let i = 401; i <= 601; i++)
+    result = trainer.update(shifted(i * 0.005, true));
+  assert.equal(result.passed, 2);
+  const airborne = shifted(3.01, true);
+  airborne.position[2] = -352;
+  airborne.ground.clearanceM = 2;
+  airborne.status = "flying";
+  airborne.navigation.mode = "position";
+  for (let i = 0; i <= 201; i++) {
+    airborne.time = 3.01 + i * 0.005;
+    result = trainer.update(airborne);
+  }
+  assert.equal(result.passed, 3);
+});
+
+test("trainer checkpoint restores gate, dwell, penalty and terminal progress", () => {
+  for (const course of ["gates", "hover", "landing"]) {
+    const a = createTrainer(course),
+      b = createTrainer(course);
+    const initial = sample(0, [0, 0, -2]);
+    assert.deepEqual(a.update(initial), b.update(initial));
+    const rollback = a.checkpoint();
+    a.update(sample(1, [10, 0, -2], { navigation: { fenceBreached: true } }));
+    a.update(sample(2, [10, 0, -2], { status: "crashed" }));
+    a.reset();
+    a.update(sample(0));
+    rollback();
+    assert.throws(rollback, /already restored/);
+    for (const input of [sample(1, [9, 0, -2]), sample(2), sample(12)])
+      assert.deepEqual(a.update(input), b.update(input));
+  }
 });

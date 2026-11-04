@@ -1,0 +1,135 @@
+{
+  "appVersion": "0.20.0",
+  "scope": "1..8 internal browser vehicles in one shared world; five existing airframes",
+  "formats": {
+    "recording": 12,
+    "model": "0.9.0",
+    "scene": 4,
+    "camera": 4,
+    "api": "2.0",
+    "csvColumns": 167,
+    "nativeRecordings": 1
+  },
+  "checks": {
+    "testsPassed": 289,
+    "testsFailed": 0,
+    "fullSuiteSeconds": 42.1686785,
+    "build": "passed",
+    "diffCheck": "passed"
+  },
+  "fiveAirframes": {
+    "recording": {
+      "file": "five-airframes-final-browser.json",
+      "sha256": "faeeb3c8fcc3da02a4269a823a19c9bf6c3e3d2d318630566cd06d6e02573055"
+    },
+    "independentReplay": {
+      "passed": true,
+      "vehicles": 5,
+      "frames": 992,
+      "ticks": 9877,
+      "simSeconds": 49.38500000000681,
+      "maximum": {
+        "positionM": 2.2737367544323206e-13,
+        "quaternion": 4.440892098500626e-16,
+        "motors": 0,
+        "allState": 1.6370904631912708e-11,
+        "sensors": 2.2737367544323206e-13
+      }
+    },
+    "browserReplay": "Final 49.385 s frame, all five vehicles present, selected octorotor eight channels, flight controls disabled; reset restored original one-vehicle live world."
+  },
+  "geographicTerrain": {
+    "recording": {
+      "file": "dem-two-browser.json",
+      "sha256": "8642db85aef87f49bb616b1e6187d4d24dd1cb5f8ff1f3bcf42923e983557ba7"
+    },
+    "independentReplay": {
+      "passed": true,
+      "vehicles": 2,
+      "frames": 276,
+      "ticks": 2721,
+      "simSeconds": 13.605000000000727,
+      "maximum": {
+        "positionM": 0,
+        "quaternion": 0,
+        "motors": 0,
+        "allState": 0,
+        "sensors": 3.552713678800501e-14
+      }
+    },
+    "allSensorOriginsMatchSharedGeography": true,
+    "browser": "Both quad and hexa took off from the same real imported DEM to 2 m AGL; final paused world retained both."
+  },
+  "camera": {
+    "dataset": {
+      "file": "camera-peer.json",
+      "sha256": "8aa69471500e08ddca109fb92bb83f6d5967e51b766c1c69853580a805e06113"
+    },
+    "datasetVersion": 4,
+    "frames": 1,
+    "sourceVehicleId": "drone-4",
+    "worldTick": 9877,
+    "time": 49.38500000000681,
+    "airframe": "hexarotor",
+    "peerPixels": 44,
+    "peerDepthRangeM": [5.52400016784668, 5.966000080108643],
+    "peerRgbaColors": 21,
+    "browser": "Other aircraft visible together in RGB, depth, and semantic class 7; source identity retained."
+  },
+  "limitChecks": {
+    "time": {
+      "simSeconds": 1800,
+      "ticks": 360000,
+      "samples": 36001
+    },
+    "capacity": {
+      "vehicles": 4,
+      "lidarRays": 180,
+      "lidarChannels": 32,
+      "lidarHz": 20,
+      "limitBytes": 100663296,
+      "retainedBytes": 100718615,
+      "maximumOvershoot": "less than one complete world frame"
+    },
+    "coverage": "A later sorted vehicle leaving DEM rolled all plant/gimbal/RNG/sensor state back; final shared time and data exported."
+  },
+  "nativeRegression": [
+    {
+      "source": "gcs-proof-v017/px4-mavproxy-6/recording.json",
+      "sourceSha256": "6c107c01f36c676640230835e40d33792045625f2b8fed5d12136e5262e7a515",
+      "runtimeSeconds": 0.49498087500000004,
+      "passed": true,
+      "bootstrapTicks": 17,
+      "acceptedActuators": 23212,
+      "checkedSamples": 1859,
+      "simSeconds": 92.91600000002163,
+      "maxPositionErrorM": 0,
+      "maxQuaternionError": 0,
+      "maxMotorError": 0
+    },
+    {
+      "source": "gcs-proof-v017/ardupilot-mavproxy-4/recording.json",
+      "sourceSha256": "a166106b16aad525454452e4db517e6f49b728409a2343f6f93e75560b2f6a25",
+      "runtimeSeconds": 2.5778887919999995,
+      "passed": true,
+      "bootstrapTicks": 1007,
+      "acceptedActuators": 148442,
+      "checkedSamples": 2970,
+      "simSeconds": 148.44200000034473,
+      "maxPositionErrorM": 0,
+      "maxQuaternionError": 0,
+      "maxMotorError": 0
+    }
+  ],
+  "performanceEvidence": {
+    "file": "core-step-benchmark.json",
+    "sha256": "bfd65783bd75a00232389ffc13e097a39de07fb35010ddc842444e27affc4cd6"
+  },
+  "limitations": [
+    "Peer collision and CPU peer sensing use conservative configuration-derived spheres; GPU cameras use visual meshes.",
+    "Collision commits the common tick endpoint and pauses the world; contact fraction is approximate, without elastic response or wake.",
+    "Native PX4/ArduPilot remain single-vehicle; no multi-native or real hardware validation.",
+    "Eight vehicles at maximum LiDAR density measured approximately 0.54 real-time factor without renderer, Worker, or recording serialization; no hard real-time claim.",
+    "All-market simulator capability goal remains incomplete."
+  ]
+}

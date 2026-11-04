@@ -38,10 +38,14 @@ void main() {
 }
 `;
 const worldVector = ([north, east, down]) => [east, -down, -north];
-function cameraClass(object) {
+function cameraClass(object, sourceVehicleId) {
   let id = 0;
   for (let current = object; current; current = current.parent) {
-    if (current.userData.cameraExclude) return -1;
+    if (
+      current.userData.cameraExclude ||
+      current.userData.cameraVehicleId === sourceVehicleId
+    )
+      return -1;
     if (!id && Number.isInteger(current.userData.cameraClass))
       id = current.userData.cameraClass;
   }
@@ -161,10 +165,15 @@ export function createCameraRenderer(renderer, scene) {
     materials.forEach((material) => material.dispose());
     materials.clear();
   }
-  async function captureCamera(snapshot, config = {}, geography = null) {
+  async function captureCamera(
+    snapshot,
+    config = {},
+    geography = null,
+    identity,
+  ) {
     checkAvailable();
     if (busy) throw new Error("A camera capture is already in progress");
-    const metadata = cameraMetadata(snapshot, config, geography);
+    const metadata = cameraMetadata(snapshot, config, geography, identity);
     busy = true;
     let reads = [];
     try {
@@ -184,7 +193,7 @@ export function createCameraRenderer(renderer, scene) {
             object,
             visible: object.visible,
             material: object.material,
-            classId: cameraClass(object),
+            classId: cameraClass(object, identity.sourceVehicleId),
             rgbOnly: object.userData.cameraRgbOnly === true,
           });
       });
@@ -241,7 +250,7 @@ export function createCameraRenderer(renderer, scene) {
           for (const entry of objects) {
             const { object, classId } = entry;
             const included =
-              (classId >= 1 && classId <= 6 && object.isMesh) ||
+              (classId >= 1 && classId <= 7 && object.isMesh) ||
               (rgb && entry.rgbOnly && classId !== -1);
             object.visible = entry.visible && included;
             if (rgb || !included) object.material = entry.material;

@@ -1,13 +1,15 @@
 import { DEFAULT_CONFIG, AIRFRAME_PRESETS, validateConfig } from "./sim.js";
 import { MULTIROTOR_AIRFRAMES } from "./rotor-geometry.js";
 import { createScene } from "./scene.js";
+import { validateWorldConfig } from "./world.js";
 import {
   validateRecording,
   recordingToCsv,
   recordingToJson,
+  recordingWorldAt,
 } from "./recording.js";
 import { readPilotInput, takeoffPlayAction } from "./input.js";
-import { exportLidarCsv, exportLidarPcd } from "./pointcloud.js";
+import { exportVehiclePointCloud } from "./pointcloud.js";
 import {
   createHilClient,
   isCompanionOrigin,
@@ -59,7 +61,7 @@ const ORIGIN_KEYS = [
   "originVerticalDatum",
 ];
 let sensors;
-let replaySensorIndex = 0;
+
 try {
   const saved = localStorage.getItem(storageKey);
   if (saved) config = validateConfig(JSON.parse(saved));
@@ -80,6 +82,14 @@ try {
   /* Invalid or unavailable storage uses camera defaults. */
 }
 
+let worldState;
+let worldConfig;
+let activeVehicleId = "drone-1";
+const vehicleHistories = new Map();
+const vehicleDrafts = new Map();
+const vehicleSensorOrigins = new Map();
+let rosterDraft;
+let rosterKey = "";
 let scenario = "hover";
 let localSensorOrigin = Object.fromEntries(
   ORIGIN_KEYS.map((key) => [key, sensorConfig[key]]),
@@ -88,9 +98,10 @@ let running = false;
 let latest;
 let history = [];
 let replay;
+let replayPrevious;
 let replayClock = 0;
 let replayIndex = 0;
-let replayEventIndex = 0;
+
 let rendering = true;
 let scene;
 let sceneEditor;
@@ -133,6 +144,292 @@ let internalSaved;
 const worker = new Worker(new URL("./worker.js", import.meta.url), {
   type: "module",
 });
+const globalWorkerCommands = new Set([
+  "play",
+  "pause",
+  "speed",
+  "render",
+  "scene",
+  "wind",
+  "resetWorld",
+  "selectVehicle",
+  "inspectWorld",
+  "inspectScene",
+  "apiExport",
+  "export",
+]);
+function sendWorker(command) {
+  if (command.type === "reset") {
+    if (!worldConfig) throw new Error("世界尚未準備完成");
+    const value = structuredClone(worldConfig);
+    const resetVehicleId = command.vehicleId || activeVehicleId;
+    const vehicle = value.vehicles.find((item) => item.id === resetVehicleId);
+    if (!vehicle) throw new Error("找不到指定載具");
+    const nextConfig = command.config || config;
+    value.wind = {
+      speed: nextConfig.wind,
+      direction: nextConfig.windDirection,
+    };
+    for (const item of value.vehicles) {
+      item.config.wind = value.wind.speed;
+      item.config.windDirection = value.wind.direction;
+    }
+    const previousAirframe = vehicle.config.airframe;
+    vehicle.config = { ...nextConfig };
+    vehicle.scenario = command.scenario || scenario;
+    vehicle.spawn.altitude = nextConfig.startOnGround
+      ? 0
+      : nextConfig.airframe !== previousAirframe || !vehicle.spawn.altitude
+        ? nextConfig.airframe === "fixedwing"
+          ? 30
+          : 2
+        : vehicle.spawn.altitude;
+    if (command.setup) {
+      const { scene, ...setup } = command.setup;
+      vehicle.setup = setup;
+      if (scene) {
+        const geographyChanged =
+          JSON.stringify(value.scene.geography) !==
+          JSON.stringify(scene.geography);
+        value.scene = scene;
+        for (const item of value.vehicles) {
+          if (geographyChanged) {
+            item.setup.mode = "attitude";
+            item.setup.mission = [];
+          }
+          const origin = scene.geography?.origin;
+          if (geographyChanged && origin)
+            Object.assign(item.setup.sensors, {
+              originLatitudeDeg: origin.latitudeDeg,
+              originLongitudeDeg: origin.longitudeDeg,
+              originAltitudeM: origin.altitudeM,
+              originVerticalDatum: origin.verticalDatum,
+            });
+          else if (geographyChanged && vehicleSensorOrigins.has(item.id))
+            Object.assign(
+              item.setup.sensors,
+              vehicleSensorOrigins.get(item.id),
+            );
+        }
+      }
+    } else {
+      vehicle.setup.mode = "attitude";
+      vehicle.setup.mission = [];
+    }
+    command = {
+      type: "resetWorld",
+      value,
+      activeVehicleId: resetVehicleId,
+      ...(command.requestId ? { requestId: command.requestId } : {}),
+    };
+  }
+  worker.postMessage(
+    globalWorkerCommands.has(command.type)
+      ? command
+      : { ...command, vehicleId: command.vehicleId || activeVehicleId },
+  );
+}
+function renderVehicleRoster() {
+  if (!worldState) return;
+  const list = worldState.vehicles;
+  const key = JSON.stringify(list.map((item) => [item.id, item.name]));
+  const select = $("vehicle-select");
+  if (key !== rosterKey) {
+    select.replaceChildren(
+      ...list.map((item) => new Option(item.name + " · " + item.id, item.id)),
+    );
+    rosterKey = key;
+  }
+  select.value = activeVehicleId;
+  select.disabled = externalActive;
+  $("vehicle-status").textContent = list
+    .map(
+      (item) =>
+        item.name +
+        "（" +
+        item.id +
+        "） · " +
+        item.snapshot.airframe +
+        " · " +
+        item.snapshot.status +
+        " · 離地 " +
+        item.snapshot.ground.clearanceM.toFixed(1) +
+        " m",
+    )
+    .join("　｜　");
+  $("vehicle-add").disabled =
+    !!replay || externalActive || rosterDraft?.vehicles.length >= 8;
+  $("vehicle-apply").disabled = !!replay || externalActive;
+}
+function renderVehicleEditor() {
+  const container = $("vehicle-editor");
+  container.replaceChildren();
+  if (!rosterDraft) return;
+  for (const vehicle of rosterDraft.vehicles) {
+    const row = document.createElement("div");
+    row.className = "vehicle-editor-row";
+    const add = (label, value, onChange, type = "text") => {
+      const wrapper = document.createElement("label");
+      wrapper.textContent = label;
+      const input = document.createElement("input");
+      input.type = type;
+      input.value = value;
+      if (type === "number") input.step = "any";
+      input.disabled = !!replay || externalActive;
+      input.oninput = () =>
+        onChange(type === "number" ? Number(input.value) : input.value);
+      wrapper.append(input);
+      row.append(wrapper);
+    };
+    add("ID", vehicle.id, (value) => {
+      vehicle.id = value;
+    });
+    add("名稱", vehicle.name, (value) => {
+      vehicle.name = value;
+    });
+    const typeLabel = document.createElement("label");
+    typeLabel.textContent = "機型";
+    const type = document.createElement("select");
+    for (const kind of [
+      "quadrotor",
+      "fixedwing",
+      "vtol",
+      "hexarotor",
+      "octorotor",
+    ])
+      type.add(new Option(kind, kind));
+    type.value = vehicle.config.airframe;
+    type.disabled = !!replay || externalActive;
+    type.onchange = () => {
+      const ground = vehicle.config.startOnGround;
+      vehicle.config = {
+        ...AIRFRAME_PRESETS[type.value],
+        startOnGround: ground,
+        wind: rosterDraft.wind.speed,
+        windDirection: rosterDraft.wind.direction,
+      };
+      vehicle.spawn.altitude = ground ? 0 : type.value === "fixedwing" ? 30 : 2;
+      renderVehicleEditor();
+    };
+    typeLabel.append(type);
+    row.append(typeLabel);
+    const groundLabel = document.createElement("label"),
+      ground = document.createElement("input");
+    ground.type = "checkbox";
+    ground.checked = vehicle.config.startOnGround;
+    ground.disabled = !!replay || externalActive;
+    ground.onchange = () => {
+      vehicle.config.startOnGround = ground.checked;
+      vehicle.spawn.altitude = ground.checked
+        ? 0
+        : vehicle.config.airframe === "fixedwing"
+          ? 30
+          : 2;
+      renderVehicleEditor();
+    };
+    groundLabel.append("地面起始", ground);
+    row.append(groundLabel);
+    for (const [key, label] of [
+      ["north", "起點北 m"],
+      ["east", "起點東 m"],
+      ["altitude", "起點離地 m"],
+      ["heading", "航向 °"],
+    ])
+      add(
+        label,
+        key === "heading" ? vehicle.spawn[key] * DEG : vehicle.spawn[key],
+        (value) => {
+          vehicle.spawn[key] = key === "heading" ? value / DEG : value;
+        },
+        "number",
+      );
+    for (const [index, label] of [
+      [0, "家點北 m"],
+      [1, "家點東 m"],
+    ])
+      add(
+        label,
+        vehicle.home[index],
+        (value) => {
+          vehicle.home[index] = value;
+        },
+        "number",
+      );
+    const remove = document.createElement("button");
+    remove.textContent = "移除";
+    remove.disabled =
+      !!replay || externalActive || rosterDraft.vehicles.length === 1;
+    remove.onclick = () => {
+      rosterDraft.vehicles.splice(rosterDraft.vehicles.indexOf(vehicle), 1);
+      renderVehicleEditor();
+    };
+    row.append(remove);
+    container.append(row);
+  }
+  renderVehicleRoster();
+}
+$("vehicle-add").onclick = () => {
+  if (
+    !rosterDraft ||
+    replay ||
+    externalActive ||
+    rosterDraft.vehicles.length >= 8
+  )
+    return;
+  const vehicle = structuredClone(rosterDraft.vehicles[0]);
+  let index = 1;
+  while (rosterDraft.vehicles.some((item) => item.id === "drone-" + index))
+    index++;
+  vehicle.id = "drone-" + index;
+  vehicle.name = "飛行器 " + index;
+  vehicle.spawn = {
+    north: 0,
+    east: 6 * (index - 1),
+    altitude: vehicle.config.startOnGround
+      ? 0
+      : vehicle.config.airframe === "fixedwing"
+        ? 30
+        : 2,
+    heading: 0,
+  };
+  vehicle.home = [vehicle.spawn.north, vehicle.spawn.east];
+  vehicle.setup.mode = "attitude";
+  vehicle.setup.mission = [];
+  rosterDraft.vehicles.push(vehicle);
+  renderVehicleEditor();
+};
+$("vehicle-apply").onclick = async () => {
+  if (!rosterDraft || replay || externalActive) return;
+  try {
+    const value = validateWorldConfig(rosterDraft);
+    if (
+      dirty() &&
+      !(await confirmAction(
+        "套用機隊會重設整個實驗並清除尚未匯出的紀錄。確定繼續？",
+      ))
+    )
+      return;
+    const selected = value.vehicles.some((item) => item.id === activeVehicleId)
+      ? activeVehicleId
+      : value.vehicles[0].id;
+    await requestApi({ type: "resetWorld", value, activeVehicleId: selected });
+    vehicleHistories.clear();
+    vehicleDrafts.clear();
+    toast("機隊已套用。");
+  } catch (error) {
+    toast("無法套用機隊：" + error.message);
+  }
+};
+$("vehicle-select").onchange = () => {
+  const id = $("vehicle-select").value;
+  if (externalActive) return;
+  if (replay) {
+    activeVehicleId = id;
+    projectReplayWorld(true);
+    return;
+  }
+  sendWorker({ type: "selectVehicle", vehicleId: id });
+};
 let lastAltitudeReference;
 let requestId = 0;
 const pendingApi = new Map();
@@ -151,7 +448,8 @@ function requestApi(command, internal = false) {
       return Promise.reject(error);
     }
   }
-  if (command.type === "captureCamera") return captureCameraFrame();
+  if (command.type === "captureCamera")
+    return captureCameraFrame(command.vehicleId);
   const id = ++requestId;
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -160,7 +458,7 @@ function requestApi(command, internal = false) {
     }, 10000);
     pendingApi.set(id, { resolve, reject, timeout });
     try {
-      worker.postMessage({ ...command, requestId: id });
+      sendWorker({ ...command, requestId: id });
     } catch (error) {
       clearTimeout(timeout);
       pendingApi.delete(id);
@@ -310,7 +608,7 @@ for (const t of targets) {
   $(`target-${t.key}`).addEventListener("input", (event) => {
     const value = Number(event.target.value);
     $(`output-${t.key}`).textContent = `${value.toFixed(1)} ${t.unit}`;
-    worker.postMessage({
+    sendWorker({
       type: "targets",
       value: { [t.key]: value / t.factor },
     });
@@ -526,9 +824,8 @@ $("settings-form").onsubmit = async (event) => {
     }
     $("settings-dialog").close();
     newExperiment();
-    worker.postMessage({ type: "sensorConfig", value: sensorConfig });
-    if (gimbalChanged)
-      worker.postMessage({ type: "gimbal", value: nextGimbal });
+    sendWorker({ type: "sensorConfig", value: sensorConfig });
+    if (gimbalChanged) sendWorker({ type: "gimbal", value: nextGimbal });
     toast("參數已套用，已建立新實驗。");
   } catch (error) {
     $("settings-error").textContent = `請檢查參數：${error.message}`;
@@ -541,6 +838,12 @@ document.querySelectorAll("[data-close]").forEach((button) => {
 
 function newExperiment() {
   clearCameraPreview();
+  if (replay && replayPrevious) {
+    activeVehicleId = replayPrevious.activeVehicleId;
+    config = replayPrevious.config;
+    scenario = replayPrevious.scenario;
+    replayPrevious = undefined;
+  }
   replay = undefined;
   document.body.classList.remove("replay");
   setReplayControls(false);
@@ -559,7 +862,7 @@ function newExperiment() {
     scenario === "step"
       ? "階躍情境自動控制 Roll；其餘指令可即時調整。"
       : "指令即時生效；更換情境會建立新實驗。";
-  worker.postMessage({ type: "reset", config, scenario });
+  sendWorker({ type: "reset", config, scenario });
   setPlaying(false);
   $("reset").setAttribute("aria-label", "重設實驗");
 }
@@ -589,7 +892,7 @@ document.querySelectorAll("[data-scenario]").forEach((button) => {
   };
 });
 let launchPending = false;
-async function launchFlight() {
+async function launchFlight(vehicleId = activeVehicleId) {
   if (externalActive) {
     await sendHilCommand("takeoff");
     return;
@@ -604,7 +907,7 @@ async function launchFlight() {
     const active = ["runup", "roll", "rotate", "climb"].includes(
       latest.runway.takeoffPhase,
     );
-    if (!active) await requestApi({ type: "takeoff" });
+    if (!active) await requestApi({ type: "takeoff", vehicleId });
     document.querySelector('[data-workspace="flight"]').click();
     if (!rendering) $("render-toggle").click();
     document.querySelector('[data-camera="follow"]').click();
@@ -636,21 +939,17 @@ $("play").onclick = () => {
     if (replayIndex >= replay.samples.length - 1) {
       replayClock = replay.samples[0].time;
       replayIndex = 0;
-      latest = replay.samples[0];
-      history = [latest];
-      restoreReplayPresentation();
-      applyReplayEvents(replayClock);
-      resetReplaySensors(replayClock);
+      projectReplayWorld(true);
     }
     setPlaying(!running);
-  } else if (running) worker.postMessage({ type: "pause" });
+  } else if (running) sendWorker({ type: "pause" });
   else if (takeoffPlayAction(latest) !== "play") launchFlight();
-  else worker.postMessage({ type: "play" });
+  else sendWorker({ type: "play" });
 };
 $("speed").onchange = (event) =>
-  worker.postMessage({ type: "speed", value: Number(event.target.value) });
+  sendWorker({ type: "speed", value: Number(event.target.value) });
 $("gust").onclick = () => {
-  worker.postMessage({ type: "gust" });
+  sendWorker({ type: "gust" });
   toast("已加入一秒陣風，模擬運行時生效。");
 };
 document.querySelectorAll("[data-camera]").forEach((button) => {
@@ -666,7 +965,7 @@ document.querySelectorAll("[data-camera]").forEach((button) => {
 $("render-toggle").onclick = () => {
   rendering = !rendering;
   scene?.setVisible(rendering);
-  if (!externalActive) worker.postMessage({ type: "render", value: rendering });
+  if (!externalActive) sendWorker({ type: "render", value: rendering });
   $("render-message").hidden = rendering;
   $("render-toggle").textContent = rendering ? "關閉渲染" : "開啟渲染";
   $("render-toggle").setAttribute("aria-pressed", String(rendering));
@@ -697,7 +996,7 @@ for (const kind of ["csv", "json"])
   $(`export-${kind}`).onclick = () => {
     document.querySelector(".export-menu").open = false;
     if (replay) exportRecording(kind, replay);
-    else worker.postMessage({ type: "export", kind });
+    else sendWorker({ type: "export", kind });
   };
 $("import-open").onclick = () => {
   document.querySelector(".export-menu").open = false;
@@ -720,12 +1019,17 @@ $("import-file").onchange = async (event) => {
       ))
     )
       return;
-    worker.postMessage({ type: "pause" });
+    sendWorker({ type: "pause" });
     clearCameraPreview();
+    if (!replay)
+      replayPrevious = {
+        activeVehicleId,
+        config: structuredClone(config),
+        scenario,
+      };
     replay = record;
     terrainTermination = record.termination;
-    config = { ...record.config };
-    scenario = record.scenario;
+    activeVehicleId = record.world.vehicles[0].id;
     document.querySelectorAll("[data-scenario]").forEach((item) => {
       const active = item.dataset.scenario === scenario;
       item.classList.toggle("active", active);
@@ -733,11 +1037,7 @@ $("import-file").onchange = async (event) => {
     });
     replayClock = record.samples[0].time;
     replayIndex = 0;
-    restoreReplayPresentation();
-    applyReplayEvents(replayClock);
-    resetReplaySensors(replayClock);
-    history = [record.samples[0]];
-    latest = record.samples[0];
+    projectReplayWorld(true);
     sampleCount = record.samples.length;
     timing = {};
     document.body.classList.add("replay");
@@ -789,7 +1089,9 @@ worker.onmessage = ({ data }) => {
   if (replay || externalActive) return;
   if (firstState) {
     firstState = false;
-    worker.postMessage({
+    worldConfig = data.worldConfig;
+    activeVehicleId = data.activeVehicleId;
+    sendWorker({
       type: "reset",
       config,
       scenario,
@@ -797,7 +1099,35 @@ worker.onmessage = ({ data }) => {
     });
     return;
   }
+  worldState = data.world;
+  worldConfig = data.worldConfig;
+  if (!worldConfig.scene.geography)
+    for (const item of worldConfig.vehicles)
+      vehicleSensorOrigins.set(
+        item.id,
+        Object.fromEntries(
+          ORIGIN_KEYS.map((key) => [key, item.setup.sensors[key]]),
+        ),
+      );
+  if (!rosterDraft || data.message === "reset") {
+    rosterDraft = structuredClone(worldConfig);
+    renderVehicleEditor();
+  }
+  if (data.activeVehicleId !== activeVehicleId) {
+    vehicleHistories.set(activeVehicleId, history);
+    vehicleDrafts.set(activeVehicleId, structuredClone(waypoints));
+    activeVehicleId = data.activeVehicleId;
+    history = vehicleHistories.get(activeVehicleId) || [];
+    waypoints = structuredClone(
+      vehicleDrafts.get(activeVehicleId) || data.snapshot.navigation.waypoints,
+    );
+    renderWaypoints();
+    clearCameraPreview();
+  }
   latest = data.snapshot;
+  config = data.config;
+  scenario = data.scenario;
+  renderVehicleRoster();
   terrainTermination = data.termination;
   if (data.sensors) {
     sensors = data.sensors;
@@ -842,8 +1172,16 @@ worker.onmessage = ({ data }) => {
     scene?.resetView();
   }
   if (data.setup?.scene) renderScene(data.setup.scene, false);
-  history.push(...data.samples);
-  while (history.length > 400) history.shift();
+  if (data.message === "reset") vehicleHistories.clear();
+  for (const frame of data.worldSamples || [])
+    for (const item of frame.vehicles) {
+      const samples = vehicleHistories.get(item.id) || [];
+      samples.push(item.snapshot);
+      if (samples.length > 400) samples.shift();
+      vehicleHistories.set(item.id, samples);
+    }
+  history = vehicleHistories.get(activeVehicleId) || [];
+  drawMission();
   if (data.message === "reset") storageLimited = false;
   if (data.message === "storage-limit") storageLimited = true;
   $("play").disabled = storageLimited;
@@ -854,6 +1192,8 @@ worker.onmessage = ({ data }) => {
   if (data.message === "storage-limit")
     toast("紀錄接近 96 MiB 資料上限，已暫停，請匯出後重設。");
   const state = {
+    world: data.world,
+    activeVehicleId: data.activeVehicleId,
     snapshot: data.snapshot,
     sensors: data.sensors,
     setup: data.setup,
@@ -1214,9 +1554,8 @@ function animate(now) {
       replayIndex + 1 < replay.samples.length &&
       replay.samples[replayIndex + 1].time <= replayClock
     ) {
-      latest = replay.samples[++replayIndex];
-      applyReplayEvents(latest.time);
-      advanceReplaySensors(latest.time);
+      replayIndex++;
+      projectReplayWorld();
       history.push(latest);
       if (history.length > 400) history.shift();
     }
@@ -1228,12 +1567,13 @@ function animate(now) {
   }
   updatePilot(now);
   updateCameraLive(now);
-  if (latest && rendering)
-    scene?.update(
-      latest,
-      running ? elapsed * Number($("speed").value) : 0,
-      externalActive ? externalMissionIndex(hilState?.mission) : undefined,
-    );
+  if (latest && rendering) {
+    const wallDt = running ? elapsed * Number($("speed").value) : 0;
+    if (externalActive)
+      scene?.update(latest, wallDt, externalMissionIndex(hilState?.mission));
+    else if (worldState)
+      scene?.updateWorld(worldState, activeVehicleId, wallDt);
+  }
   requestAnimationFrame(animate);
 }
 requestAnimationFrame(animate);
@@ -1248,7 +1588,7 @@ document.addEventListener("visibilitychange", () => {
       return;
     }
     if (replay) setPlaying(false);
-    else worker.postMessage({ type: "pause" });
+    else sendWorker({ type: "pause" });
     toast("背景分頁已自動暫停。返回後可繼續。");
   }
 });
@@ -1330,6 +1670,16 @@ function drawMission() {
     ctx.fill();
     ctx.fillText(String(i + 1), x + 7, y - 5);
   });
+  for (const vehicle of worldState?.vehicles || []) {
+    const [north, east] = vehicle.snapshot.position;
+    const x = ((east + extent) / (2 * extent)) * w,
+      y = ((extent - north) / (2 * extent)) * h;
+    ctx.fillStyle = vehicle.id === activeVehicleId ? "#63e0ce" : "#f4a34f";
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillText(vehicle.name, x + 6, y + 5);
+  }
   if (!externalActive) scene?.setMission(waypoints);
 }
 function renderWaypoints() {
@@ -1581,17 +1931,18 @@ async function applyMission(start) {
     return;
   }
   if (!waypoints.length) return toast("請先新增航點。");
+  const vehicleId = activeVehicleId;
+  const onGround = latest?.runway.weightOnWheels;
   try {
-    if (
-      start &&
-      latest?.runway.weightOnWheels &&
-      config.airframe === "fixedwing"
-    )
+    if (start && onGround && config.airframe === "fixedwing")
       throw new Error("請先完成跑道起飛，再開始航點任務。");
-    await requestApi({ type: "mission", value: structuredClone(waypoints) });
-    if (start && latest?.runway.weightOnWheels)
-      await requestApi({ type: "takeoff" });
-    await requestApi({ type: "mode", value: "mission" });
+    await requestApi({
+      type: "mission",
+      vehicleId,
+      value: structuredClone(waypoints),
+    });
+    if (start && onGround) await requestApi({ type: "takeoff", vehicleId });
+    await requestApi({ type: "mode", vehicleId, value: "mission" });
     $("flight-mode").value = "mission";
     if (start) {
       focusFlightView();
@@ -1606,24 +1957,29 @@ $("mission-start").onclick = () => applyMission(true);
 let sceneWriteBusy = false;
 async function applyScene(value, restart = false) {
   if (sceneWriteBusy) throw new Error("場景正在套用，請稍候。");
-  const valid = validateScene(value, config.airframe);
+  const vehicleId = activeVehicleId;
+  const valid = validateScene(value);
   sceneWriteBusy = true;
   try {
-    const current = await requestApi({ type: "inspect" });
+    const current = await requestApi({ type: "inspect", vehicleId });
+    const geographyChanged =
+      JSON.stringify(valid.geography) !==
+      JSON.stringify(current.setup.scene.geography);
     const reset =
       restart ||
-      JSON.stringify(valid.geography) !==
-        JSON.stringify(current.setup.scene.geography);
+      geographyChanged ||
+      JSON.stringify(valid.terrain) !==
+        JSON.stringify(current.setup.scene.terrain);
     if (
       reset &&
       dirty() &&
       !(await confirmAction(
-        "套用地理場景會重設實驗並清除尚未匯出的紀錄。確定繼續？",
+        "變更共享地形或地理場景會重設所有載具並清除尚未匯出的紀錄。確定繼續？",
       ))
     )
       throw new Error("已取消套用，原實驗已保留。");
     const origin = valid.geography?.origin;
-    const nextSensors = reset
+    const nextSensors = geographyChanged
       ? {
           ...current.setup.sensors,
           ...(origin
@@ -1633,15 +1989,16 @@ async function applyScene(value, restart = false) {
                 originAltitudeM: origin.altitudeM,
                 originVerticalDatum: origin.verticalDatum,
               }
-            : localSensorOrigin),
+            : vehicleSensorOrigins.get(vehicleId) || localSensorOrigin),
         }
       : current.setup.sensors;
     const state = await requestApi(
       reset
         ? {
             type: "reset",
-            config,
-            scenario,
+            vehicleId,
+            config: current.config,
+            scenario: current.scenario,
             setup: {
               ...current.setup,
               mode: "attitude",
@@ -1686,9 +2043,7 @@ for (const id of [
 $("training-select").onchange = () => {
   renderTutorial();
   if ($("training-select").value !== "tutorial")
-    applySceneSetting((value) => {
-      value.training = $("training-select").value;
-    });
+    sendWorker({ type: "training", value: $("training-select").value });
 };
 let tutorialBusy = false;
 const tutorialFailures = {
@@ -1767,6 +2122,7 @@ $("tutorial-start").onclick = async () => {
     return toast(
       "教學需要至少 10 m 圍欄半徑及 3 m 高度，以保留飛行修正空間，請先調整管理參數。",
     );
+  const vehicleId = activeVehicleId;
   if (
     dirty() &&
     !(await confirmAction("開始教學會清除尚未匯出的實驗紀錄。確定繼續？"))
@@ -1775,16 +2131,18 @@ $("tutorial-start").onclick = async () => {
   tutorialBusy = true;
   renderTutorial();
   try {
-    const current = await requestApi({ type: "inspect" });
+    const current = await requestApi({ type: "inspect", vehicleId });
     const setup = {
       ...current.setup,
       mode: "attitude",
       mission: [],
-      scene: { ...current.setup.scene, training: "tutorial" },
+      scene: current.setup.scene,
+      training: "tutorial",
     };
     await requestApi({
       type: "reset",
-      config: { ...config, startOnGround: true },
+      vehicleId,
+      config: { ...current.config, startOnGround: true },
       scenario: "hover",
       setup,
     });
@@ -1810,24 +2168,31 @@ $("tutorial-action").onclick = async () => {
     return;
   tutorialBusy = true;
   renderTutorial();
+  const vehicleId = activeVehicleId;
   try {
-    if (t.passed === 1) await requestApi({ type: "arm" });
+    if (t.passed === 1) await requestApi({ type: "arm", vehicleId });
     else if (t.passed === 2) {
-      await launchFlight();
+      await launchFlight(vehicleId);
       return;
     } else if (t.passed === 4 || t.passed === 5) {
-      await requestApi({ type: "mode", value: "position" });
+      const home = worldState.vehicles.find(
+        (item) => item.id === vehicleId,
+      ).home;
+      const altitude =
+        createTerrain(worldState.scene.terrain).sample(...home).heightM + 2;
+      await requestApi({ type: "mode", vehicleId, value: "position" });
       await requestApi({
         type: "position",
+        vehicleId,
         value: {
-          north: t.passed === 4 ? 8 : 0,
-          east: 0,
-          altitude: 2,
+          north: home[0] + (t.passed === 4 ? 8 : 0),
+          east: home[1],
+          altitude,
           altitudeReference: "datum",
         },
       });
     } else if (t.passed === 6)
-      await requestApi({ type: "mode", value: "land" });
+      await requestApi({ type: "mode", vehicleId, value: "land" });
     if (!running) await requestApi({ type: "play" });
   } catch (error) {
     toast("無法執行這一步：" + error.message);
@@ -1837,21 +2202,21 @@ $("tutorial-action").onclick = async () => {
   }
 };
 $("flight-mode").onchange = (event) =>
-  worker.postMessage({ type: "mode", value: event.target.value });
+  sendWorker({ type: "mode", value: event.target.value });
 document.querySelectorAll("[data-command]").forEach(
   (button) =>
     (button.onclick = () => {
       if (externalActive) return sendHilCommand(button.dataset.command);
       return button.dataset.command === "takeoff"
         ? launchFlight()
-        : worker.postMessage({ type: button.dataset.command });
+        : sendWorker({ type: button.dataset.command });
     }),
 );
 document.querySelectorAll("[data-mode]").forEach(
   (button) =>
     (button.onclick = () => {
       $("flight-mode").value = button.dataset.mode;
-      worker.postMessage({ type: "mode", value: button.dataset.mode });
+      sendWorker({ type: "mode", value: button.dataset.mode });
     }),
 );
 $("position-apply").onclick = () => {
@@ -1861,12 +2226,12 @@ $("position-apply").onclick = () => {
     altitude: Number($("position-altitude").value),
     altitudeReference: $("position-reference").value,
   };
-  worker.postMessage({ type: "mode", value: "position" });
-  worker.postMessage({ type: "position", value });
+  sendWorker({ type: "mode", value: "position" });
+  sendWorker({ type: "position", value });
   $("flight-mode").value = "position";
 };
 $("fault-apply").onclick = () =>
-  worker.postMessage({
+  sendWorker({
     type: "fault",
     fault: "motor",
     value: {
@@ -1874,19 +2239,19 @@ $("fault-apply").onclick = () =>
       efficiency: Number($("fault-efficiency").value),
     },
   });
-$("abort-takeoff").onclick = () => worker.postMessage({ type: "abortTakeoff" });
+$("abort-takeoff").onclick = () => sendWorker({ type: "abortTakeoff" });
 $("fault-pusher").onclick = () =>
-  worker.postMessage({
+  sendWorker({
     type: "fault",
     fault: "pusher",
     value: { efficiency: Number($("fault-efficiency").value) },
   });
 for (const mode of ["hover", "cruise"])
   $(`transition-${mode}`).onclick = () =>
-    worker.postMessage({ type: "transition", value: mode });
+    sendWorker({ type: "transition", value: mode });
 $("fault-link").onclick = () =>
-  worker.postMessage({ type: "fault", fault: "link", value: { lost: true } });
-$("fault-clear").onclick = () => worker.postMessage({ type: "clearFaults" });
+  sendWorker({ type: "fault", fault: "link", value: { lost: true } });
+$("fault-clear").onclick = () => sendWorker({ type: "clearFaults" });
 $("model-preset").onchange = (event) => {
   const presets = {
     micro: {
@@ -1998,7 +2363,7 @@ let pilotWasActive = false;
 function releasePilot() {
   keys.clear();
   if (pilotWasActive && !replay && !externalActive)
-    worker.postMessage({
+    sendWorker({
       type: "targets",
       value: { roll: 0, pitch: 0, yawRate: 0 },
     });
@@ -2008,7 +2373,7 @@ $("pilot-enable").onchange = (event) => {
   if (event.target.checked && !replay) {
     event.target.blur();
     $("flight-mode").value = "attitude";
-    worker.postMessage({ type: "mode", value: "attitude" });
+    sendWorker({ type: "mode", value: "attitude" });
   } else releasePilot();
 };
 window.addEventListener("keydown", (event) => {
@@ -2076,7 +2441,7 @@ function updatePilot(now) {
       Math.min(100, latest.target.altitude + input.climb * 2 * dt),
     ),
   };
-  worker.postMessage({ type: "targets", value });
+  sendWorker({ type: "targets", value });
   pilotWasActive = true;
   for (const t of targets) {
     if (!Object.hasOwn(value, t.key)) continue;
@@ -2111,12 +2476,12 @@ function showSceneControls(value) {
   $("environment-time").value = value.environment.timeOfDay;
   $("environment-fog").value = value.environment.fog;
   $("environment-rain").value = value.environment.rain;
-  $("training-select").value = value.training;
-  $("training-runway-hint").hidden = value.training !== "runway";
+  $("training-select").value = latest?.training?.course || "free";
+  $("training-runway-hint").hidden = $("training-select").value !== "runway";
 }
 function renderScene(value, viewOnly) {
   if (!value) return;
-  const key = `${config.airframe}:${JSON.stringify(value)}`;
+  const key = `${activeVehicleId}:${config.airframe}:${latest?.training?.course}:${JSON.stringify(value)}`;
   if (key === lastRenderedSceneKey && viewOnly === lastRenderedSceneReadonly)
     return;
   lastRenderedSceneKey = key;
@@ -2129,7 +2494,19 @@ function renderScene(value, viewOnly) {
   scene?.setTerrain(value.terrain);
   scene?.setEnvironment(value.environment);
   scene?.setObstacles(value.obstacles);
-  scene?.setGates(resolveTrainingGates(value, config.airframe));
+  const selected = worldState?.vehicles.find(
+    (item) => item.id === activeVehicleId,
+  );
+  const home = selected?.home || [0, 0];
+  scene?.setGates(
+    resolveTrainingGates(
+      value,
+      config.airframe,
+      latest?.training?.course || "free",
+      home,
+      createTerrain(value.terrain).sample(...home).heightM,
+    ),
+  );
 }
 function showReplayEvent(type, value) {
   if (type === "scene") renderScene(value, !!replay || externalActive);
@@ -2139,21 +2516,30 @@ function showReplayEvent(type, value) {
   } else if (type === "sensorConfig" || type === "sensors")
     sensorConfig = value;
 }
-function restoreReplayPresentation() {
-  replayEventIndex = 0;
-  sensorConfig = replay.setup.sensors;
-  showReplayEvent("scene", replay.setup.scene);
-  showReplayEvent("mission", replay.setup.mission);
-}
-
-function applyReplayEvents(time) {
-  while (
-    replayEventIndex < replay.events.length &&
-    replay.events[replayEventIndex].time <= time + 1e-8
-  ) {
-    const event = replay.events[replayEventIndex++];
-    showReplayEvent(event.type, event.value);
-  }
+function projectReplayWorld(resetHistory = false) {
+  worldState = recordingWorldAt(replay, replayIndex);
+  const selected =
+    worldState.vehicles.find((item) => item.id === activeVehicleId) ||
+    worldState.vehicles[0];
+  activeVehicleId = selected.id;
+  latest = selected.snapshot;
+  sensors = selected.sensors;
+  config = selected.config;
+  scenario = selected.scenario;
+  sensorConfig = selected.setup.sensors;
+  waypoints = structuredClone(selected.setup.mission);
+  if (resetHistory)
+    history = replay.samples
+      .slice(Math.max(0, replayIndex - 399), replayIndex + 1)
+      .map(
+        (frame) =>
+          frame.vehicles.find((item) => item.id === activeVehicleId).snapshot,
+      );
+  renderScene(worldState.scene, true);
+  renderWaypoints();
+  renderVehicleRoster();
+  renderSensors();
+  updateTelemetry();
 }
 
 const sensorLabels = {
@@ -2201,18 +2587,17 @@ for (const [kind, label] of [
   button.id = `sensor-export-${kind}`;
   button.textContent = label;
   button.onclick = () => {
-    if (kind === "json")
-      return worker.postMessage({ type: "sensorExport", kind });
+    if (kind === "json") return sendWorker({ type: "sensorExport", kind });
     try {
-      const output =
-        kind === "csv"
-          ? exportLidarCsv(sensors.lidar)
-          : exportLidarPcd(sensors.lidar);
+      const output = exportVehiclePointCloud(kind, sensors.lidar, {
+        sourceVehicleId: activeVehicleId,
+        worldTick: externalActive ? latest.metrics.steps : worldState.tick,
+      });
       download(
         output,
         kind,
         kind === "csv" ? "text/csv;charset=utf-8" : "text/plain;charset=utf-8",
-        `flight-lab-lidar.${kind}`,
+        `flight-lab-lidar-${activeVehicleId}.${kind}`,
       );
     } catch (error) {
       toast(`無法匯出點雲：${error.message}`);
@@ -2418,31 +2803,10 @@ for (const [id, failed] of [
   ["sensor-fault-off", false],
 ])
   $(id).onclick = () =>
-    worker.postMessage({
+    sendWorker({
       type: "sensorFault",
       value: { sensor: $("sensor-fault-channel").value, failed },
     });
-
-function resetReplaySensors(time) {
-  replaySensorIndex = 0;
-  sensors = undefined;
-  updateLidarExportButtons();
-  $("sensor-readings").replaceChildren();
-  scene?.setSensorScan(null);
-  advanceReplaySensors(time);
-}
-function advanceReplaySensors(time) {
-  const frames = replay?.sensorFrames || [];
-  let changed = false;
-  while (
-    replaySensorIndex < frames.length &&
-    frames[replaySensorIndex].time <= time + 1e-8
-  ) {
-    sensors = frames[replaySensorIndex++];
-    changed = true;
-  }
-  if (changed) renderSensors();
-}
 
 const cameraLegend = $("camera-legend");
 cameraLegend.replaceChildren(document.createTextNode("分類圖例： "));
@@ -2603,11 +2967,13 @@ function showCameraFrame(frame) {
   const pose = frame.pose,
     intrinsics = frame.intrinsics;
   $("camera-metadata").textContent =
-    `影格機型 ${{ quadrotor: "四旋翼", hexarotor: "六旋翼", octorotor: "八旋翼", fixedwing: "固定翼", vtol: "VTOL" }[frame.airframe]} · 模擬時間 ${frame.time.toFixed(3)} s · NED 位置 ${pose.positionNed.map((v) => v.toFixed(2)).join(" / ")} m · 機體四元數 ${pose.bodyQuaternionWxyz.map((v) => v.toFixed(3)).join(" / ")} · 拍攝時雲台偏航 / 俯仰 / 橫滾 ${["yaw", "pitch", "roll"].map((axis) => (frame.gimbal.actual[axis] * DEG).toFixed(1)).join(" / ")}° · 焦距 fx/fy ${intrinsics.fx.toFixed(1)} / ${intrinsics.fy.toFixed(1)} px · 主點 cx/cy ${intrinsics.cx.toFixed(1)} / ${intrinsics.cy.toFixed(1)} px · 水平視角 ${intrinsics.horizontalFovDeg.toFixed(1)}° · 景深範圍 ${frame.nearM.toFixed(2)}–${frame.farM.toFixed(1)} m`;
+    `來源載具 ${frame.sourceVehicleId} · 影格機型 ${{ quadrotor: "四旋翼", hexarotor: "六旋翼", octorotor: "八旋翼", fixedwing: "固定翼", vtol: "VTOL" }[frame.airframe]} · 模擬時間 ${frame.time.toFixed(3)} s · NED 位置 ${pose.positionNed.map((v) => v.toFixed(2)).join(" / ")} m · 機體四元數 ${pose.bodyQuaternionWxyz.map((v) => v.toFixed(3)).join(" / ")} · 拍攝時雲台偏航 / 俯仰 / 橫滾 ${["yaw", "pitch", "roll"].map((axis) => (frame.gimbal.actual[axis] * DEG).toFixed(1)).join(" / ")}° · 焦距 fx/fy ${intrinsics.fx.toFixed(1)} / ${intrinsics.fy.toFixed(1)} px · 主點 cx/cy ${intrinsics.cx.toFixed(1)} / ${intrinsics.cy.toFixed(1)} px · 水平視角 ${intrinsics.horizontalFovDeg.toFixed(1)}° · 景深範圍 ${frame.nearM.toFixed(2)}–${frame.farM.toFixed(1)} m`;
   updateCameraStatus();
 }
-async function captureCameraFrame() {
+async function captureCameraFrame(vehicleId = activeVehicleId) {
   if (replay) throw new Error("重播時無法拍攝新影像。");
+  if (!externalActive && vehicleId !== activeVehicleId)
+    throw new Error("請先選擇要拍攝的飛行器。");
   if (
     !scene ||
     !latest ||
@@ -2619,12 +2985,20 @@ async function captureCameraFrame() {
   const epoch = cameraEpoch;
   updateCameraStatus();
   try {
+    const selected = externalActive
+      ? null
+      : worldState?.vehicles.find((item) => item.id === vehicleId);
+    if (!externalActive && !selected) throw new Error("找不到所選飛行器。");
     const frame = await scene.captureCamera(
-      structuredClone(latest),
+      structuredClone(externalActive ? latest : selected.snapshot),
       {
         ...cameraConfig,
       },
       externalActive ? null : (sceneEditor?.getApplied().geography ?? null),
+      {
+        sourceVehicleId: vehicleId,
+        worldTick: externalActive ? latest.metrics.steps : worldState.tick,
+      },
     );
     if (epoch !== cameraEpoch || replay)
       throw new Error("實驗已切換，本次影像已取消。");
@@ -2641,7 +3015,7 @@ function refreshCameraSelector() {
   cameraDataset.forEach((frame, i) =>
     select.add(
       new Option(
-        `影像 ${i + 1} · ${Number(frame.time).toFixed(2)} s`,
+        `影像 ${i + 1} · ${frame.sourceVehicleId} · ${Number(frame.time).toFixed(2)} s`,
         String(i),
       ),
     ),
@@ -3065,6 +3439,8 @@ $("hil-start").onclick = async () => {
   if (replay) return toast("請先結束重播並返回內建模擬。");
   $("hil-start").disabled = true;
   try {
+    if (worldConfig.vehicles.length !== 1)
+      throw new Error("外部飛控僅支援單架載具，請先將機隊設為一架。");
     await connectHil();
     const existing = await hilClient.request("inspect");
     const reattach =
@@ -3226,7 +3602,6 @@ $("hil-return").disabled = true;
 $("hil-export").disabled = true;
 
 sceneEditor = createSceneEditor({
-  getAirframe: () => config.airframe,
   apply: async (value) => {
     const applied = await applyScene(value);
     sceneEditor.markApplied(applied, value);
@@ -3244,7 +3619,6 @@ demEditor = createDemEditor({
         terrain,
         geography,
         name: geography.source.name.slice(0, 80),
-        training: "free",
       },
       true,
     );

@@ -1,6 +1,5 @@
 # 本機 ArduCopter SITL 操作
 
-
 飛控通訊與被動健康回報的判讀方式見[飛控健康診斷](飛控健康診斷.md)；命令送出後仍需確認飛控實際狀態。
 本功能使用本機 ArduCopter 軟體飛控與四旋翼物理模型閉環，非實體飛控或硬體在迴路。支援官方 [Copter-4.7.2](https://github.com/ArduPilot/ardupilot/releases/tag/Copter-4.7.2)，基底提交 `fb773567896014da007bca58358704d4a0d8516f`，僅限四旋翼地面起始；不支援外部固定翼或 VTOL。
 
@@ -33,7 +32,7 @@ git -C "$ARDU_DIR" apply "$ARDU_PATCH"
 
 [JSON 外部物理介面](https://github.com/ArduPilot/ardupilot/blob/Copter-4.7.2/libraries/SITL/examples/JSON/readme.md)以 UDP 傳送 servo 輸出，物理端回傳絕對模擬時間、機體 IMU、NED 位置與速度、姿態。模擬物理步長 1 ms（1000 Hz），飛控主迴圈 400 Hz；等待或暫停時模擬時間停止。健康檢查保持 `ARMING_SKIPCHK=0`；GPS 使用 serial3／4 內部 pipe 與 protocol 5，`RC_PROTOCOLS=524288` 使用合成 RC。這些是模擬設定，不適用實機。
 
-ArduPilot 使用獨立 `flight-lab-ardupilot` 版本 1 紀錄，與內建 schema 11 及 PX4 紀錄不同。先匯出 SITL JSON；離線重播不重新執行飛控：
+ArduPilot 使用獨立 `flight-lab-ardupilot` 版本 1 紀錄，與內建 schema 12 及 PX4 紀錄不同。先匯出 SITL JSON；離線重播不重新執行飛控：
 
 ```sh
 node companion/replay.js /absolute/path/to/ardupilot-recording.json

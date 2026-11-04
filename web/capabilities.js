@@ -477,7 +477,8 @@ export const CAPABILITIES = [
     id: "global-terrain",
     category: "環境",
     title: "地理地形",
-    description: "可本機匯入有限範圍 GeoTIFF 地形及地理原點；支援部分投影，非廣域 GIS 或實機校準。",
+    description:
+      "可本機匯入有限範圍 GeoTIFF 地形及地理原點；支援部分投影，非廣域 GIS 或實機校準。",
     status: "partial",
     sources: [
       "https://www.ga-asi.com/training-and-support-services/skyguardian-mission-trainer",
@@ -782,7 +783,7 @@ export const CAPABILITIES = [
     id: "record-csv",
     category: "資料與整合",
     title: "CSV 飛行紀錄",
-    description: "可匯出 165 欄飛行及感測資料 CSV。",
+    description: "可匯出 167 欄飛行及感測資料 CSV，標示載具 ID 與世界時間步。",
     status: "partial",
     sources: ["https://wiki.zephyr-sim.com/help/faqs"],
   },
@@ -790,7 +791,8 @@ export const CAPABILITIES = [
     id: "replay-json",
     category: "資料與整合",
     title: "JSON 重播",
-    description: "版本 11 JSON 保存完整場景、地理來源與事件；拒絕版本 1 至 10。",
+    description:
+      "版本 12 JSON 保存同一世界的全機隊、場景、地理來源與帶載具 ID 的事件；拒絕版本 1 至 11。",
     status: "partial",
     sources: [
       "https://www.liftoff-game.com/news/full-release-liftoff-micro-drones",
@@ -863,7 +865,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "程式控制 API",
     description:
-      "同頁 API 1.9 提供場景、雲台與位置高度基準設定；外部 SITL 使用獨立本機服務。",
+      "同頁 API 2.0 明確指定載具 ID，共用世界時鐘、場景與風；外部 SITL 使用獨立本機服務。",
     status: "partial",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/apis.md"],
   },
@@ -871,10 +873,12 @@ export const CAPABILITIES = [
     id: "multi-vehicle",
     category: "資料與整合",
     title: "多載具模擬",
-    description: "同時模擬多個載具。",
-    status: "planned",
+    description:
+      "同頁 1–8 架五種機型共用世界、時鐘與地形；各機獨立控制、感測和課程，球形包絡相撞後停機。外部 SITL 仍限單機。",
+    status: "partial",
     sources: [
-      "https://github.com/PX4/PX4-Autopilot/blob/main/docs/en/simulation/index.md",
+      "https://github.com/PX4/PX4-Autopilot/blob/v1.17.0/docs/en/sim_gazebo_gz/multi_vehicle_simulation.md",
+      "https://github.com/microsoft/AirSim/blob/1ca93f6f77e4e8a39b2b241c1fe2764da4d7dd41/docs/multi_vehicle.md",
     ],
   },
   {

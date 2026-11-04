@@ -164,3 +164,25 @@ test("settings and snapshots are strict, cloned and atomic at every public trust
   assert.throws(() => validateGimbalState({ ...before, extra: 1 }));
   assert.throws(() => validateGimbalSettings({ ...settings(), mode: "world" }));
 });
+
+test("opaque rollback restores NED joint history and the remembered body pose used by later commands", () => {
+  const initial = settings("ned", { yaw: 0.2, pitch: 0.3, roll: 0.1 });
+  const g = createGimbal(initial),
+    reference = createGimbal(initial);
+  const first = quaternion(0.6, 0.1, 0);
+  g.update(0.01, first);
+  reference.update(0.01, first);
+  const before = g.snapshot(),
+    restore = g.checkpoint();
+  g.update(0.02, quaternion(-0.7, -0.2, 0.3));
+  g.set(settings("body", { yaw: -1, pitch: 0.2, roll: 0 }));
+  restore();
+  assert.deepEqual(g.snapshot(), before);
+  assert.throws(restore, /already/);
+  const next = settings("ned", { yaw: 0.5, pitch: 0.4, roll: 0 });
+  assert.deepEqual(g.set(next), reference.set(next));
+  assert.deepEqual(
+    g.update(0.01, quaternion(0.8, 0, 0.1)),
+    reference.update(0.01, quaternion(0.8, 0, 0.1)),
+  );
+});

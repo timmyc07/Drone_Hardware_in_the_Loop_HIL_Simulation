@@ -80,8 +80,8 @@ export function createScene(container) {
   const orange = material(0xffa568, 0.4, 0.35);
   const rotorMaterial = material(0x82969d, 0.6, 0.36);
   const drone = new THREE.Group();
-  drone.userData.cameraExclude = true;
-  drone.scale.setScalar(2.2);
+  drone.userData.cameraClass = 7;
+  drone.userData.cameraVehicleId = "drone-1";
   scene.add(drone);
   const box = (parent, size, position, mat) => {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), mat);
@@ -151,6 +151,7 @@ export function createScene(container) {
     const quad = new THREE.Group();
     // Keep the visual skids on the ground while the outer group remains at the physical CG.
     quad.position.y = 0.181;
+    quad.userData.airframe = kind;
     drone.add(quad);
     box(quad, [0.29, 0.085, 0.34], [0, 0, 0], dark);
     box(quad, [0.23, 0.055, 0.27], [0, 0.065, 0], shell);
@@ -173,6 +174,8 @@ export function createScene(container) {
       cylinder(quad, 0.036, 0.015, [x, 0.063, z], x > 0 ? teal : orange);
       const rotor = new THREE.Group();
       rotor.position.set(x, 0.079, z);
+      rotor.userData.motorIndex = motor.index;
+      rotor.userData.motorSpin = motor.spin;
       box(rotor, [0.028, 0.008, 0.31], [0, 0, 0], rotorMaterial);
       cylinder(rotor, 0.017, 0.014, [0, 0.006, 0], black);
       quad.add(rotor);
@@ -200,6 +203,7 @@ export function createScene(container) {
     const aircraft = new THREE.Group();
     // Gear bottoms sit at the physical ground plane without changing the flight state.
     aircraft.position.y = 0.271;
+    aircraft.userData.airframe = liftRotors ? "vtol" : "fixedwing";
     for (const [x, z] of [
       [-0.13, 0.3],
       [0.13, 0.3],
@@ -218,6 +222,7 @@ export function createScene(container) {
     nose.rotation.x = Math.PI / 2;
     const propeller = new THREE.Group();
     propeller.position.z = -0.73;
+    propeller.userData.pusher = true;
     box(propeller, [0.025, 0.52, 0.015], [0, 0, 0], rotorMaterial);
     aircraft.add(propeller);
     const ailerons = [-0.7, 0.7].map((x) =>
@@ -232,13 +237,17 @@ export function createScene(container) {
       for (const motor of getRotorLayout("vtol", Math.SQRT2 * 0.5)) {
         const x = motor.positionFrd[1],
           z = -motor.positionFrd[0];
-        cylinder(aircraft, 0.06, 0.06, [x, 0.09, z], dark);
+        const mount = cylinder(aircraft, 0.06, 0.06, [x, 0.09, z], dark);
+        mount.userData.liftMount = motor.index;
         const rotor = new THREE.Group();
         rotor.position.set(x, 0.13, z);
+        rotor.userData.motorIndex = motor.index;
+        rotor.userData.motorSpin = motor.spin;
         box(rotor, [0.035, 0.012, 0.48], [0, 0, 0], rotorMaterial);
         aircraft.add(rotor);
         lift.push({ rotor, motor });
-        cylinder(aircraft, 0.025, 0.02, [x, 0.14, z], orange);
+        const cap = cylinder(aircraft, 0.025, 0.02, [x, 0.14, z], orange);
+        cap.userData.liftMount = motor.index;
       }
     }
     aircraft.visible = false;
@@ -527,6 +536,153 @@ export function createScene(container) {
     scanGeometry.setDrawRange(0, points.length);
     scanAttribute.needsUpdate = true;
   }
+  const peers = new Map();
+  const savedTrails = new Map();
+  let activeVehicleId = "drone-1";
+  function scaleAircraft(group, vehicle) {
+    const kind = vehicle.snapshot.airframe;
+    const model = group.children.find(
+      (child) => child.userData.airframe === kind,
+    );
+    if (!model) return;
+    if (MULTIROTOR_AIRFRAMES.includes(kind)) {
+      const baseArm =
+        kind === "quadrotor" ? 0.325 : AIRFRAME_PRESETS[kind].arm * Math.SQRT2;
+      const scale = vehicle.config.arm / baseArm;
+      model.scale.setScalar(scale);
+      model.position.y = 0.181 * scale;
+    } else {
+      model.scale.set(
+        vehicle.config.wingSpan / 2.2,
+        1,
+        vehicle.config.wingChord / 0.25,
+      );
+      if (kind === "vtol") {
+        const layout = getRotorLayout("vtol", vehicle.config.arm);
+        model.traverse((object) => {
+          const index = object.userData.liftMount ?? object.userData.motorIndex;
+          if (!Number.isInteger(index)) return;
+          const position = layout[index].positionFrd;
+          object.position.x = position[1] / model.scale.x;
+          object.position.z = -position[0] / model.scale.z;
+        });
+      }
+    }
+  }
+  function updateWorld(world, selectedId, wallDt) {
+    const selected = world.vehicles.find(
+      (vehicle) => vehicle.id === selectedId,
+    );
+    if (!selected) throw new Error("Unknown active vehicle");
+    if (activeVehicleId !== selectedId) {
+      savedTrails.set(activeVehicleId, {
+        positions: trailPositions.slice(),
+        count,
+        lastTime,
+      });
+    }
+    const ids = new Set(world.vehicles.map((vehicle) => vehicle.id));
+    for (const [id, peer] of peers)
+      if (!ids.has(id) || id === selectedId) {
+        if (ids.has(id))
+          savedTrails.set(id, {
+            positions: peer.trail.geometry.attributes.position.array.slice(),
+            count: peer.count,
+            lastTime: peer.lastTime,
+          });
+        else savedTrails.delete(id);
+        scene.remove(peer.root, peer.trail);
+        peer.trail.geometry.dispose();
+        peer.trail.material.dispose();
+        peers.delete(id);
+      }
+    for (const vehicle of world.vehicles) {
+      if (vehicle.id === selectedId) continue;
+      let peer = peers.get(vehicle.id);
+      if (!peer) {
+        const root = drone.clone(true);
+        delete root.userData.cameraExclude;
+        root.userData.cameraVehicleId = vehicle.id;
+        root.userData.cameraClass = 7;
+        root.visible = true;
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute(
+          "position",
+          new THREE.BufferAttribute(new Float32Array(1200 * 3), 3),
+        );
+        geometry.setDrawRange(0, 0);
+        const line = new THREE.Line(
+          geometry,
+          new THREE.LineBasicMaterial({ color: 0xffbf78 }),
+        );
+        line.frustumCulled = false;
+        scene.add(root, line);
+        const saved = savedTrails.get(vehicle.id);
+        if (saved) {
+          geometry.attributes.position.array.set(saved.positions);
+          geometry.setDrawRange(0, saved.count);
+          geometry.attributes.position.needsUpdate = true;
+        }
+        peer = {
+          root,
+          trail: line,
+          count: saved?.count || 0,
+          lastTime: saved?.lastTime ?? -Infinity,
+        };
+        peers.set(vehicle.id, peer);
+      }
+      const snapshot = vehicle.snapshot,
+        [north, east, down] = snapshot.position,
+        [w, x, y, z] = snapshot.quaternion;
+      peer.root.position.set(east, -down, -north);
+      peer.root.quaternion.set(y, -z, -x, w).normalize();
+      peer.root.children.forEach((child) => {
+        if (child.userData.airframe)
+          child.visible = child.userData.airframe === snapshot.airframe;
+      });
+      scaleAircraft(peer.root, vehicle);
+      peer.root.traverse((object) => {
+        const motor = object.userData.motorIndex;
+        if (Number.isInteger(motor))
+          object.rotation.y +=
+            (object.userData.motorSpin === "ccw" ? 1 : -1) *
+            snapshot.motors[motor] *
+            Math.max(0, wallDt) *
+            90;
+        if (object.userData.pusher)
+          object.rotation.z +=
+            snapshot.propulsion.motor * Math.max(0, wallDt) * 90;
+      });
+      if (snapshot.time < peer.lastTime) peer.count = 0;
+      if (snapshot.time !== peer.lastTime) {
+        const positions = peer.trail.geometry.attributes.position.array;
+        if (peer.count === 1200) {
+          positions.copyWithin(0, 3);
+          peer.count--;
+        }
+        positions.set([east, -down, -north], peer.count++ * 3);
+        peer.trail.geometry.setDrawRange(0, peer.count);
+        peer.trail.geometry.attributes.position.needsUpdate = true;
+        peer.lastTime = snapshot.time;
+      }
+    }
+    if (activeVehicleId !== selectedId) {
+      activeVehicleId = selectedId;
+      drone.userData.cameraVehicleId = selectedId;
+      const saved = savedTrails.get(selectedId);
+      count = saved?.count || 0;
+      lastTime = saved?.lastTime ?? -Infinity;
+      if (saved) trailPositions.set(saved.positions);
+      trailGeometry.setDrawRange(0, count);
+      trailGeometry.attributes.position.needsUpdate = true;
+      const [north, east, down] = selected.snapshot.position;
+      target.set(east, -down, -north);
+      previousTarget.copy(target);
+      resetView();
+    }
+    scaleAircraft(drone, selected);
+    api.update(selected.snapshot, wallDt);
+  }
   let count = 0;
   let lastTime = -Infinity;
   let mode = "orbit";
@@ -564,8 +720,9 @@ export function createScene(container) {
   observer.observe(container);
   resize();
   const cameraRenderer = createCameraRenderer(renderer, scene);
-  return {
+  const api = {
     captureCamera: cameraRenderer.captureCamera,
+    updateWorld,
     update(snapshot, wallDt, missionIndex) {
       const nextAirframe = Object.hasOwn(airframes, snapshot.airframe)
         ? snapshot.airframe
@@ -703,4 +860,5 @@ export function createScene(container) {
       renderer.domElement.remove();
     },
   };
+  return api;
 }

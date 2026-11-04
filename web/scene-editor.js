@@ -6,7 +6,6 @@ import {
   SCENE_MAX_IMPORT_BYTES,
 } from "./scene-data.js";
 import { validateTerrain } from "./terrain.js";
-import { isCourseSupported } from "./training.js";
 
 const warehouse = [
   { north: 12, east: 3, width: 2, depth: 3, height: 3 },
@@ -14,13 +13,7 @@ const warehouse = [
   { north: -8, east: 7, width: 3, depth: 2, height: 2.5 },
   { north: -8, east: -7, width: 2, depth: 3, height: 3 },
 ];
-export function createSceneEditor({
-  getAirframe,
-  apply,
-  confirm,
-  download,
-  notify,
-}) {
+export function createSceneEditor({ apply, confirm, download, notify }) {
   const $ = (id) => document.getElementById(id);
   const clone = (value) => structuredClone(value);
   let applied = clone(DEFAULT_SCENE),
@@ -50,7 +43,6 @@ export function createSceneEditor({
           : "已套用";
     for (const id of [
       "scene-name",
-      "scene-course",
       "scene-tool",
       "scene-add-obstacle",
       "scene-add-gate",
@@ -136,9 +128,6 @@ export function createSceneEditor({
             ? "套用程序地形時將移除地理來源與座標原點，並重設實驗。"
             : "";
     }
-    $("scene-course").value = draft.training;
-    for (const option of $("scene-course").options)
-      option.disabled = !isCourseAvailable(option.value);
     const list = $("scene-object-list");
     list.replaceChildren();
     for (const [kind, label] of [
@@ -234,9 +223,6 @@ export function createSceneEditor({
       selected.index === draft.customGates.length - 1;
     draw();
   }
-  function isCourseAvailable(course) {
-    return isCourseSupported(course, getAirframe());
-  }
   function add(kind, north = 0, east = 0) {
     if (readonly) return;
     const list = items(kind);
@@ -251,10 +237,6 @@ export function createSceneEditor({
   }
   $("scene-name").oninput = (event) => {
     draft.name = event.target.value;
-    updateStatus();
-  };
-  $("scene-course").onchange = (event) => {
-    draft.training = event.target.value;
     updateStatus();
   };
   $("scene-add-obstacle").onclick = () => add("obstacle");
@@ -355,7 +337,7 @@ export function createSceneEditor({
   $("scene-apply").onclick = async () => {
     if (invalidInputs.size) return notify("請先修正數值。");
     try {
-      const valid = validateScene(draft, getAirframe());
+      const valid = validateScene(draft);
       await apply(valid);
       notify("場景已套用。");
     } catch (error) {
@@ -366,7 +348,7 @@ export function createSceneEditor({
     if (!readonly && invalidInputs.size) return notify("請先修正數值。");
     try {
       download(
-        sceneToJson(readonly ? applied : draft, getAirframe()),
+        sceneToJson(readonly ? applied : draft),
         "json",
         "application/json",
         "flight-lab-scene.json",
@@ -383,7 +365,7 @@ export function createSceneEditor({
     if (file.size > SCENE_MAX_IMPORT_BYTES)
       return notify("場景檔案超過 128 KiB。");
     try {
-      const value = parseSceneJson(await file.text(), getAirframe());
+      const value = parseSceneJson(await file.text());
       if (
         dirty() &&
         !(await confirm("匯入將取代尚未套用的場景草稿。確定繼續？"))

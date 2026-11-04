@@ -173,19 +173,6 @@
         <p id="scene-dirty" role="status">已套用</p>
         <label>場景名稱 <input id="scene-name" maxlength="80" /></label>
         <label
-          >訓練課程
-          <select id="scene-course">
-            <option value="free">自由飛行</option>
-            <option value="hover">懸停</option>
-            <option value="gates">四門航線</option>
-            <option value="landing">降落</option>
-            <option value="circuit">巡航航線</option>
-            <option value="runway">跑道起降</option>
-            <option value="tutorial">基礎飛行教學</option>
-            <option value="custom">自訂訓練門</option>
-          </select></label
-        >
-        <label
           >地圖範圍
           <select id="scene-map-range">
             <option value="10">±10 m</option>
@@ -452,7 +439,7 @@
         </section>
         <h3>LiDAR 多層掃描（俯視投影）</h3>
         <p>
-          顏色表示掃描層：低仰角偏藍、高仰角偏橙；射線僅偵測地面與訓練障礙盒，不含建物裝飾、天氣、材質、強度或多重回波。資料不驅動內建飛控，也不輸入
+          顏色表示掃描層：低仰角偏藍、高仰角偏橙；射線偵測地形、訓練障礙盒及其他飛行器的保守包圍範圍，不含建物裝飾、天氣、材質、強度或多重回波。資料不驅動內建飛控，也不輸入
           外部飛控。
         </p>
         <canvas
@@ -602,6 +589,17 @@
       </p>
       <div class="workspace">
         <section class="flight-column" aria-label="飛行視覺化與遙測">
+          <section class="panel" id="fleet-panel">
+            <h2>飛行器 <span>VEHICLES</span></h2>
+            <label>目前控制 <select id="vehicle-select"></select></label>
+            <div id="vehicle-status"></div>
+            <details>
+              <summary>管理機隊（套用會重設整個實驗）</summary>
+              <div id="vehicle-editor"></div>
+              <button id="vehicle-add">新增飛行器</button>
+              <button id="vehicle-apply">套用機隊並重設</button>
+            </details>
+          </section>
           <div class="viewport-panel">
             <div class="viewport-toolbar">
               <div class="panel-label">

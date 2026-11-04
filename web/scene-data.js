@@ -1,9 +1,9 @@
 import { createSimulation } from "./sim.js";
-import { isCourseSupported, validateCustomGates } from "./training.js";
+import { validateCustomGates } from "./training.js";
 import { DEFAULT_TERRAIN, validateTerrain, createTerrain } from "./terrain.js";
 import { validateGeography } from "./geography.js";
 export const SCENE_MAX_IMPORT_BYTES = 512 * 1024;
-export const SCENE_VERSION = 3;
+export const SCENE_VERSION = 4;
 const freeze = (value) => {
   Object.freeze(value);
   for (const child of Object.values(value))
@@ -16,7 +16,6 @@ export const DEFAULT_SCENE = freeze({
   terrain: DEFAULT_TERRAIN,
   geography: null,
   obstacles: [],
-  training: "free",
   customGates: [],
 });
 function exact(value, keys, label) {
@@ -42,18 +41,10 @@ export function validateEnvironment(value) {
       throw new Error(`Invalid environment ${key}`);
   return { ...value };
 }
-export function validateScene(value = DEFAULT_SCENE, airframe = "quadrotor") {
+export function validateScene(value = DEFAULT_SCENE) {
   exact(
     value,
-    [
-      "name",
-      "environment",
-      "terrain",
-      "geography",
-      "obstacles",
-      "training",
-      "customGates",
-    ],
+    ["name", "environment", "terrain", "geography", "obstacles", "customGates"],
     "scene",
   );
   if (
@@ -62,8 +53,6 @@ export function validateScene(value = DEFAULT_SCENE, airframe = "quadrotor") {
     value.name.length > 80
   )
     throw new Error("Scene name must contain 1..80 characters");
-  if (!isCourseSupported(value.training, airframe))
-    throw new Error("Training course is not supported by this airframe");
   if (!Object.hasOwn(value, "terrain"))
     throw new Error("Scene terrain is required");
   const terrain = validateTerrain(value.terrain);
@@ -81,12 +70,8 @@ export function validateScene(value = DEFAULT_SCENE, airframe = "quadrotor") {
     throw new Error(
       "DEM home must be covered and use its origin elevation as zero",
     );
-  if (value.training === "runway" && !surface.runwayCompatible)
-    throw new Error("Runway training requires a covered flat runway");
   const environment = validateEnvironment(value.environment),
     customGates = validateCustomGates(value.customGates);
-  if (value.training === "custom" && !customGates.length)
-    throw new Error("Custom training needs at least one gate");
   const sim = createSimulation();
   sim.setObstacles(value.obstacles);
   return {
@@ -95,11 +80,10 @@ export function validateScene(value = DEFAULT_SCENE, airframe = "quadrotor") {
     terrain,
     geography,
     obstacles: Array.from(value.obstacles, (box) => ({ ...box })),
-    training: value.training,
     customGates,
   };
 }
-export function parseSceneJson(text, airframe = "quadrotor") {
+export function parseSceneJson(text) {
   if (
     typeof text !== "string" ||
     new TextEncoder().encode(text).length > SCENE_MAX_IMPORT_BYTES
@@ -117,16 +101,16 @@ export function parseSceneJson(text, airframe = "quadrotor") {
     artifact.units !== "m"
   )
     throw new Error("Unsupported scene artifact");
-  return validateScene(artifact.scene, airframe);
+  return validateScene(artifact.scene);
 }
-export function sceneToJson(scene, airframe = "quadrotor") {
+export function sceneToJson(scene) {
   const text = JSON.stringify(
     {
       format: "flight-lab-scene",
       version: SCENE_VERSION,
       frame: "NED",
       units: "m",
-      scene: validateScene(scene, airframe),
+      scene: validateScene(scene),
     },
     null,
     2,

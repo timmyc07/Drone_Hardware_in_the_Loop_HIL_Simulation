@@ -2,7 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { PCDLoader } from "three/addons/loaders/PCDLoader.js";
 import { createSensorSuite, lidarPoints } from "../sensors.js";
-import { exportLidarCsv, exportLidarPcd } from "../pointcloud.js";
+import {
+  exportLidarCsv,
+  exportLidarPcd,
+  exportVehiclePointCloud,
+} from "../pointcloud.js";
 
 const input = {
   time: 0.4,
@@ -99,4 +103,25 @@ test("empty and invalid scans cannot invent point returns or inject a PCD header
     assert.throws(() => exportLidarPcd(reading));
     assert.throws(() => exportLidarCsv(reading));
   }
+});
+
+test("vehicle point clouds carry their source and tick without header injection", () => {
+  const reading = scan(),
+    identity = { sourceVehicleId: "drone-2", worldTick: 42 };
+  const csv = exportVehiclePointCloud("csv", reading, identity).split("\n");
+  assert.match(csv[0], /^vehicle_id,world_tick,time_s,/);
+  assert.match(csv[1], /^drone-2,42,/);
+  assert.match(
+    exportVehiclePointCloud("pcd", reading, identity),
+    /^# source_vehicle_id drone-2\n# world_tick 42\n/,
+  );
+  assert.throws(() =>
+    exportVehiclePointCloud("pcd", reading, {
+      ...identity,
+      sourceVehicleId: "bad\nheader",
+    }),
+  );
+  assert.throws(() =>
+    exportVehiclePointCloud("csv", reading, { ...identity, worldTick: -1 }),
+  );
 });

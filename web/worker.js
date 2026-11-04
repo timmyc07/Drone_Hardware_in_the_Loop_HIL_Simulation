@@ -1,73 +1,82 @@
-import { createTerrain } from "./terrain.js";
-import { validateGimbalSettings } from "./gimbal.js";
-import { validateScene } from "./scene-data.js";
-import { createSimulation, validateConfig, bodyToNedAngles } from "./sim.js";
-import {
-  createTrainer,
-  isCourseSupported,
-  resolveTrainingGates,
-} from "./training.js";
-import {
-  createSensorSuite,
-  validateSensorConfig,
-  assertGeographicSensors,
-} from "./sensors.js";
-import { exportLidarCsv, exportLidarPcd } from "./pointcloud.js";
+import { createWorld, defaultWorldConfig } from "./world.js";
+import { exportVehiclePointCloud } from "./pointcloud.js";
 import {
   RECORDING_VERSION,
   MODEL_VERSION,
-  compactSnapshot,
-  validateSetup,
+  compactWorldSnapshot,
+  worldSensorFrame,
 } from "./recording.js";
 
-const DT = 0.005;
-const LIMIT = 1800;
-const DATA_LIMIT = 96 * 1024 * 1024;
-let config = validateConfig();
-let setup = validateSetup(undefined, config);
-let initialSetup = structuredClone(setup);
-let sim = createSimulation(config, {
-  gimbal: setup.gimbal,
-  terrain: setup.scene.terrain,
-});
-let trainer = createTrainer(
-  setup.scene.training,
-  config.airframe,
-  setup.scene.customGates,
-);
-let training = trainer.update(sim.snapshot());
-let sensorSuite = createSensorSuite(
-  setup.sensors,
-  (config.seed ^ 0x9e3779b9) >>> 0,
-);
-sensorSuite.setTerrain(setup.scene.terrain);
-sensorSuite.setObstacles(setup.scene.obstacles);
-let sensorState = sensorSuite.update(sim.snapshot());
-let scenario = "hover";
-let running = false;
-let speed = 1;
-let renderEnabled = true;
-let accumulator = 0;
-let last = performance.now();
-let lastPublish = last;
-let wallSeconds = 0;
-let skippedWallSeconds = 0;
-let lateness = [];
-let lateTicks = 0;
-let samples = [compactSnapshot(snapshot())];
-let sensorFrames = [sensorState];
-let recordBytes =
-  JSON.stringify(samples[0]).length + JSON.stringify(sensorState).length;
-let storageLimited = false;
-let termination = null;
-let pending = [...samples];
-let events = [];
-let createdAt = new Date().toISOString();
-
-function snapshot() {
-  return { ...sim.snapshot(), training: structuredClone(training) };
+const DT = 0.005,
+  LIMIT = 1800,
+  DATA_LIMIT = 96 * 1024 * 1024;
+let world = createWorld(defaultWorldConfig());
+let initialWorld = world.configuration;
+let activeVehicleId = initialWorld.vehicles[0].id;
+let running = false,
+  speed = 1,
+  renderEnabled = true,
+  accumulator = 0;
+let last = performance.now(),
+  lastPublish = last,
+  wallSeconds = 0,
+  skippedWallSeconds = 0;
+let lateness = [],
+  lateTicks = 0,
+  samples = [],
+  sensorFrames = [],
+  pending = [],
+  events = [];
+let recordBytes = 0,
+  storageLimited = false,
+  termination = null,
+  createdAt = new Date().toISOString();
+const VEHICLE_COMMANDS = [
+  "targets",
+  "gust",
+  "mode",
+  "gimbal",
+  "transition",
+  "position",
+  "mission",
+  "fault",
+  "clearFaults",
+  "takeoff",
+  "abortTakeoff",
+  "arm",
+  "disarm",
+  "training",
+  "sensorConfig",
+  "sensorFault",
+];
+const VEHICLE_READS = [
+  "inspect",
+  "inspectSensors",
+  "inspectGimbal",
+  "pointCloudExport",
+  "sensorExport",
+];
+const READS = [
+  "resetWorld",
+  "pause",
+  "export",
+  "apiExport",
+  "inspectWorld",
+  "inspectScene",
+  "selectVehicle",
+  ...VEHICLE_READS,
+];
+function state() {
+  const snapshot = world.snapshot(),
+    configuration = world.configuration;
+  return { ...snapshot, scene: configuration.scene, wind: configuration.wind };
 }
-
+function selected(value, vehicleId = activeVehicleId) {
+  if (typeof vehicleId !== "string") throw new Error("請指定載具 vehicleId");
+  const vehicle = value.vehicles.find((v) => v.id === vehicleId);
+  if (!vehicle) throw new Error("找不到指定載具");
+  return vehicle;
+}
 function runtime() {
   const sorted = [...lateness].sort((a, b) => a - b);
   return {
@@ -81,109 +90,102 @@ function runtime() {
     renderEnabled,
   };
 }
-
-function publish(message) {
-  const state = snapshot();
-  postMessage({
-    type: "state",
+function inspectedState(vehicleId = activeVehicleId) {
+  const value = state(),
+    v = selected(value, vehicleId);
+  return {
+    world: value,
+    worldConfig: world.configuration,
+    activeVehicleId,
+    snapshot: v.snapshot,
+    sensors: v.sensors,
+    config: v.config,
+    scenario: v.scenario,
+    setup: { ...v.setup, scene: value.scene },
     running,
-    snapshot: state,
-    sensors: sensorState,
-    samples: pending.map((sample) => ({
-      ...sample,
-      airframe: config.airframe,
-      attitude: bodyToNedAngles(sample.quaternion),
-    })),
-    sampleCount: samples.length,
-    config,
-    scenario,
-    setup,
+    termination,
     timing: {
       ...runtime(),
-      realTimeFactor: wallSeconds ? state.time / wallSeconds : 0,
+      realTimeFactor: wallSeconds ? value.time / wallSeconds : 0,
     },
+  };
+}
+function publish(message) {
+  const value = inspectedState();
+  postMessage({
+    type: "state",
+    ...value,
+    samples: pending.map((frame) => selected(frame).snapshot),
+    worldSamples: pending,
+    sampleCount: samples.length,
     storageLimited,
-    termination,
     message: storageLimited ? "storage-limit" : message,
   });
   pending = [];
   lastPublish = performance.now();
 }
-
-function reset(nextConfig, nextScenario, nextSetup) {
-  const validated = validateConfig(nextConfig);
-  if (!["hover", "step", "gust"].includes(nextScenario))
-    throw new Error("未知的實驗情境");
-  const validatedSetup = validateSetup(
-    nextSetup === undefined
-      ? {
-          ...setup,
-          mode: "attitude",
-          mission: [],
-          scene: {
-            ...setup.scene,
-            training: isCourseSupported(
-              setup.scene.training,
-              validated.airframe,
-            )
-              ? setup.scene.training
-              : "free",
-          },
-        }
-      : nextSetup,
-    validated,
-  );
-  const next = createSimulation(validated, {
-    gimbal: validatedSetup.gimbal,
-    terrain: validatedSetup.scene.terrain,
-  });
-  next.setScenario(nextScenario);
-  next.setObstacles(validatedSetup.scene.obstacles);
-  if (validatedSetup.mission.length) next.setMission(validatedSetup.mission);
-  next.setMode(validatedSetup.mode);
-  const nextTrainer = createTrainer(
-    validatedSetup.scene.training,
-    validated.airframe,
-    validatedSetup.scene.customGates,
-  );
-  const nextTraining = nextTrainer.update(next.snapshot());
-  const nextSensors = createSensorSuite(
-    validatedSetup.sensors,
-    (validated.seed ^ 0x9e3779b9) >>> 0,
-  );
-  nextSensors.setTerrain(validatedSetup.scene.terrain);
-  nextSensors.setObstacles(validatedSetup.scene.obstacles);
-  const nextSensorState = nextSensors.update(next.snapshot());
-  config = validated;
-  setup = validatedSetup;
-  initialSetup = structuredClone(setup);
-  scenario = nextScenario;
-  sim = next;
-  trainer = nextTrainer;
-  training = nextTraining;
-  sensorSuite = nextSensors;
-  sensorState = nextSensorState;
+function capture() {
+  const value = state(),
+    frame = compactWorldSnapshot(value),
+    sensors = worldSensorFrame(value);
+  const previous = samples.at(-1);
+  if (previous?.tick === frame.tick) {
+    recordBytes -=
+      JSON.stringify(previous).length +
+      JSON.stringify(sensorFrames.at(-1)).length +
+      2;
+    samples[samples.length - 1] = frame;
+    sensorFrames[sensorFrames.length - 1] = sensors;
+  } else {
+    samples.push(frame);
+    sensorFrames.push(sensors);
+  }
+  recordBytes +=
+    JSON.stringify(frame).length + JSON.stringify(sensors).length + 2;
+  const view = {
+    tick: value.tick,
+    time: value.time,
+    vehicles: value.vehicles.map((v) => ({ id: v.id, snapshot: v.snapshot })),
+    collisions: value.collisions,
+  };
+  if (pending.at(-1)?.tick === view.tick) pending[pending.length - 1] = view;
+  else pending.push(view);
+  if (recordBytes >= DATA_LIMIT) {
+    running = false;
+    storageLimited = true;
+  }
+}
+function reset(value, id) {
+  const next = createWorld(value),
+    configuration = next.configuration;
+  const nextId = id ?? configuration.vehicles[0].id;
+  if (!configuration.vehicles.some((v) => v.id === nextId))
+    throw new Error("找不到指定載具");
+  world = next;
+  initialWorld = configuration;
+  activeVehicleId = nextId;
   running = false;
   accumulator = 0;
   wallSeconds = 0;
   skippedWallSeconds = 0;
   lateness = [];
   lateTicks = 0;
-  samples = [compactSnapshot(snapshot())];
-  sensorFrames = [sensorState];
-  recordBytes =
-    JSON.stringify(samples[0]).length + JSON.stringify(sensorState).length;
+  samples = [];
+  sensorFrames = [];
+  pending = [];
+  events = [];
+  recordBytes = 0;
   storageLimited = false;
   termination = null;
-  pending = [...samples];
-  events = [];
   createdAt = new Date().toISOString();
   last = performance.now();
+  capture();
   publish("reset");
 }
-
 function recordEvent(data) {
-  const event = { time: sim.snapshot().time, type: data.type };
+  const value = world.snapshot();
+  const event = { tick: value.tick, time: value.time, type: data.type };
+  if (VEHICLE_COMMANDS.includes(data.type)) event.vehicleId = data.vehicleId;
   if (
     ![
       "gust",
@@ -198,65 +200,30 @@ function recordEvent(data) {
   if (data.type === "fault") event.fault = data.fault;
   events.push(event);
   recordBytes += JSON.stringify(event).length + 1;
-  const current = compactSnapshot(snapshot());
-  if (Math.abs(samples.at(-1).time - current.time) < 1e-9) {
-    recordBytes +=
-      JSON.stringify(current).length +
-      JSON.stringify(sensorState).length -
-      JSON.stringify(samples.at(-1)).length -
-      JSON.stringify(sensorFrames.at(-1)).length;
-    samples[samples.length - 1] = current;
-    sensorFrames[sensorFrames.length - 1] = sensorState;
-    if (pending.length && Math.abs(pending.at(-1).time - current.time) < 1e-9)
-      pending[pending.length - 1] = current;
-    else pending.push(current);
-  }
-  if (recordBytes >= DATA_LIMIT) {
-    running = false;
-    storageLimited = true;
-  }
+  capture();
 }
-
 function recording() {
-  const final = compactSnapshot(snapshot());
-  const exported = [...samples];
-  const exportedSensors = [...sensorFrames];
-  if (final.time > exported.at(-1).time + 1e-8) {
-    exported.push(final);
-    exportedSensors.push(sensorState);
-  } else {
-    exported[exported.length - 1] = final;
-    exportedSensors[exportedSensors.length - 1] = sensorState;
-  }
+  // Every command and export retains one atomic frame for the entire world.
+  capture();
   return {
     format: "flight-lab",
     version: RECORDING_VERSION,
     modelVersion: MODEL_VERSION,
     createdAt,
-    config,
-    scenario,
     dt: DT,
-    setup: initialSetup,
+    world: initialWorld,
     runtime: runtime(),
     events,
-    samples: exported,
-    sensorFrames: exportedSensors,
+    samples,
+    sensorFrames,
     termination,
   };
 }
-
-function inspectedState() {
-  return {
-    snapshot: snapshot(),
-    sensors: sensorState,
-    setup,
-    running,
-    termination,
-    timing: {
-      ...runtime(),
-      realTimeFactor: wallSeconds ? sim.snapshot().time / wallSeconds : 0,
-    },
-  };
+function cloud(kind, v, value) {
+  return exportVehiclePointCloud(kind, v.sensors.lidar, {
+    sourceVehicleId: v.id,
+    worldTick: value.tick,
+  });
 }
 
 onmessage = ({ data }) => {
@@ -268,273 +235,173 @@ onmessage = ({ data }) => {
       (!Number.isSafeInteger(data.requestId) || data.requestId < 1)
     )
       throw new Error("無效的程式介面請求編號");
-    const readCommands = [
-      "reset",
-      "pause",
-      "export",
-      "sensorExport",
-      "pointCloudExport",
-      "inspect",
-      "inspectSensors",
-      "inspectScene",
-      "inspectGimbal",
-      "apiExport",
-    ];
-    if (storageLimited && !readCommands.includes(data.type))
-      throw new Error("紀錄資料已達容量上限，請匯出後重設");
-    if (events.length >= 100000 && !readCommands.includes(data.type))
-      throw new Error("事件紀錄已達上限，請先匯出再重設");
-    switch (data.type) {
-      case "reset":
-        reset(
-          data.config === undefined ? config : data.config,
-          data.scenario === undefined ? scenario : data.scenario,
-          data.setup,
-        );
-        break;
-      case "play":
-        if (sim.snapshot().time >= LIMIT)
-          throw new Error("本次實驗已達 30 分鐘，請先匯出再重設");
-        running = true;
-        last = performance.now();
-        publish();
-        break;
-      case "pause":
-        running = false;
-        publish();
-        break;
-      case "speed":
-        if (![0.5, 1, 2, 4].includes(data.value))
-          throw new Error("無效的模擬速度");
-        speed = data.value;
-        break;
-      case "targets":
-        sim.setTargets(data.value);
-        recordEvent(data);
-        publish();
-        break;
-      case "gust":
-        sim.gust();
-        recordEvent(data);
-        publish();
-        break;
-      case "mode":
-        sim.setMode(data.value);
-        setup.mode = data.value;
-        recordEvent(data);
-        publish();
-        break;
-      case "gimbal": {
-        const settings = validateGimbalSettings(data.value);
-        sim.setGimbal(settings);
-        setup.gimbal = settings;
-        recordEvent({ ...data, value: settings });
-        publish();
-        break;
-      }
-      case "transition":
-        sim.setTransition(data.value);
-        recordEvent(data);
-        publish();
-        break;
-      case "position":
-        sim.setPositionTarget(data.value);
-        recordEvent(data);
-        publish();
-        break;
-      case "mission":
-        sim.setMission(data.value);
-        setup.mission = sim.snapshot().navigation.waypoints;
-        recordEvent({ ...data, value: setup.mission });
-        publish();
-        break;
-      case "fault":
-        sim.injectFault(data.fault, data.value);
-        recordEvent(data);
-        publish();
-        break;
-      case "clearFaults":
-        sim.clearFaults();
-        recordEvent(data);
-        publish();
-        break;
-      case "takeoff":
-        sim.takeoff();
-        setup.mode = sim.snapshot().navigation.mode;
-        recordEvent(data);
-        publish();
-        break;
-      case "abortTakeoff":
-        sim.abortTakeoff();
-        setup.mode = sim.snapshot().navigation.mode;
-        recordEvent(data);
-        publish();
-        break;
-      case "arm":
-        sim.arm();
-        recordEvent(data);
-        publish();
-        break;
-      case "disarm":
-        sim.disarm();
-        recordEvent(data);
-        publish();
-        break;
-      case "scene": {
-        const nextScene = validateScene(data.value, config.airframe);
-        if (
-          JSON.stringify(nextScene.geography) !==
-          JSON.stringify(setup.scene.geography)
-        )
-          throw new Error(
-            "Changing the geographic origin or DEM source requires a new experiment",
-          );
-        const changed =
-          setup.scene.training !== nextScene.training ||
-          JSON.stringify(resolveTrainingGates(setup.scene, config.airframe)) !==
-            JSON.stringify(resolveTrainingGates(nextScene, config.airframe));
-        const nextTrainer = changed
-          ? createTrainer(
-              nextScene.training,
-              config.airframe,
-              nextScene.customGates,
-            )
-          : trainer;
-        const nextTraining = changed
-          ? nextTrainer.update(sim.snapshot())
-          : training;
-        // Complete validation before the only dynamic rejection: terrain intersecting the aircraft.
-        createTerrain(nextScene.terrain);
-        sim.setTerrain(nextScene.terrain);
-        sim.setObstacles(nextScene.obstacles);
-        sensorSuite.setTerrain(nextScene.terrain);
-        sensorSuite.setObstacles(nextScene.obstacles);
-        setup.scene = nextScene;
-        trainer = nextTrainer;
-        training = nextTraining;
-        recordEvent({ ...data, value: nextScene });
-        publish();
-        break;
-      }
-      case "render":
-        if (typeof data.value !== "boolean")
-          throw new Error("渲染設定必須為布林值");
-        renderEnabled = data.value;
-        recordEvent(data);
-        break;
-      case "sensorConfig": {
-        const validated = validateSensorConfig(data.value);
-        assertGeographicSensors(setup.scene, validated);
-        const next = createSensorSuite(
-          validated,
-          (config.seed ^ 0x9e3779b9) >>> 0,
-        );
-        next.setTerrain(setup.scene.terrain);
-        next.setObstacles(setup.scene.obstacles);
-        const state = next.update(sim.snapshot());
-        sensorSuite = next;
-        sensorState = state;
-        setup.sensors = validated;
-        recordEvent({ ...data, value: validated });
-        publish();
-        break;
-      }
-      case "sensorFault":
-        if (
-          !data.value ||
-          typeof data.value !== "object" ||
-          Object.keys(data.value).some((k) => !["sensor", "failed"].includes(k))
-        )
-          throw new Error("無效的感測器故障設定");
-        sensorSuite.setFault(data.value.sensor, data.value.failed);
-        sensorState = sensorSuite.snapshot();
-        recordEvent(data);
-        publish();
-        break;
-      case "sensorExport": {
-        if (!["json", "csv", "pcd"].includes(data.kind))
-          throw new Error("不支援的感測器匯出格式");
-        const text =
-          data.kind === "json"
-            ? JSON.stringify({
-                modelVersion: MODEL_VERSION,
-                config: setup.sensors,
-                geography: setup.scene.geography,
-                sensors: sensorState,
-              })
-            : data.kind === "csv"
-              ? exportLidarCsv(sensorState.lidar)
-              : exportLidarPcd(sensorState.lidar);
-        postMessage({ type: "sensorExport", kind: data.kind, text });
-        break;
-      }
-      case "pointCloudExport": {
-        if (data.requestId === undefined)
-          throw new Error("此操作需要程式介面請求編號");
-        if (!["csv", "pcd"].includes(data.value))
-          throw new Error("不支援的點雲匯出格式");
-        const reading = sensorState.lidar;
-        postMessage({
-          type: "apiReply",
-          requestId: data.requestId,
-          ok: true,
-          value: {
-            format: data.value,
-            frame: "NED",
-            units: "m",
-            time: reading.time,
-            pointCount: reading.rangesM.filter((range) => range !== null)
-              .length,
-            text:
-              data.value === "csv"
-                ? exportLidarCsv(reading)
-                : exportLidarPcd(reading),
-          },
-        });
-        return;
-      }
-      case "inspect":
-      case "inspectSensors":
-      case "inspectScene":
-      case "inspectGimbal":
-      case "apiExport":
-        if (data.requestId === undefined)
-          throw new Error("此操作需要程式介面請求編號");
-        postMessage({
-          type: "apiReply",
-          requestId: data.requestId,
-          ok: true,
-          value:
-            data.type === "inspect"
-              ? inspectedState()
-              : data.type === "inspectScene"
-                ? setup.scene
-                : data.type === "inspectGimbal"
-                  ? sim.snapshot().gimbal
-                  : data.type === "inspectSensors"
-                    ? sensorState
-                    : recording(),
-        });
-        return;
-      case "export": {
-        if (!["csv", "json"].includes(data.kind))
-          throw new Error("不支援的紀錄格式");
-        postMessage({
-          type: "recording",
-          kind: data.kind,
-          recording: recording(),
-        });
-        break;
-      }
-      default:
-        throw new Error("未知的模擬操作");
+    if (
+      (storageLimited || events.length >= 100000) &&
+      !READS.includes(data.type)
+    )
+      throw new Error("紀錄資料已達上限，請匯出後重設");
+    if (
+      VEHICLE_COMMANDS.includes(data.type) ||
+      VEHICLE_READS.includes(data.type)
+    ) {
+      if (typeof data.vehicleId !== "string")
+        throw new Error("請指定載具 vehicleId");
+      selected(state(), data.vehicleId);
     }
+    let replyVehicle;
+    if (VEHICLE_COMMANDS.includes(data.type)) {
+      world.command(data.vehicleId, data.type, data.value, data.fault);
+      replyVehicle = data.vehicleId;
+      // Store canonical setup values rather than partially specified input forms.
+      if (["mission", "gimbal", "sensorConfig"].includes(data.type)) {
+        const v = selected(state(), data.vehicleId);
+        data = {
+          ...data,
+          value: v.setup[data.type === "sensorConfig" ? "sensors" : data.type],
+        };
+      }
+      recordEvent(data);
+      publish();
+    } else
+      switch (data.type) {
+        case "resetWorld":
+          reset(data.value, data.activeVehicleId);
+          break;
+        case "selectVehicle":
+          selected(state(), data.vehicleId);
+          activeVehicleId = data.vehicleId;
+          publish("selection");
+          break;
+        case "play":
+          if (world.snapshot().time >= LIMIT - 1e-8)
+            throw new Error("本次實驗已達30分鐘，請匯出後重設");
+          if (world.snapshot().collisions.length)
+            throw new Error("載具碰撞後請匯出並重設世界");
+          running = true;
+          last = performance.now();
+          publish();
+          break;
+        case "pause":
+          running = false;
+          publish();
+          break;
+        case "speed":
+          if (![0.5, 1, 2, 4].includes(data.value))
+            throw new Error("無效的模擬速度");
+          speed = data.value;
+          break;
+        case "render":
+          if (typeof data.value !== "boolean")
+            throw new Error("渲染設定必須為布林值");
+          renderEnabled = data.value;
+          recordEvent(data);
+          break;
+        case "scene":
+          world.setScene(data.value);
+          recordEvent({ ...data, value: world.configuration.scene });
+          publish();
+          break;
+        case "wind":
+          world.setWind(data.value);
+          recordEvent({ ...data, value: world.configuration.wind });
+          publish();
+          break;
+        case "sensorExport": {
+          if (!["json", "csv", "pcd"].includes(data.kind))
+            throw new Error("不支援的感測器匯出格式");
+          const value = state(),
+            v = selected(value, data.vehicleId);
+          const text =
+            data.kind === "json"
+              ? JSON.stringify({
+                  modelVersion: MODEL_VERSION,
+                  sourceVehicleId: v.id,
+                  worldTick: value.tick,
+                  config: v.setup.sensors,
+                  geography: value.scene.geography,
+                  sensors: v.sensors,
+                })
+              : cloud(data.kind, v, value);
+          postMessage({
+            type: "sensorExport",
+            kind: data.kind,
+            text,
+            vehicleId: v.id,
+          });
+          break;
+        }
+        case "pointCloudExport": {
+          if (data.requestId === undefined)
+            throw new Error("此操作需要程式介面請求編號");
+          if (!["csv", "pcd"].includes(data.value))
+            throw new Error("不支援的點雲匯出格式");
+          const value = state(),
+            v = selected(value, data.vehicleId),
+            reading = v.sensors.lidar;
+          postMessage({
+            type: "apiReply",
+            requestId: data.requestId,
+            ok: true,
+            value: {
+              format: data.value,
+              frame: "NED",
+              units: "m",
+              sourceVehicleId: v.id,
+              worldTick: value.tick,
+              time: reading.time,
+              pointCount: reading.rangesM.filter((x) => x !== null).length,
+              text: cloud(data.value, v, value),
+            },
+          });
+          return;
+        }
+        case "inspect":
+        case "inspectWorld":
+        case "inspectSensors":
+        case "inspectScene":
+        case "inspectGimbal":
+        case "apiExport": {
+          if (data.requestId === undefined)
+            throw new Error("此操作需要程式介面請求編號");
+          const value = state();
+          const result =
+            data.type === "inspect"
+              ? inspectedState(data.vehicleId)
+              : data.type === "inspectWorld"
+                ? inspectedState()
+                : data.type === "inspectScene"
+                  ? value.scene
+                  : data.type === "inspectSensors"
+                    ? selected(value, data.vehicleId).sensors
+                    : data.type === "inspectGimbal"
+                      ? selected(value, data.vehicleId).snapshot.gimbal
+                      : recording();
+          postMessage({
+            type: "apiReply",
+            requestId: data.requestId,
+            ok: true,
+            value: result,
+          });
+          return;
+        }
+        case "export":
+          if (!["csv", "json"].includes(data.kind))
+            throw new Error("不支援的紀錄格式");
+          postMessage({
+            type: "recording",
+            kind: data.kind,
+            recording: recording(),
+          });
+          break;
+        default:
+          throw new Error("未知的模擬操作");
+      }
     if (data.requestId !== undefined)
       postMessage({
         type: "apiReply",
         requestId: data.requestId,
         ok: true,
-        value: inspectedState(),
+        value: inspectedState(replyVehicle ?? activeVehicleId),
       });
   } catch (error) {
     if (data?.requestId !== undefined) {
@@ -551,10 +418,9 @@ onmessage = ({ data }) => {
     publish();
   }
 };
-
 function tick() {
-  const now = performance.now();
-  const elapsed = Math.max(0, (now - last) / 1000);
+  const now = performance.now(),
+    elapsed = Math.max(0, (now - last) / 1000);
   last = now;
   if (running) {
     wallSeconds += elapsed;
@@ -566,31 +432,18 @@ function tick() {
     accumulator += Math.min(elapsed, 0.1) * speed;
     try {
       while (accumulator >= DT && running) {
-        const state = sim.step(DT);
+        const value = world.step(DT);
         termination = null;
-        training = trainer.update(state);
-        sensorState = sensorSuite.update(state);
         accumulator -= DT;
-        if (state.metrics.steps % 10 === 0) {
-          const sample = compactSnapshot({
-            ...state,
-            training: structuredClone(training),
-          });
-          samples.push(sample);
-          sensorFrames.push(sensorState);
-          recordBytes +=
-            JSON.stringify(sample).length +
-            JSON.stringify(sensorState).length +
-            2;
-          pending.push(sample);
-          if (recordBytes >= DATA_LIMIT) {
-            running = false;
-            storageLimited = true;
-            publish("storage-limit");
-          }
-        }
-        if (state.time >= LIMIT - 1e-8) {
+        if (value.tick % 10 === 0 || value.collisions.length) capture();
+        if (value.collisions.length) {
           running = false;
+          termination = { reason: "vehicle-collision", time: value.time };
+          publish("vehicle-collision");
+        } else if (storageLimited) publish("storage-limit");
+        else if (value.time >= LIMIT - 1e-8) {
+          running = false;
+          capture();
           publish("limit");
         }
       }
@@ -598,12 +451,16 @@ function tick() {
     } catch (error) {
       running = false;
       if (error.code === "TERRAIN_COVERAGE")
-        termination = { reason: "terrain-coverage", time: sim.snapshot().time };
+        termination = {
+          reason: "terrain-coverage",
+          time: world.snapshot().time,
+        };
+      capture();
       postMessage({
         type: "error",
         message:
           error.code === "TERRAIN_COVERAGE"
-            ? "已到達高程資料範圍，模擬已暫停。請調整航線或載入較大範圍的地形。"
+            ? "載具已到達高程資料範圍，全體模擬已暫停。請調整航線或載入更大範圍的地形。"
             : `數值模擬已停止：${error.message}`,
       });
       publish(error.code === "TERRAIN_COVERAGE" ? "terrain-limit" : undefined);
@@ -611,5 +468,6 @@ function tick() {
   }
   setTimeout(tick, 10);
 }
+capture();
 publish("reset");
 tick();
