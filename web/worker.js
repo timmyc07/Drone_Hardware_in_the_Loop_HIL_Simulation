@@ -1,10 +1,7 @@
 import { createSimulation, validateConfig } from "./sim.js";
 import { createTrainer } from "./training.js";
-import {
-  createSensorSuite,
-  validateSensorConfig,
-  lidarPoints,
-} from "./sensors.js";
+import { createSensorSuite, validateSensorConfig } from "./sensors.js";
+import { exportLidarCsv, exportLidarPcd } from "./pointcloud.js";
 import {
   RECORDING_VERSION,
   MODEL_VERSION,
@@ -237,6 +234,7 @@ onmessage = ({ data }) => {
       "pause",
       "export",
       "sensorExport",
+      "pointCloudExport",
       "inspect",
       "inspectSensors",
       "apiExport",
@@ -389,7 +387,7 @@ onmessage = ({ data }) => {
         publish();
         break;
       case "sensorExport": {
-        if (!["json", "csv"].includes(data.kind))
+        if (!["json", "csv", "pcd"].includes(data.kind))
           throw new Error("不支援的感測器匯出格式");
         const text =
           data.kind === "json"
@@ -398,12 +396,36 @@ onmessage = ({ data }) => {
                 config: setup.sensors,
                 sensors: sensorState,
               })
-            : [
-                "north_m,east_m,down_m",
-                ...lidarPoints(sensorState.lidar).map((p) => p.join(",")),
-              ].join("\n");
+            : data.kind === "csv"
+              ? exportLidarCsv(sensorState.lidar)
+              : exportLidarPcd(sensorState.lidar);
         postMessage({ type: "sensorExport", kind: data.kind, text });
         break;
+      }
+      case "pointCloudExport": {
+        if (data.requestId === undefined)
+          throw new Error("此操作需要程式介面請求編號");
+        if (!["csv", "pcd"].includes(data.value))
+          throw new Error("不支援的點雲匯出格式");
+        const reading = sensorState.lidar;
+        postMessage({
+          type: "apiReply",
+          requestId: data.requestId,
+          ok: true,
+          value: {
+            format: data.value,
+            frame: "NED",
+            units: "m",
+            time: reading.time,
+            pointCount: reading.rangesM.filter((range) => range !== null)
+              .length,
+            text:
+              data.value === "csv"
+                ? exportLidarCsv(reading)
+                : exportLidarPcd(reading),
+          },
+        });
+        return;
       }
       case "inspect":
       case "inspectSensors":

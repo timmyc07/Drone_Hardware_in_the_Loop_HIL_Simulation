@@ -4,6 +4,7 @@ import { bodyToNedMatrix } from "./sim.js";
 // References: https://microsoft.github.io/AirSim/sensors/ https://microsoft.github.io/AirSim/lidar/
 // Gaussian noise sigmas are per acquisition; no drift, constellation, WMM or calibration model.
 // GPS is a local WGS84 tangent approximation; optical flow uses geometry, not rendered images.
+export const MAX_LIDAR_POINTS = 32 * 180;
 export const DEFAULT_SENSOR_CONFIG = Object.freeze({
   gpsHz: 5,
   barometerHz: 20,
@@ -28,6 +29,9 @@ export const DEFAULT_SENSOR_CONFIG = Object.freeze({
   rangefinderMaxM: 40,
   rangefinderNoiseM: 0.01,
   lidarRays: 72,
+  lidarChannels: 8,
+  lidarVerticalMinDeg: -30,
+  lidarVerticalMaxDeg: 10,
   lidarMinM: 0.2,
   lidarMaxM: 50,
   lidarNoiseM: 0.01,
@@ -60,6 +64,9 @@ const bounds = {
   rangefinderMaxM: [0.02, 200],
   rangefinderNoiseM: [0, 10],
   lidarRays: [12, 180],
+  lidarChannels: [1, 32],
+  lidarVerticalMinDeg: [-90, 90],
+  lidarVerticalMaxDeg: [-90, 90],
   lidarMinM: [0.01, 100],
   lidarMaxM: [0.02, 200],
   lidarNoiseM: [0, 10],
@@ -95,6 +102,16 @@ export function validateSensorConfig(value = {}) {
   const config = { ...DEFAULT_SENSOR_CONFIG, ...value };
   if (!Number.isInteger(config.lidarRays))
     throw new Error("lidarRays must be an integer");
+  if (!Number.isInteger(config.lidarChannels))
+    throw new Error("lidarChannels must be an integer");
+  if (
+    config.lidarChannels === 1
+      ? config.lidarVerticalMinDeg !== config.lidarVerticalMaxDeg
+      : config.lidarVerticalMinDeg >= config.lidarVerticalMaxDeg
+  )
+    throw new Error(
+      "Single-channel lidar requires equal vertical angles; multiple channels require minimum below maximum",
+    );
   for (const name of ["rangefinder", "lidar"])
     if (config[`${name}MinM`] >= config[`${name}MaxM`])
       throw new Error(`${name} minimum must be below maximum`);
@@ -114,12 +131,7 @@ function nearestRay(origin, direction, obstacles, min, max) {
     if (distance >= 0) nearest = distance;
   }
   for (const box of obstacles) {
-    const low = [
-      box.north - box.width / 2,
-      box.east - box.depth / 2,
-      -box.height,
-    ];
-    const high = [box.north + box.width / 2, box.east + box.depth / 2, 0];
+    const { low, high } = box;
     let enter = -Infinity,
       exit = Infinity;
     for (let axis = 0; axis < 3; axis++) {
@@ -143,23 +155,125 @@ function nearestRay(origin, direction, obstacles, min, max) {
 }
 export function lidarPoints(reading) {
   object(reading);
-  if (!reading.valid) return [];
+  number(reading.time, 0, 1e9, "Lidar acquisition time");
+  if (
+    typeof reading.valid !== "boolean" ||
+    !["", "startup", "fault", "dropout", "no-return"].includes(
+      reading.reason,
+    ) ||
+    (reading.valid ? reading.reason !== "" : reading.reason === "")
+  )
+    throw new Error("Invalid lidar validity/reason");
+  const channels = number(reading.channelCount, 1, 32, "Lidar channels");
+  const azimuths = number(reading.azimuthCount, 12, 180, "Lidar azimuth count");
+  if (
+    !Number.isInteger(channels) ||
+    !Number.isInteger(azimuths) ||
+    channels * azimuths > MAX_LIDAR_POINTS
+  )
+    throw new Error("Invalid lidar point budget");
+  if (
+    !Array.isArray(reading.rangesM) ||
+    reading.rangesM.length !== channels * azimuths
+  )
+    throw new Error("Lidar ranges must match channel/azimuth counts");
+  number(reading.minM, 0.01, 100, "Lidar minimum range");
+  number(reading.maxM, 0.02, 200, "Lidar maximum range");
+  if (reading.minM >= reading.maxM)
+    throw new Error("Lidar minimum must be below maximum");
+  const start = number(
+    reading.angleStartRad,
+    -Math.PI,
+    -Math.PI,
+    "Lidar start angle",
+  );
+  const step = number(reading.angleStepRad, 0, 2 * Math.PI, "Lidar angle step");
+  if (Math.abs(step - (2 * Math.PI) / azimuths) > 1e-12)
+    throw new Error("Lidar azimuth spacing is inconsistent");
+  const elevation = number(
+    reading.elevationStartRad,
+    -Math.PI / 2,
+    Math.PI / 2,
+    "Lidar elevation start",
+  );
+  const elevationStep = number(
+    reading.elevationStepRad,
+    0,
+    Math.PI,
+    "Lidar elevation step",
+  );
+  if (
+    (channels === 1 ? elevationStep !== 0 : elevationStep <= 0) ||
+    elevation + (channels - 1) * elevationStep > Math.PI / 2 + 1e-12
+  )
+    throw new Error("Lidar elevation spacing is inconsistent");
+  const ranges = Array.from(reading.rangesM, (value) =>
+    value === null
+      ? null
+      : number(value, reading.minM, reading.maxM, "Lidar range"),
+  );
+  const hasReturn = ranges.some((value) => value !== null);
+  if (reading.valid !== hasReturn)
+    throw new Error("Lidar validity must match its returns");
+  if (reading.positionNed === null && reading.quaternion === null) {
+    if (reading.valid || !["startup", "fault"].includes(reading.reason))
+      throw new Error("Acquired lidar requires its pose");
+    return [];
+  }
+  if (reading.reason === "startup")
+    throw new Error("Startup lidar cannot have an acquisition pose");
   const pose = vector(reading.positionNed, 3),
     quaternion = vector(reading.quaternion, 4);
-  const matrix = bodyToNedMatrix(quaternion);
-  if (!Array.isArray(reading.rangesM)) throw new Error("Invalid lidar ranges");
-  number(reading.angleStartRad, -Math.PI * 2, Math.PI * 2, "Lidar start angle");
-  number(reading.angleStepRad, 0, Math.PI * 2, "Lidar angle step");
-  return reading.rangesM.flatMap((range, index) => {
-    if (range === null) return [];
-    number(range, 0, 200, "Lidar range");
-    const angle = reading.angleStartRad + index * reading.angleStepRad;
-    const direction = rotate(matrix, [Math.cos(angle), Math.sin(angle), 0]);
-    return [pose.map((v, i) => v + direction[i] * range)];
-  });
+  if (Math.abs(Math.hypot(...quaternion) - 1) > 1e-6)
+    throw new Error("Lidar quaternion must be normalized");
+  const matrix = bodyToNedMatrix(quaternion),
+    points = [];
+  for (let index = 0; index < ranges.length; index++) {
+    if (ranges[index] === null) continue;
+    const angle = start + (index % azimuths) * step;
+    const e = elevation + Math.floor(index / azimuths) * elevationStep;
+    const direction = rotate(matrix, [
+      Math.cos(e) * Math.cos(angle),
+      Math.cos(e) * Math.sin(angle),
+      -Math.sin(e),
+    ]);
+    points.push(pose.map((v, i) => v + direction[i] * ranges[index]));
+  }
+  return points;
 }
 export function createSensorSuite(configuration = {}, seed = 42) {
   const config = validateSensorConfig(configuration);
+  const lidarMetadata = {
+    channelCount: config.lidarChannels,
+    azimuthCount: config.lidarRays,
+    angleStartRad: -Math.PI,
+    angleStepRad: (2 * Math.PI) / config.lidarRays,
+    elevationStartRad: radians(config.lidarVerticalMinDeg),
+    elevationStepRad:
+      config.lidarChannels === 1
+        ? 0
+        : radians(config.lidarVerticalMaxDeg - config.lidarVerticalMinDeg) /
+          (config.lidarChannels - 1),
+    minM: config.lidarMinM,
+    maxM: config.lidarMaxM,
+  };
+  // Channel-major acquisition: all rays share the same instantaneous physical pose.
+  const lidarDirections = Array.from(
+    { length: config.lidarChannels * config.lidarRays },
+    (_, index) => {
+      const angle =
+        lidarMetadata.angleStartRad +
+        (index % config.lidarRays) * lidarMetadata.angleStepRad;
+      const elevation =
+        lidarMetadata.elevationStartRad +
+        Math.floor(index / config.lidarRays) * lidarMetadata.elevationStepRad;
+      return [
+        Math.cos(elevation) * Math.cos(angle),
+        Math.cos(elevation) * Math.sin(angle),
+        -Math.sin(elevation),
+      ];
+    },
+  );
   number(seed, 0, 4294967295, "Sensor seed");
   if (!Number.isInteger(seed))
     throw new Error("Sensor seed must be an integer");
@@ -205,13 +319,10 @@ export function createSensorSuite(configuration = {}, seed = 42) {
       return { ...common, flowRadS: null, groundDistanceM: null };
     return {
       ...common,
-      rangesM: Array(config.lidarRays).fill(null),
+      rangesM: Array(config.lidarRays * config.lidarChannels).fill(null),
       positionNed: input ? [...input.position] : null,
       quaternion: input ? [...input.quaternion] : null,
-      angleStartRad: -Math.PI,
-      angleStepRad: (2 * Math.PI) / config.lidarRays,
-      minM: config.lidarMinM,
-      maxM: config.lidarMaxM,
+      ...lidarMetadata,
     };
   }
   function reset() {
@@ -318,11 +429,10 @@ export function createSensorSuite(configuration = {}, seed = 42) {
       };
     }
     if (name === "lidar") {
-      const rangesM = Array.from({ length: config.lidarRays }, (_, i) => {
-        const angle = -Math.PI + (i * 2 * Math.PI) / config.lidarRays;
+      const rangesM = lidarDirections.map((direction) => {
         const distance = nearestRay(
           input.position,
-          rotate(matrix, [Math.cos(angle), Math.sin(angle), 0]),
+          rotate(matrix, direction),
           obstacles,
           config.lidarMinM,
           config.lidarMaxM,
@@ -341,10 +451,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
         rangesM,
         positionNed: [...input.position],
         quaternion: [...input.quaternion],
-        angleStartRad: -Math.PI,
-        angleStepRad: (2 * Math.PI) / config.lidarRays,
-        minM: config.lidarMinM,
-        maxM: config.lidarMaxM,
+        ...lidarMetadata,
       };
     }
     // Geometric center flow, not an image/texture/calibration/weather model. Range is an explicit dependency.
@@ -421,12 +528,24 @@ export function createSensorSuite(configuration = {}, seed = 42) {
       object(box);
       if (Object.keys(box).some((key) => !Object.hasOwn(limits, key)))
         throw new Error("Unknown sensor obstacle field");
-      return Object.fromEntries(
+      const checked = Object.fromEntries(
         Object.entries(limits).map(([key, range]) => [
           key,
           number(box[key], ...range, `Obstacle ${key}`),
         ]),
       );
+      return {
+        low: [
+          checked.north - checked.width / 2,
+          checked.east - checked.depth / 2,
+          -checked.height,
+        ],
+        high: [
+          checked.north + checked.width / 2,
+          checked.east + checked.depth / 2,
+          0,
+        ],
+      };
     });
   }
   function setFault(name, failed) {

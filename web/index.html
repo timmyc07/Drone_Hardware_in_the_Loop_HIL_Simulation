@@ -203,13 +203,17 @@
           </div>
           <p id="camera-legend">分類圖例依場景物件區分；影像為模擬資料。</p>
         </section>
-        <h3>水平 LiDAR 掃描</h3>
+        <h3>LiDAR 多層掃描（俯視投影）</h3>
+        <p>
+          顏色表示掃描層：低仰角偏藍、高仰角偏橙；射線僅偵測地面與訓練障礙盒，不含建物裝飾、天氣、材質、強度或多重回波。資料不驅動內建飛控，也不輸入
+          PX4。
+        </p>
         <canvas
           id="lidar-map"
           width="480"
           height="480"
           role="img"
-          aria-label="水平雷射掃描"
+          aria-label="多層雷射掃描俯視投影"
         ></canvas>
         <div class="feature-actions">
           <label
@@ -752,6 +756,11 @@
         </section>
         <section class="settings-group">
           <h3>虛擬感測器</h3>
+          <div class="feature-actions">
+            <button type="button" id="lidar-preset-planar">平面掃描</button
+            ><button type="button" id="lidar-preset-3d">多層掃描</button>
+          </div>
+          <p>仰角向上為正；單層時上下角度須相同。</p>
           <div id="sensor-settings" class="settings-grid"></div>
         </section>
         <p id="settings-error" class="form-error" role="alert"></p>

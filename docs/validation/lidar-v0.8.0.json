@@ -1,0 +1,52 @@
+{
+  "simulationOnly": true,
+  "node": "v24.20.0",
+  "architecture": "arm64",
+  "configuration": {
+    "lidarChannels": 32,
+    "lidarRays": 180,
+    "lidarHz": 20,
+    "lidarNoiseM": 0.01
+  },
+  "obstacles": 50,
+  "steps": 1200,
+  "simSeconds": 5.999999999999894,
+  "wallMs": 333.585125,
+  "computationRealTimeFactor": 17.986413512892383,
+  "maxAcquisitionUpdateMs": 8.933625000000003,
+  "acquisitions": 121,
+  "finalReturns": 5540,
+  "rawSensorFrameBytes": 103684,
+  "pcdBytes": 443132,
+  "limits": {
+    "maxRays": 5760,
+    "recordingBytes": 100663296
+  },
+  "limitations": [
+    "Single machine compute benchmark, excludes browser rendering, not a hard real-time guarantee",
+    "Instantaneous ground and axis-aligned obstacle geometry, not physical lidar calibration"
+  ],
+  "browser": {
+    "passed": true,
+    "version": 6,
+    "samples": 165,
+    "simSeconds": 8.18499999999988,
+    "acquisitionTime": 8.099999999999866,
+    "channels": 8,
+    "rays": 576,
+    "returns": 380,
+    "pcdIndependentRead": true,
+    "maxWebKitNodeCoordinateDifferenceM": 1.7763568394002505e-15,
+    "replayPcdByteIdentical": true,
+    "maximumSetting": {
+      "channels": 32,
+      "azimuths": 180,
+      "hz": 20,
+      "rays": 5760,
+      "returns": 3960,
+      "scanTime": 17.250000000000853,
+      "observedRealTimeFactor": 1,
+      "pcdIndependentRead": true
+    }
+  }
+}

@@ -6,6 +6,7 @@ import {
   recordingToJson,
 } from "./recording.js";
 import { readPilotInput, takeoffPlayAction } from "./input.js";
+import { exportLidarCsv, exportLidarPcd } from "./pointcloud.js";
 import { createHilClient, isCompanionOrigin } from "./hil-client.js";
 import { createFlightApi } from "./api.js";
 import {
@@ -1514,7 +1515,7 @@ function updatePilot(now) {
 function setReplayControls(disabled) {
   document
     .querySelectorAll(
-      "#mission-workspace button:not(#mission-export), #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #sensor-export-csv, #camera-capture, #camera-add, #camera-live, #flight-mode, [data-command], [data-mode], #position-apply, #fault-apply, #fault-link, #fault-clear, #abort-takeoff, #fault-pusher, #transition-hover, #transition-cruise, #pilot-enable",
+      "#mission-workspace button:not(#mission-export), #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #camera-capture, #camera-add, #camera-live, #flight-mode, [data-command], [data-mode], #position-apply, #fault-apply, #fault-link, #fault-clear, #abort-takeoff, #fault-pusher, #transition-hover, #transition-cruise, #pilot-enable",
     )
     .forEach((element) => {
       element.disabled = disabled;
@@ -1524,6 +1525,7 @@ function setReplayControls(disabled) {
     releasePilot();
   }
   if (typeof waypoints !== "undefined") renderWaypoints();
+  updateLidarExportButtons();
 }
 renderWaypoints();
 renderCatalog();
@@ -1586,7 +1588,10 @@ const sensorLabels = {
   rangefinderMinM: "測距最小值 (m)",
   rangefinderMaxM: "測距最大值 (m)",
   rangefinderNoiseM: "測距雜訊 (m)",
-  lidarRays: "LiDAR 射線數",
+  lidarRays: "LiDAR 每層方位角射線數",
+  lidarChannels: "LiDAR 垂直層數",
+  lidarVerticalMinDeg: "LiDAR 最低仰角 (°)",
+  lidarVerticalMaxDeg: "LiDAR 最高仰角 (°)",
   lidarMinM: "LiDAR 最小值 (m)",
   lidarMaxM: "LiDAR 最大值 (m)",
   lidarNoiseM: "LiDAR 雜訊 (m)",
@@ -1596,14 +1601,40 @@ const sensorActions = $("sensor-fault-on").parentElement;
 for (const [kind, label] of [
   ["json", "匯出目前感測狀態 JSON"],
   ["csv", "匯出目前 LiDAR 點雲 CSV"],
+  ["pcd", "匯出目前 LiDAR 點雲 PCD"],
 ]) {
   const button = document.createElement("button");
   button.type = "button";
+  button.disabled = kind !== "json";
   button.id = `sensor-export-${kind}`;
   button.textContent = label;
-  button.onclick = () => worker.postMessage({ type: "sensorExport", kind });
+  button.onclick = () => {
+    if (kind === "json")
+      return worker.postMessage({ type: "sensorExport", kind });
+    try {
+      const output =
+        kind === "csv"
+          ? exportLidarCsv(sensors.lidar)
+          : exportLidarPcd(sensors.lidar);
+      download(
+        output,
+        kind,
+        kind === "csv" ? "text/csv;charset=utf-8" : "text/plain;charset=utf-8",
+        `flight-lab-lidar.${kind}`,
+      );
+    } catch (error) {
+      toast(`無法匯出點雲：${error.message}`);
+    }
+  };
   sensorActions.append(button);
 }
+function updateLidarExportButtons() {
+  for (const kind of ["csv", "pcd"])
+    $(`sensor-export-${kind}`).disabled = !Array.isArray(
+      sensors?.lidar?.positionNed,
+    );
+}
+
 const sensorSettings = $("sensor-settings");
 for (const key of Object.keys(DEFAULT_SENSOR_CONFIG)) {
   const field = document.createElement("div");
@@ -1616,9 +1647,33 @@ for (const key of Object.keys(DEFAULT_SENSOR_CONFIG)) {
   input.step = "any";
   input.required = true;
   input.id = label.htmlFor;
+  if (key === "lidarChannels") {
+    input.min = "1";
+    input.max = "32";
+    input.step = "1";
+  }
+  if (key === "lidarRays") {
+    input.min = "12";
+    input.max = "180";
+    input.step = "1";
+  }
+  if (["lidarVerticalMinDeg", "lidarVerticalMaxDeg"].includes(key)) {
+    input.min = "-90";
+    input.max = "90";
+  }
   field.append(label, input);
   sensorSettings.append(field);
 }
+$("lidar-preset-planar").onclick = () => {
+  $("sensor-config-lidarChannels").value = 1;
+  $("sensor-config-lidarVerticalMinDeg").value = 0;
+  $("sensor-config-lidarVerticalMaxDeg").value = 0;
+};
+$("lidar-preset-3d").onclick = () => {
+  $("sensor-config-lidarChannels").value = 8;
+  $("sensor-config-lidarVerticalMinDeg").value = -30;
+  $("sensor-config-lidarVerticalMaxDeg").value = 10;
+};
 function populateSensorConfig(values) {
   for (const key of Object.keys(DEFAULT_SENSOR_CONFIG))
     $(`sensor-config-${key}`).value = values[key];
@@ -1664,6 +1719,8 @@ function renderSensors() {
     rangefinder: (s) => [`距離 ${valueText(s.distanceM)} m`],
     lidar: (s) => [
       `有效回波 ${Array.isArray(s.rangesM) ? s.rangesM.filter(Number.isFinite).length : 0} / ${s.rangesM?.length || 0}`,
+      `${s.channelCount} 層 · 每層 ${s.azimuthCount} 射線`,
+      `仰角 ${valueText(s.elevationStartRad * DEG, 1)}° 至 ${valueText((s.elevationStartRad + (s.channelCount - 1) * s.elevationStepRad) * DEG, 1)}°`,
       `量測範圍 ${valueText(s.minM)}–${valueText(s.maxM)} m`,
     ],
     opticalFlow: (s) => [
@@ -1689,6 +1746,7 @@ function renderSensors() {
     }
     readings.append(card);
   }
+  updateLidarExportButtons();
   drawLidar(sensors.lidar);
   scene?.setSensorScan($("sensor-scan-visible").checked ? sensors.lidar : null);
 }
@@ -1711,11 +1769,20 @@ function drawLidar(reading) {
   ctx.lineTo(size, center);
   ctx.stroke();
   if (!reading?.valid || !Array.isArray(reading.rangesM)) return;
-  ctx.fillStyle = "#ffbf78";
   reading.rangesM.forEach((range, i) => {
     if (!Number.isFinite(range)) return;
-    const angle = reading.angleStartRad + i * reading.angleStepRad,
-      radius = (range / reading.maxM) * (center - 15);
+    const layer = Math.floor(i / reading.azimuthCount);
+    const angle =
+      reading.angleStartRad + (i % reading.azimuthCount) * reading.angleStepRad;
+    const elevation =
+      reading.elevationStartRad + layer * reading.elevationStepRad;
+    const radius =
+      ((range * Math.cos(elevation)) / reading.maxM) * (center - 15);
+    const hue =
+      reading.channelCount === 1
+        ? 29
+        : 234 - (198 * layer) / (reading.channelCount - 1);
+    ctx.fillStyle = `hsl(${hue} 90% 60%)`;
     ctx.fillRect(
       center + Math.sin(angle) * radius - 2,
       center - Math.cos(angle) * radius - 2,
@@ -1741,6 +1808,7 @@ for (const [id, failed] of [
 function resetReplaySensors(time) {
   replaySensorIndex = 0;
   sensors = undefined;
+  updateLidarExportButtons();
   $("sensor-readings").replaceChildren();
   scene?.setSensorScan(null);
   advanceReplaySensors(time);
@@ -2024,7 +2092,7 @@ let hilOwned = false;
 let hilExportedPackets = 0;
 function setExternalControls(disabled) {
   const selector =
-    "#reset, #settings-open, #speed, #import-open, #target-controls input, #gust, [data-scenario], #mission-workspace input, #mission-workspace button:not(#mission-export), #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #sensor-export-csv, #flight-mode, [data-mode], #position-apply, #fault-apply, #fault-link, #fault-clear, #fault-pusher, #abort-takeoff, #transition-hover, #transition-cruise, #pilot-enable";
+    "#reset, #settings-open, #speed, #import-open, #target-controls input, #gust, [data-scenario], #mission-workspace input, #mission-workspace button:not(#mission-export), #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #flight-mode, [data-mode], #position-apply, #fault-apply, #fault-link, #fault-clear, #fault-pusher, #abort-takeoff, #transition-hover, #transition-cruise, #pilot-enable";
   document.querySelectorAll(selector).forEach((element) => {
     element.disabled = disabled;
   });
@@ -2036,6 +2104,7 @@ function setExternalControls(disabled) {
     button.disabled = disabled && hilState?.phase !== "running";
   });
   renderWaypoints();
+  updateLidarExportButtons();
   $("play").disabled =
     disabled && !["running", "paused"].includes(hilState?.phase);
 }

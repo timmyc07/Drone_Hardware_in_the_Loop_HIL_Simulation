@@ -47,7 +47,7 @@ function record(airframe = "quadrotor", overrides = {}) {
     sensorFrames: [sensors.update(first), sensors.update(last)],
   };
 }
-test("v5 round trip validates every new field and exports 127 CSV columns with empty invalid sensor cells", () => {
+test("v6 round trip preserves multi-layer scans and exports 127 telemetry CSV columns", () => {
   const input = record(),
     result = validateRecording(JSON.parse(JSON.stringify(input)));
   assert.deepEqual(result, JSON.parse(JSON.stringify(input)));
@@ -269,6 +269,11 @@ test("sensor frames require exact parallel times and reject future/regressing ac
     (r) => (r.sensorFrames[0].rangefinder.distanceM = 0.01),
     (r) => r.sensorFrames[0].lidar.rangesM.pop(),
     (r) => (r.sensorFrames[0].lidar.rangesM[0] = 51),
+    (r) => (r.sensorFrames[0].lidar.channelCount = 7),
+    (r) => (r.sensorFrames[0].lidar.azimuthCount = 36),
+    (r) => (r.sensorFrames[0].lidar.elevationStartRad = 0),
+    (r) => (r.sensorFrames[0].lidar.elevationStepRad = 0),
+    (r) => delete r.sensorFrames[0].lidar.rangesM[0],
     (r) => (r.sensorFrames[0].lidar.quaternion = [0, 0, 0, 0]),
     (r) => {
       r.sensorFrames[0].gps.valid = false;
@@ -290,14 +295,22 @@ test("sensor frames require exact parallel times and reject future/regressing ac
   input.sensorFrames[0].gps.time = 0.1;
   input.sensorFrames[1].gps.time = 0.05;
   assert.throws(() => validateRecording(input), /backwards/);
-  for (const version of [1, 2, 3, 4]) {
+  for (const version of [1, 2, 3, 4, 5]) {
     const legacy = record();
     legacy.version = version;
-    assert.throws(() => validateRecording(legacy), /version 5 required/);
+    assert.throws(() => validateRecording(legacy), /version 6 required/);
   }
 });
 test("no-return and startup measurements retain explicit nulls and produce empty CSV sensor cells", () => {
   const input = record();
+  input.setup.sensors = {
+    ...input.setup.sensors,
+    lidarChannels: 1,
+    lidarVerticalMinDeg: 0,
+    lidarVerticalMaxDeg: 0,
+  };
+  const planar = createSensorSuite(input.setup.sensors);
+  input.sensorFrames = input.samples.map((sample) => planar.update(sample));
   assert.equal(input.sensorFrames[0].lidar.reason, "no-return");
   assert.ok(
     input.sensorFrames[0].lidar.rangesM.every((value) => value === null),
@@ -322,7 +335,12 @@ test("no-return and startup measurements retain explicit nulls and produce empty
 });
 test("sensor config/fault history validates different lidar dimensions and preserves exact raw replay", () => {
   const input = record(),
-    changed = { ...input.setup.sensors, lidarRays: 36, latency: 0.1 };
+    changed = {
+      ...input.setup.sensors,
+      lidarRays: 36,
+      lidarChannels: 4,
+      latency: 0.1,
+    };
   input.events.push(
     { time: input.samples[1].time, type: "sensorConfig", value: changed },
     {
@@ -336,8 +354,8 @@ test("sensor config/fault history validates different lidar dimensions and prese
   suite.setFault("gps", true);
   input.sensorFrames[1] = suite.snapshot();
   const validated = validateRecording(input);
-  assert.equal(validated.sensorFrames[0].lidar.rangesM.length, 72);
-  assert.equal(validated.sensorFrames[1].lidar.rangesM.length, 36);
+  assert.equal(validated.sensorFrames[0].lidar.rangesM.length, 72 * 8);
+  assert.equal(validated.sensorFrames[1].lidar.rangesM.length, 36 * 4);
   assert.equal(validated.sensorFrames[1].gps.reason, "fault");
   assert.deepEqual(
     validateRecording(JSON.parse(recordingToJson(input))).sensorFrames,
@@ -362,7 +380,7 @@ test("sensor config/fault history validates different lidar dimensions and prese
   assert.throws(() => validateRecording(config));
 });
 
-test("all airframes preserve propulsion, surfaces and flight data in schema 5 JSON and CSV", () => {
+test("all airframes preserve propulsion, surfaces and flight data in schema 6 JSON and CSV", () => {
   for (const airframe of ["quadrotor", "fixedwing", "vtol"]) {
     const input = record(airframe);
     if (airframe !== "quadrotor")
@@ -407,7 +425,7 @@ test("all airframes preserve propulsion, surfaces and flight data in schema 5 JS
   }
 });
 
-test("schema 5 rejects mismatched airframes, malformed flight state and invalid transition or propulsion faults", () => {
+test("schema 6 rejects mismatched airframes, malformed flight state and invalid transition or propulsion faults", () => {
   const mutations = [
     (r) => (r.samples[0].airframe = "fixedwing"),
     (r) => delete r.samples[0].flight,

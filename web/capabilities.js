@@ -571,7 +571,8 @@ export const CAPABILITIES = [
     id: "lidar",
     category: "感測與通訊",
     title: "光達",
-    description: "平面射線模擬及 NED 點雲 CSV 匯出；不等同經校準的三維光達。",
+    description:
+      "多層射線及 NED 點雲 CSV／PCD 匯出；僅平地與障礙盒，非完整場景或實機校準。",
     status: "partial",
     sources: [
       "https://github.com/microsoft/AirSim/blob/main/docs/sensors.md",
@@ -767,7 +768,7 @@ export const CAPABILITIES = [
     id: "replay-json",
     category: "資料與整合",
     title: "JSON 重播",
-    description: "版本 5 JSON 保存機型、感測器影格及事件；拒絕版本 1 至 4。",
+    description: "版本 6 JSON 保存機型、感測器影格及事件；拒絕版本 1 至 5。",
     status: "partial",
     sources: [
       "https://www.liftoff-game.com/news/full-release-liftoff-micro-drones",
@@ -837,7 +838,8 @@ export const CAPABILITIES = [
     id: "api",
     category: "資料與整合",
     title: "程式控制 API",
-    description: "同頁 API 1.3 增加相機設定與擷取；無網路或飛控協定橋接。",
+    description:
+      "同頁 API 1.4 提供相機設定、擷取及 NED 光達點雲匯出；網路與 PX4 介接由獨立本機服務提供。",
     status: "partial",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/apis.md"],
   },

@@ -41,6 +41,7 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   worker.postMessage({ type: "inspect", requestId: 1 });
   const inspected = await reply;
   assert.equal(inspected.ok, true);
+  assert.equal(inspected.value.sensors.lidar.rangesM.length, 8 * 72);
   assert.equal(inspected.value.sensors.barometer.valid, true);
   assert.ok(inspected.value.sensors.barometer.pressurePa > 0);
   reply = next((d) => d.type === "apiReply" && d.requestId === 2);
@@ -108,7 +109,7 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   const record = validateRecording(exported.recording);
   assert.equal(record.config.seed, 18);
   assert.equal(record.scenario, "step");
-  assert.equal(record.version, 5);
+  assert.equal(record.version, 6);
   assert.equal(record.sensorFrames.length, record.samples.length);
   assert.equal(record.sensorFrames[0].time, record.samples[0].time);
   assert.equal(record.setup.sensors.gpsNoiseM, 1.5);
@@ -174,6 +175,21 @@ test("worker runs, pauses, records simulation-time samples and exports validated
     worker.postMessage({ ...command, requestId });
     return response;
   };
+  for (const format of ["pcd", "csv"]) {
+    const exported = await call({ type: "pointCloudExport", value: format });
+    assert.equal(exported.ok, true);
+    assert.equal(exported.value.frame, "NED");
+    assert.equal(exported.value.units, "m");
+    assert.ok(exported.value.pointCount > 0);
+    assert.match(
+      exported.value.text,
+      format === "pcd" ? /DATA ascii/ : /time_s,channel/,
+    );
+  }
+  assert.equal(
+    (await call({ type: "pointCloudExport", value: "bad" })).ok,
+    false,
+  );
   const wing = await call({
     type: "reset",
     config: { airframe: "fixedwing", geofenceRadius: 300 },
@@ -259,6 +275,82 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   assert.equal(Object.hasOwn(groundRecord.events.at(-1), "value"), false);
 });
 
+test("3D scans and recorded trajectories are identical with rendering enabled or disabled", async (t) => {
+  async function capture(render) {
+    const url = new URL("../worker.js", import.meta.url).href;
+    const worker = new Worker(
+      `
+      import { parentPort } from 'node:worker_threads';
+      let now = 0, scheduled;
+      globalThis.performance = { now: () => now };
+      globalThis.setTimeout = fn => { scheduled = fn; };
+      globalThis.postMessage = data => parentPort.postMessage(data);
+      globalThis.onmessage = null;
+      parentPort.on('message', data => {
+        if (data.advance) { now += 100; scheduled(); }
+        else globalThis.onmessage({data});
+      });
+      await import(${JSON.stringify(url)});
+    `,
+      { eval: true, type: "module" },
+    );
+    t.after(() => worker.terminate());
+    let serial = 0;
+    function next(predicate) {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          worker.off("message", receive);
+          reject(new Error("Worker timeout"));
+        }, 3000);
+        function receive(data) {
+          if (predicate(data)) {
+            clearTimeout(timer);
+            worker.off("message", receive);
+            resolve(data);
+          }
+        }
+        worker.on("message", receive);
+      });
+    }
+    await next((data) => data.message === "reset");
+    async function call(command) {
+      const requestId = ++serial;
+      const pending = next(
+        (data) => data.type === "apiReply" && data.requestId === requestId,
+      );
+      worker.postMessage({ ...command, requestId });
+      const reply = await pending;
+      assert.equal(reply.ok, true, reply.error);
+      return reply.value;
+    }
+    await call({
+      type: "reset",
+      config: { seed: 17 },
+      setup: {
+        sensors: {
+          lidarChannels: 16,
+          lidarRays: 180,
+          lidarHz: 20,
+          latency: 0.1,
+          dropout: 0.1,
+        },
+        obstacles: [{ north: 5, east: 0, width: 2, depth: 8, height: 5 }],
+      },
+    });
+    await call({ type: "render", value: render });
+    await call({ type: "play" });
+    for (let i = 0; i < 20; i++) worker.postMessage({ advance: true });
+    await call({ type: "pause" });
+    return validateRecording(await call({ type: "apiExport" }));
+  }
+  const rendered = await capture(true),
+    headless = await capture(false);
+  assert.ok(rendered.samples.at(-1).time > 1.9);
+  assert.equal(rendered.sensorFrames.at(-1).lidar.rangesM.length, 16 * 180);
+  assert.deepEqual(headless.sensorFrames, rendered.sensorFrames);
+  assert.deepEqual(headless.samples, rendered.samples);
+});
+
 test(
   "worker pauses at the 30 minute recording limit without losing the final state",
   { timeout: 15000 },
@@ -288,7 +380,15 @@ test(
             // Keep payload small so this exercises the time limit rather than the separate data cap.
             worker.postMessage({
               type: "reset",
-              setup: { sensors: { lidarRays: 12, dropout: 1 } },
+              setup: {
+                sensors: {
+                  lidarRays: 12,
+                  lidarChannels: 1,
+                  lidarVerticalMinDeg: 0,
+                  lidarVerticalMaxDeg: 0,
+                  dropout: 1,
+                },
+              },
             });
             return;
           }
@@ -340,7 +440,7 @@ test(
             worker.postMessage({
               type: "reset",
               setup: {
-                sensors: { lidarRays: 180 },
+                sensors: { lidarRays: 180, lidarChannels: 32, lidarHz: 20 },
                 obstacles: [
                   { north: 4, east: 0, width: 0.1, depth: 12, height: 6 },
                   { north: -4, east: 0, width: 0.1, depth: 12, height: 6 },
@@ -478,7 +578,7 @@ test(
     const exported = await call({ type: "apiExport" });
     assert.equal(exported.ok, true);
     const recording = validateRecording(exported.value);
-    assert.equal(recording.version, 5);
+    assert.equal(recording.version, 6);
     assert.ok(
       recording.events.some(
         (event) =>

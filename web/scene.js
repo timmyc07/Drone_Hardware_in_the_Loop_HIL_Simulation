@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { lidarPoints } from "./sensors.js";
+import { lidarPoints, MAX_LIDAR_POINTS } from "./sensors.js";
 import { RUNWAY } from "./sim.js";
 import { createCameraRenderer } from "./camera-renderer.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -442,22 +442,43 @@ export function createScene(container) {
   setEnvironment({});
   const scanGeometry = new THREE.BufferGeometry();
   const scanAttribute = new THREE.BufferAttribute(
-    new Float32Array(180 * 3),
+    new Float32Array(MAX_LIDAR_POINTS * 3),
     3,
   ).setUsage(THREE.DynamicDrawUsage);
   scanGeometry.setAttribute("position", scanAttribute);
+  const scanColors = new THREE.BufferAttribute(
+    new Float32Array(MAX_LIDAR_POINTS * 3),
+    3,
+  ).setUsage(THREE.DynamicDrawUsage);
+  scanGeometry.setAttribute("color", scanColors);
   scanGeometry.setDrawRange(0, 0);
   const scan = new THREE.Points(
     scanGeometry,
-    new THREE.PointsMaterial({ color: 0xffc17e, size: 0.09 }),
+    new THREE.PointsMaterial({ vertexColors: true, size: 0.09 }),
   );
   scan.frustumCulled = false;
   scene.add(scan);
   function setSensorScan(reading) {
-    const points = reading?.valid ? lidarPoints(reading).slice(0, 180) : [];
-    points.forEach(([north, east, down], index) =>
-      scanAttribute.array.set([east, -down, -north], index * 3),
-    );
+    const points = reading?.valid ? lidarPoints(reading) : [];
+    let pointIndex = 0;
+    const color = new THREE.Color();
+    if (reading?.valid)
+      reading.rangesM.forEach((range, i) => {
+        if (!Number.isFinite(range)) return;
+        const [north, east, down] = points[pointIndex];
+        scanAttribute.array.set([east, -down, -north], pointIndex * 3);
+        const layer = Math.floor(i / reading.azimuthCount);
+        color.setHSL(
+          reading.channelCount === 1
+            ? 0.08
+            : 0.65 - (0.55 * layer) / (reading.channelCount - 1),
+          0.9,
+          0.6,
+        );
+        scanColors.setXYZ(pointIndex, color.r, color.g, color.b);
+        pointIndex++;
+      });
+    scanColors.needsUpdate = true;
     scanGeometry.setDrawRange(0, points.length);
     scanAttribute.needsUpdate = true;
   }

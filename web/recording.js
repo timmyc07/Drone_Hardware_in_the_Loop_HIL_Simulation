@@ -2,7 +2,7 @@ import { createSimulation, validateConfig } from "./sim.js";
 import { DEFAULT_SENSOR_CONFIG, validateSensorConfig } from "./sensors.js";
 import { TRAINING_COURSES, isCourseSupported } from "./training.js";
 
-export const RECORDING_VERSION = 5;
+export const RECORDING_VERSION = 6;
 export const MODEL_VERSION = "0.5.0";
 const AIRFRAMES = ["quadrotor", "fixedwing", "vtol"];
 const MODES = ["attitude", "position", "mission", "rtl", "land", "takeoff"];
@@ -471,7 +471,7 @@ export function validateSensorFrame(value, sensorConfig = {}) {
     else {
       if (
         !Array.isArray(raw.rangesM) ||
-        raw.rangesM.length !== config.lidarRays
+        raw.rangesM.length !== config.lidarRays * config.lidarChannels
       )
         throw new Error("Invalid lidar range count");
       channel.rangesM = Array.from(raw.rangesM, (v) =>
@@ -499,6 +499,34 @@ export function validateSensorFrame(value, sensorConfig = {}) {
         (2 * Math.PI) / config.lidarRays,
         (2 * Math.PI) / config.lidarRays,
       );
+      channel.channelCount = number(
+        raw.channelCount,
+        config.lidarChannels,
+        config.lidarChannels,
+      );
+      channel.azimuthCount = number(
+        raw.azimuthCount,
+        config.lidarRays,
+        config.lidarRays,
+      );
+      const elevationStart = (config.lidarVerticalMinDeg * Math.PI) / 180;
+      const elevationStep =
+        config.lidarChannels === 1
+          ? 0
+          : ((config.lidarVerticalMaxDeg - config.lidarVerticalMinDeg) *
+              Math.PI) /
+            180 /
+            (config.lidarChannels - 1);
+      channel.elevationStartRad = number(
+        raw.elevationStartRad,
+        elevationStart,
+        elevationStart,
+      );
+      channel.elevationStepRad = number(
+        raw.elevationStepRad,
+        elevationStep,
+        elevationStep,
+      );
       channel.minM = number(raw.minM, config.lidarMinM, config.lidarMinM);
       channel.maxM = number(raw.maxM, config.lidarMaxM, config.lidarMaxM);
     }
@@ -514,7 +542,7 @@ export function validateRecording(value) {
   object(value);
   if (value.version !== RECORDING_VERSION)
     throw new Error(
-      "Unsupported recording version: version 5 required; legacy recordings are not supported",
+      "Unsupported recording version: version 6 required; legacy recordings are not supported",
     );
   if (
     value.format !== "flight-lab" ||

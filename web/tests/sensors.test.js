@@ -5,6 +5,7 @@ import {
   validateSensorConfig,
   DEFAULT_SENSOR_CONFIG,
   lidarPoints,
+  MAX_LIDAR_POINTS,
 } from "../sensors.js";
 
 const quiet = {
@@ -16,6 +17,11 @@ const quiet = {
   rangefinderNoiseM: 0,
   lidarNoiseM: 0,
   opticalFlowNoiseRadS: 0,
+};
+const planar = {
+  lidarChannels: 1,
+  lidarVerticalMinDeg: 0,
+  lidarVerticalMaxDeg: 0,
 };
 const state = (time = 0, extra = {}) => ({
   time,
@@ -110,7 +116,7 @@ test("rangefinder tilted body-down ray hits ground at slant distance and nearest
 });
 test("lidar returns sparse body-plane ranges and transforms points to absolute NED", () => {
   for (const count of [36, 72]) {
-    const suite = createSensorSuite({ ...quiet, lidarRays: count });
+    const suite = createSensorSuite({ ...quiet, ...planar, lidarRays: count });
     let reading = suite.update(state()).lidar;
     assert.equal(reading.valid, false);
     assert.equal(reading.reason, "no-return");
@@ -279,7 +285,7 @@ test("maximum rate/latency queues stay bounded while latest readings keep their 
   assert.equal(sample.gps.valid, true);
 });
 test("lidarPoints uses acquisition translation and rotation rather than current vehicle pose", () => {
-  const suite = createSensorSuite({ ...quiet, lidarRays: 36 });
+  const suite = createSensorSuite({ ...quiet, ...planar, lidarRays: 36 });
   suite.setObstacles([{ north: 10, east: 25, width: 2, depth: 2, height: 4 }]);
   const sample = suite.update(
     state(0, { position: [10, 20, -2], quaternion: yaw(Math.PI / 2) }),
@@ -291,4 +297,189 @@ test("lidarPoints uses acquisition translation and rotation rather than current 
         Math.abs(p[0] - 10) < 1e-8 && Math.abs(p[1] - 24) < 1e-8 && p[2] === -2,
     ),
   );
+});
+
+test("three channel geometry is channel-major with analytic ground and wall intersections", () => {
+  const suite = createSensorSuite({
+    ...quiet,
+    lidarChannels: 3,
+    lidarRays: 12,
+    lidarVerticalMinDeg: -30,
+    lidarVerticalMaxDeg: 30,
+  });
+  let reading = suite.update(state()).lidar;
+  assert.equal(reading.channelCount, 3);
+  assert.equal(reading.azimuthCount, 12);
+  assert.equal(reading.rangesM.length, 36);
+  near(reading.elevationStartRad, -Math.PI / 6);
+  near(reading.elevationStepRad, Math.PI / 6);
+  for (let i = 0; i < 12; i++) near(reading.rangesM[i], 4);
+  assert.ok(reading.rangesM.slice(12).every((value) => value === null));
+  for (const point of lidarPoints(reading)) near(point[2], 0);
+  suite.setObstacles([{ north: 5, east: 0, width: 2, depth: 2, height: 6 }]);
+  reading = suite.update(state(0.1)).lidar;
+  near(reading.rangesM[6], 4); // Down ray reaches ground before the wall.
+  near(reading.rangesM[12 + 6], 4);
+  near(reading.rangesM[24 + 6], 4 / Math.cos(Math.PI / 6));
+  const points = lidarPoints(reading);
+  assert.ok(
+    points.some(
+      (point) =>
+        Math.abs(point[0] - 4) < 1e-8 &&
+        Math.abs(point[2] + 2 + 4 * Math.tan(Math.PI / 6)) < 1e-8,
+    ),
+  );
+  suite.setObstacles([
+    { north: 0.1, east: 0, width: 0.1, depth: 1, height: 6 },
+  ]);
+  reading = suite.update(state(0.2)).lidar;
+  for (let channel = 0; channel < 3; channel++)
+    assert.equal(
+      reading.rangesM[channel * 12 + 6],
+      null,
+      "blind-zone box occludes all layers behind it",
+    );
+});
+
+test("multi-layer scan uses acquisition rotation and delayed pose without relabeling time", () => {
+  const suite = createSensorSuite({
+    ...quiet,
+    latency: 0.2,
+    lidarChannels: 3,
+    lidarRays: 12,
+    lidarVerticalMinDeg: -30,
+    lidarVerticalMaxDeg: 30,
+  });
+  suite.update(
+    state(0, { position: [10, 20, -2], quaternion: roll(Math.PI / 2) }),
+  );
+  const reading = suite.update(state(0.2, { position: [100, 200, -20] })).lidar;
+  assert.equal(reading.time, 0);
+  assert.deepEqual(reading.positionNed, [10, 20, -2]);
+  near(reading.rangesM[9], 2 / Math.cos(Math.PI / 6));
+  near(reading.rangesM[12 + 9], 2);
+  near(reading.rangesM[24 + 9], 2 / Math.cos(Math.PI / 6));
+  const points = lidarPoints(reading);
+  assert.ok(points.length > 0);
+  for (const point of points) {
+    near(point[2], 0);
+    assert.ok(Math.abs(point[0] - 10) < 50 && Math.abs(point[1] - 20) < 50);
+  }
+});
+
+test("maximum 3D budget, vertical endpoint channels and single-channel scans remain bounded", () => {
+  assert.equal(MAX_LIDAR_POINTS, 5760);
+  const suite = createSensorSuite({
+    ...quiet,
+    lidarChannels: 32,
+    lidarRays: 180,
+    lidarVerticalMinDeg: -90,
+    lidarVerticalMaxDeg: 90,
+  });
+  const reading = suite.update(state()).lidar;
+  assert.equal(reading.rangesM.length, MAX_LIDAR_POINTS);
+  for (const range of reading.rangesM.slice(0, 180)) near(range, 2);
+  assert.ok(reading.rangesM.slice(-180).every((value) => value === null));
+  assert.ok(lidarPoints(reading).length <= MAX_LIDAR_POINTS);
+  const downward = createSensorSuite({
+    ...quiet,
+    lidarChannels: 1,
+    lidarVerticalMinDeg: -90,
+    lidarVerticalMaxDeg: -90,
+  }).update(state()).lidar;
+  assert.equal(downward.elevationStepRad, 0);
+  for (const range of downward.rangesM) near(range, 2);
+  for (const point of lidarPoints(downward)) {
+    near(point[0], 0);
+    near(point[1], 0);
+    near(point[2], 0);
+  }
+});
+
+test("3D lidar fault/dropout metadata stays complete and seeded delayed acquisitions repeat", () => {
+  const config = {
+    lidarChannels: 4,
+    lidarRays: 24,
+    lidarVerticalMinDeg: -45,
+    lidarVerticalMaxDeg: 15,
+    latency: 0.2,
+    dropout: 0.3,
+  };
+  const a = createSensorSuite(config, 333),
+    b = createSensorSuite(config, 333);
+  for (let i = 0; i < 100; i++)
+    assert.deepEqual(a.update(state(i * 0.005)), b.update(state(i * 0.005)));
+  const before = a.snapshot();
+  a.reset();
+  for (let i = 0; i < 100; i++) a.update(state(i * 0.005));
+  assert.deepEqual(a.snapshot(), before);
+  a.setFault("lidar", true);
+  let reading = a.snapshot().lidar;
+  assert.equal(reading.channelCount, 4);
+  assert.equal(reading.azimuthCount, 24);
+  assert.equal(reading.rangesM.length, 96);
+  assert.equal(reading.reason, "fault");
+  assert.equal(reading.positionNed, null);
+  assert.deepEqual(lidarPoints(reading), []);
+  a.setFault("lidar", false);
+  reading = a.update(state(0.5)).lidar;
+  assert.equal(reading.reason, "startup");
+  assert.equal(reading.rangesM.length, 96);
+  assert.deepEqual(lidarPoints(reading), []);
+  const dropout = createSensorSuite({
+    ...quiet,
+    ...config,
+    dropout: 1,
+    latency: 0,
+  }).update(state()).lidar;
+  assert.equal(dropout.reason, "dropout");
+  assert.equal(dropout.rangesM.length, 96);
+  assert.deepEqual(lidarPoints(dropout), []);
+});
+
+test("3D configuration and point reconstruction reject sparse, nonunit and inconsistent metadata", () => {
+  for (const config of [
+    { lidarChannels: 0 },
+    { lidarChannels: 33 },
+    { lidarChannels: 1.1 },
+    { lidarChannels: 1 },
+    { lidarVerticalMinDeg: 10, lidarVerticalMaxDeg: -10 },
+    { lidarVerticalMinDeg: -91 },
+    { lidarChannels: 2, lidarVerticalMinDeg: 0, lidarVerticalMaxDeg: 0 },
+  ])
+    assert.throws(() => validateSensorConfig(config));
+  const reading = createSensorSuite(quiet).update(state()).lidar;
+  const sparse = Array(reading.rangesM.length);
+  for (const change of [
+    { rangesM: sparse },
+    { rangesM: [0] },
+    { channelCount: 33 },
+    { azimuthCount: 12.5 },
+    { quaternion: [2, 0, 0, 0] },
+    { quaternion: Array(4) },
+    { angleStartRad: 0 },
+    { angleStepRad: 0.1 },
+    { elevationStepRad: 0 },
+    { elevationStartRad: Math.PI / 2 },
+    { time: NaN },
+    { valid: 1 },
+    { reason: "fault" },
+    { rangesM: reading.rangesM.map((value) => (value === null ? null : 201)) },
+  ])
+    assert.throws(() => lidarPoints({ ...reading, ...change }));
+  const startup = createSensorSuite().snapshot().lidar;
+  assert.throws(() => lidarPoints({ ...startup, azimuthCount: 180 }));
+  assert.throws(() =>
+    lidarPoints({ ...startup, rangesM: Array(startup.rangesM.length) }),
+  );
+  assert.throws(() => lidarPoints({ ...startup, reason: "no-return" }));
+  assert.throws(() =>
+    lidarPoints({
+      ...startup,
+      positionNed: [0, 0, -2],
+      quaternion: [1, 0, 0, 0],
+    }),
+  );
+  assert.throws(() => lidarPoints({ ...startup, reason: "dropout" }));
+  assert.deepEqual(lidarPoints(startup), []);
 });
