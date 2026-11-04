@@ -2,6 +2,13 @@ import { createWorld, defaultWorldConfig } from "./world.js";
 import { exportRadarData } from "./radar.js";
 import { exportVehiclePointCloud } from "./pointcloud.js";
 import {
+  cameraMetadata,
+  validateCameraConfig,
+  validateCameraFrame,
+  validateCameraMetadata,
+  hashCameraFrame,
+} from "./camera.js";
+import {
   RECORDING_VERSION,
   MODEL_VERSION,
   compactWorldSnapshot,
@@ -19,6 +26,13 @@ let running = false,
   speed = 1,
   renderEnabled = true,
   accumulator = 0;
+let inspectionCapture = null;
+function releaseInspection(capture = inspectionCapture) {
+  if (!capture || capture !== inspectionCapture) return;
+  inspectionCapture = null;
+  running = capture.resume && !storageLimited;
+  last = performance.now();
+}
 let last = performance.now(),
   lastPublish = last,
   wallSeconds = 0,
@@ -58,6 +72,10 @@ const VEHICLE_READS = [
   "pointCloudExport",
   "sensorExport",
   "radarExport",
+  "inspectionBegin",
+  "inspectionSubmit",
+  "inspectionCancel",
+  "inspectionReport",
 ];
 const READS = [
   "resetWorld",
@@ -67,7 +85,9 @@ const READS = [
   "inspectWorld",
   "inspectScene",
   "selectVehicle",
-  ...VEHICLE_READS,
+  ...VEHICLE_READS.filter(
+    (type) => !["inspectionBegin", "inspectionSubmit"].includes(type),
+  ),
 ];
 function state() {
   const snapshot = world.snapshot(),
@@ -168,6 +188,7 @@ function reset(value, id) {
   const nextId = id ?? configuration.vehicles[0].id;
   if (!configuration.vehicles.some((v) => v.id === nextId))
     throw new Error("找不到指定載具");
+  inspectionCapture = null;
   world = next;
   initialWorld = configuration;
   activeVehicleId = nextId;
@@ -205,6 +226,10 @@ function recordEvent(data) {
   )
     event.value = structuredClone(data.value);
   if (data.type === "fault") event.fault = data.fault;
+  if (data.type === "inspection") {
+    event.vehicleId = data.vehicleId;
+    event.receipt = world.inspectionReport(data.vehicleId).receipts.at(-1);
+  }
   events.push(event);
   recordBytes += JSON.stringify(event).length + 1;
   capture();
@@ -233,7 +258,7 @@ function cloud(kind, v, value) {
   });
 }
 
-onmessage = ({ data }) => {
+onmessage = async ({ data }) => {
   try {
     if (!data || typeof data.type !== "string")
       throw new Error("無效的模擬操作");
@@ -247,6 +272,11 @@ onmessage = ({ data }) => {
       !READS.includes(data.type)
     )
       throw new Error("紀錄資料已達上限，請匯出後重設");
+    if (
+      inspectionCapture &&
+      ![...READS, "inspectionSubmit", "inspectionCancel"].includes(data.type)
+    )
+      throw new Error("巡檢拍攝中，請等待影像完成或取消拍攝");
     if (
       VEHICLE_COMMANDS.includes(data.type) ||
       VEHICLE_READS.includes(data.type)
@@ -289,9 +319,136 @@ onmessage = ({ data }) => {
           publish();
           break;
         case "pause":
+          if (inspectionCapture) inspectionCapture.resume = false;
           running = false;
           publish();
           break;
+        case "inspectionBegin": {
+          if (data.requestId === undefined) throw new Error("拍攝需要請求編號");
+          if (inspectionCapture) throw new Error("已有巡檢拍攝正在進行");
+          const value = state(),
+            v = selected(value, data.vehicleId);
+          if (
+            !data.value ||
+            Object.keys(data.value).sort().join(",") !== "config,targetId"
+          )
+            throw new Error("無效的巡檢拍攝設定");
+          if (
+            !value.scene.inspectionTargets.some(
+              (target) => target.id === data.value.targetId,
+            )
+          )
+            throw new Error("找不到巡檢目標");
+          if (world.inspectionReport(v.id).receipts.length >= 100)
+            throw new Error("巡檢拍攝已達100次，請匯出後重設");
+          const config = validateCameraConfig(data.value.config),
+            captureId = crypto.randomUUID();
+          const metadata = cameraMetadata(
+            v.snapshot,
+            config,
+            value.scene.geography,
+            {
+              sourceVehicleId: v.id,
+              worldTick: value.tick,
+              captureId,
+            },
+          );
+          inspectionCapture = {
+            captureId,
+            vehicleId: v.id,
+            targetId: data.value.targetId,
+            metadata,
+            config,
+            resume: running,
+            startedAt: performance.now(),
+            submitting: false,
+          };
+          running = false;
+          publish();
+          postMessage({
+            type: "apiReply",
+            requestId: data.requestId,
+            ok: true,
+            value: { captureId, metadata, world: value },
+          });
+          return;
+        }
+        case "inspectionCancel": {
+          const lease = inspectionCapture;
+          if (
+            !lease ||
+            lease.vehicleId !== data.vehicleId ||
+            data.value?.captureId !== lease.captureId
+          )
+            throw new Error("巡檢拍攝已失效");
+          releaseInspection(lease);
+          publish();
+          break;
+        }
+        case "inspectionSubmit": {
+          const lease = inspectionCapture;
+          if (
+            !lease ||
+            lease.vehicleId !== data.vehicleId ||
+            data.value?.captureId !== lease.captureId ||
+            lease.submitting
+          )
+            throw new Error("巡檢拍攝已失效或重複提交");
+          lease.submitting = true;
+          try {
+            if (
+              !data.value ||
+              Object.keys(data.value).sort().join(",") !== "captureId,frame"
+            )
+              throw new Error("無效的巡檢影像欄位");
+            const frame = validateCameraFrame(data.value.frame);
+            if (
+              JSON.stringify(validateCameraMetadata(frame)) !==
+              JSON.stringify(lease.metadata)
+            )
+              throw new Error("影像不屬於目前巡檢拍攝時刻");
+            const sha256 = await hashCameraFrame(frame);
+            if (inspectionCapture !== lease) throw new Error("巡檢拍攝已失效");
+            const value = {
+              captureId: lease.captureId,
+              targetId: lease.targetId,
+              config: lease.config,
+              sha256,
+            };
+            world.command(lease.vehicleId, "inspection", value);
+            recordEvent({
+              type: "inspection",
+              vehicleId: lease.vehicleId,
+              value,
+            });
+            const report = world.inspectionReport(lease.vehicleId);
+            releaseInspection(lease);
+            publish();
+            postMessage({
+              type: "apiReply",
+              requestId: data.requestId,
+              ok: true,
+              value: report,
+            });
+            return;
+          } finally {
+            if (inspectionCapture === lease) {
+              releaseInspection(lease);
+              publish();
+            }
+          }
+        }
+        case "inspectionReport": {
+          if (data.requestId === undefined)
+            throw new Error("此操作需要請求編號");
+          postMessage({
+            type: "apiReply",
+            requestId: data.requestId,
+            ok: true,
+            value: world.inspectionReport(data.vehicleId),
+          });
+          return;
+        }
         case "speed":
           if (![0.5, 1, 2, 4].includes(data.value))
             throw new Error("無效的模擬速度");
@@ -457,6 +614,10 @@ function tick() {
   const now = performance.now(),
     elapsed = Math.max(0, (now - last) / 1000);
   last = now;
+  if (inspectionCapture && now - inspectionCapture.startedAt >= 15000) {
+    releaseInspection();
+    publish("inspection-timeout");
+  }
   if (running) {
     wallSeconds += elapsed;
     skippedWallSeconds += Math.max(0, elapsed - 0.1);

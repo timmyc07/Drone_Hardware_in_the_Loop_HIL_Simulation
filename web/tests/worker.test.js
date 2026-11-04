@@ -3,19 +3,32 @@ import assert from "node:assert/strict";
 import { Worker } from "node:worker_threads";
 import { createWorld, defaultWorldConfig } from "../world.js";
 import { validateRecording } from "../recording.js";
+import { DEFAULT_CAMERA_CONFIG, hashCameraFrame } from "../camera.js";
 
-async function harness(t) {
+async function harness(t, deferHash = false) {
   const url = new URL("../worker.js", import.meta.url).href;
   const worker = new Worker(
     `
     import {parentPort} from 'node:worker_threads';
-    let now=0, tick;
+    let now=0, tick, releaseDigest;
+    if (${deferHash}) {
+      const nativeCrypto = globalThis.crypto;
+      Object.defineProperty(globalThis, 'crypto', {value: {
+        randomUUID: () => nativeCrypto.randomUUID(),
+        subtle: {digest: async (...args) => {
+          parentPort.postMessage({type:'hashStarted'});
+          await new Promise(resolve => {releaseDigest = resolve;});
+          return nativeCrypto.subtle.digest(...args);
+        }},
+      }});
+    }
     globalThis.performance={now:()=>now};
     globalThis.setTimeout=fn=>{tick=fn;};
     globalThis.postMessage=data=>parentPort.postMessage(data);
     globalThis.onmessage=null;
     parentPort.on('message',data=>{
-      if(data.advance!==undefined){for(let i=0;i<data.advance;i++){now+=100;tick();}parentPort.postMessage({type:'advanced',requestId:data.requestId});}
+      if(data.releaseHash){releaseDigest?.();parentPort.postMessage({type:'advanced',requestId:data.requestId});}
+      else if(data.advance!==undefined){for(let i=0;i<data.advance;i++){now+=100;tick();}parentPort.postMessage({type:'advanced',requestId:data.requestId});}
       else globalThis.onmessage({data});
     });
     await import(${JSON.stringify(url)});
@@ -26,9 +39,14 @@ async function harness(t) {
   let sequence = 0,
     latest;
   const waiting = new Map();
+  let resolveHash;
+  const hashStarted = new Promise((resolve) => {
+    resolveHash = resolve;
+  });
   const ready = new Promise((resolve, reject) => {
     worker.on("error", reject);
     worker.on("message", (data) => {
+      if (data.type === "hashStarted") resolveHash();
       if (data.type === "state") {
         latest = data;
         resolve(data);
@@ -65,6 +83,8 @@ async function harness(t) {
     send,
     call,
     advance: (count) => send({ advance: count }),
+    hashStarted,
+    releaseHash: () => send({ releaseHash: true }),
     get latest() {
       return latest;
     },
@@ -359,6 +379,238 @@ test("radar exports identify the requested vehicle and retain delayed acquisitio
     "number",
   );
   const record = validateRecording(raw);
-  assert.equal(record.version, 13);
+  assert.equal(record.version, 14);
   replay(record);
+});
+
+function inspectionFleet() {
+  const input = fleet(2, false);
+  input.scene.obstacles = [
+    { north: 10, east: 0, width: 2, depth: 4, height: 4 },
+  ];
+  input.scene.inspectionTargets = [
+    {
+      id: "panel",
+      name: "Panel",
+      obstacleIndex: 0,
+      face: "south",
+      u: 0,
+      v: 0,
+      width: 1,
+      height: 1,
+      minRangeM: 1,
+      maxRangeM: 30,
+      maxAngleDeg: 60,
+      minPixels: 8,
+      maxSpeedMps: 2,
+    },
+  ];
+  return input;
+}
+const beginInspection = (h) =>
+  h.call({
+    type: "inspectionBegin",
+    vehicleId: "drone-1",
+    value: { targetId: "panel", config: DEFAULT_CAMERA_CONFIG },
+  });
+// Typed zero-depth protocol fixtures exercise binding and hashing, never GPU rendering or image quality.
+function protocolFrame(metadata) {
+  const pixels = metadata.width * metadata.height;
+  const rgbRgba = new Uint8Array(pixels * 4);
+  for (let i = 3; i < rgbRgba.length; i += 4) rgbRgba[i] = 255;
+  return {
+    ...structuredClone(metadata),
+    rgbRgba,
+    depthM: new Float32Array(pixels),
+    classes: new Uint8Array(pixels),
+  };
+}
+const submitInspection = (h, lease, frame = protocolFrame(lease.metadata)) =>
+  h.send({
+    type: "inspectionSubmit",
+    vehicleId: "drone-1",
+    value: { captureId: lease.captureId, frame },
+  });
+
+test("inspection lease freezes the whole fleet, rejects mutations and mismatched tickets, and releases failed submissions", async (t) => {
+  const h = await harness(t);
+  await h.call({ type: "resetWorld", value: inspectionFleet() });
+  await h.call({ type: "play" });
+  await h.advance(2);
+  const lease = await beginInspection(h);
+  await h.advance(5);
+  assert.deepEqual((await h.call({ type: "inspectWorld" })).world, lease.world);
+  for (const command of [
+    { type: "targets", vehicleId: "drone-2", value: { altitude: 3 } },
+    { type: "scene", value: lease.world.scene },
+    { type: "wind", value: { speed: 1, direction: 0 } },
+    { type: "play" },
+    { type: "speed", value: 2 },
+  ])
+    assert.equal((await h.send(command)).ok, false);
+  const selected = await h.call({
+    type: "selectVehicle",
+    vehicleId: "drone-2",
+  });
+  assert.equal(selected.activeVehicleId, "drone-2");
+  assert.equal(selected.world.tick, lease.world.tick);
+  for (const command of [
+    {
+      type: "inspectionSubmit",
+      vehicleId: "drone-2",
+      value: {
+        captureId: lease.captureId,
+        frame: protocolFrame(lease.metadata),
+      },
+    },
+    {
+      type: "inspectionCancel",
+      vehicleId: "drone-2",
+      value: { captureId: lease.captureId },
+    },
+    {
+      type: "inspectionSubmit",
+      vehicleId: "drone-1",
+      value: {
+        captureId: "00000000-0000-4000-8000-000000000001",
+        frame: protocolFrame(lease.metadata),
+      },
+    },
+  ])
+    assert.equal((await h.send(command)).ok, false);
+  await h.advance(1);
+  assert.equal(
+    (await h.call({ type: "inspectWorld" })).world.tick,
+    lease.world.tick,
+  );
+  const wrong = protocolFrame(lease.metadata);
+  wrong.worldTick++;
+  assert.equal((await submitInspection(h, lease, wrong)).ok, false);
+  assert.equal((await h.call({ type: "inspectWorld" })).running, true);
+  await h.advance(1);
+  assert.ok(
+    (await h.call({ type: "inspectWorld" })).world.tick > lease.world.tick,
+  );
+  assert.equal(
+    (await h.call({ type: "inspectionReport", vehicleId: "drone-1" })).summary
+      .attempts,
+    0,
+  );
+  assert.equal(
+    (
+      await h.send({
+        type: "inspection",
+        vehicleId: "drone-1",
+        value: {
+          captureId: lease.captureId,
+          targetId: "panel",
+          config: DEFAULT_CAMERA_CONFIG,
+          sha256: "a".repeat(64),
+        },
+      })
+    ).ok,
+    false,
+  );
+});
+
+test("successful inspection submissions hash actual buffers and retain replayable schema14 receipts without resuming an explicit pause", async (t) => {
+  const h = await harness(t);
+  await h.call({ type: "resetWorld", value: inspectionFleet() });
+  await h.call({ type: "play" });
+  await h.advance(1);
+  const lease = await beginInspection(h),
+    frame = protocolFrame(lease.metadata);
+  const expectedHash = await hashCameraFrame(frame);
+  await h.call({ type: "pause" });
+  const reply = await submitInspection(h, lease, frame);
+  assert.equal(reply.ok, true, reply.error);
+  assert.deepEqual(reply.value.summary, {
+    passed: 1,
+    total: 1,
+    attempts: 1,
+    complete: true,
+  });
+  assert.equal(reply.value.receipts[0].sha256, expectedHash);
+  assert.equal(reply.value.receipts[0].metadata.captureId, lease.captureId);
+  assert.equal(reply.value.receipts[0].metadata.sourceVehicleId, "drone-1");
+  assert.equal(reply.value.receipts[0].metadata.worldTick, lease.world.tick);
+  await h.advance(3);
+  const inspected = await h.call({ type: "inspectWorld" });
+  assert.equal(inspected.running, false);
+  assert.equal(inspected.world.tick, lease.world.tick);
+  assert.equal(inspected.world.vehicles[1].snapshot.inspection.attempts, 0);
+  assert.equal((await submitInspection(h, lease, frame)).ok, false);
+  const record = validateRecording(await h.call({ type: "apiExport" }));
+  assert.equal(record.version, 14);
+  const event = record.events.find((event) => event.type === "inspection");
+  assert.equal(event.tick, lease.world.tick);
+  assert.equal(event.value.sha256, expectedHash);
+  assert.deepEqual(event.receipt, reply.value.receipts[0]);
+  assert.equal(record.samples.at(-1).tick, event.tick);
+  assert.equal(record.samples.at(-1).vehicles[0].snapshot.inspection.passed, 1);
+  replay(record);
+});
+
+test("inspection cancellation, reset and 15-second expiry invalidate tickets without adding evidence or paused wall-time steps", async (t) => {
+  const h = await harness(t);
+  const input = inspectionFleet();
+  await h.call({ type: "resetWorld", value: input });
+  await h.call({ type: "play" });
+  let lease = await beginInspection(h);
+  await h.call({
+    type: "inspectionCancel",
+    vehicleId: "drone-1",
+    value: { captureId: lease.captureId },
+  });
+  assert.equal((await h.call({ type: "inspectWorld" })).running, true);
+  assert.equal((await submitInspection(h, lease)).ok, false);
+  lease = await beginInspection(h);
+  await h.advance(149);
+  assert.equal(
+    (await h.call({ type: "inspectWorld" })).world.tick,
+    lease.world.tick,
+  );
+  await h.advance(1);
+  const expired = await h.call({ type: "inspectWorld" });
+  assert.equal(expired.running, true);
+  assert.ok(
+    expired.world.tick > lease.world.tick &&
+      expired.world.tick <= lease.world.tick + 20,
+  );
+  assert.equal((await submitInspection(h, lease)).ok, false);
+  lease = await beginInspection(h);
+  await h.call({ type: "resetWorld", value: input });
+  assert.equal((await submitInspection(h, lease)).ok, false);
+  const reset = await h.call({ type: "inspectWorld" });
+  assert.equal(reset.running, false);
+  assert.equal(reset.world.tick, 0);
+  assert.equal(reset.world.vehicles[0].snapshot.inspection.attempts, 0);
+  assert.equal((await h.call({ type: "apiExport" })).events.length, 0);
+});
+
+test("reset or cancel while the real buffer digest is pending cannot commit stale inspection evidence or resume a replacement world", async (t) => {
+  for (const cancel of [false, true]) {
+    const h = await harness(t, true),
+      input = inspectionFleet();
+    await h.call({ type: "resetWorld", value: input });
+    await h.call({ type: "play" });
+    const lease = await beginInspection(h);
+    const pending = submitInspection(h, lease);
+    await h.hashStarted;
+    if (cancel) {
+      await h.call({ type: "pause" });
+      await h.call({
+        type: "inspectionCancel",
+        vehicleId: "drone-1",
+        value: { captureId: lease.captureId },
+      });
+    } else await h.call({ type: "resetWorld", value: input });
+    await h.releaseHash();
+    assert.equal((await pending).ok, false);
+    const inspected = await h.call({ type: "inspectWorld" });
+    assert.equal(inspected.running, false);
+    assert.equal(inspected.world.tick, 0);
+    assert.equal(inspected.world.vehicles[0].snapshot.inspection.attempts, 0);
+    assert.equal((await h.call({ type: "apiExport" })).events.length, 0);
+  }
 });

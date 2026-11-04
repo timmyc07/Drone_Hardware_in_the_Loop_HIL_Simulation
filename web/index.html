@@ -63,6 +63,7 @@
         ><button data-workspace="mission">任務規劃</button
         ><button data-workspace="training">訓練場</button
         ><button data-workspace="scene">場景編輯</button
+        ><button data-workspace="inspection">設施巡檢</button
         ><button data-workspace="sensors">感測器</button
         ><button data-workspace="hil">飛控介接</button
         ><button data-workspace="catalog">功能全覽</button>
@@ -348,6 +349,31 @@
           />
         </div>
       </section>
+      <section id="inspection-workspace" class="panel workspace-extra" hidden>
+        <h2>設施巡檢 <span>INSPECTION</span></h2>
+        <p>
+          使用實際相機拍攝，以 25
+          個取樣點檢查構圖與遮擋、解析度、距離及朝向；僅供模擬練習，不辨識缺陷或提供認證。
+        </p>
+        <div class="feature-actions">
+          <button id="inspection-template-tower">載入高塔範本至場景草稿</button
+          ><button id="inspection-template-facade">
+            載入立面範本至場景草稿
+          </button>
+        </div>
+        <p>載入後請至場景編輯套用；地形及地理原點會保留。</p>
+        <p id="inspection-progress">尚無巡檢目標。</p>
+        <label
+          >巡檢目標
+          <select id="inspection-target"></select
+        ></label>
+        <div class="feature-actions">
+          <button id="inspection-capture" class="button primary">
+            拍攝並檢查</button
+          ><button id="inspection-export">匯出巡檢報告</button>
+        </div>
+        <p id="inspection-result" role="status"></p>
+      </section>
       <section id="sensors-workspace" class="panel workspace-extra" hidden>
         <h2>感測器工作台 <span>VIRTUAL SENSORS</span></h2>
         <p>合成感測器與故障僅供觀察，不驅動理想化飛控；數值未經實機校準。</p>
@@ -439,13 +465,42 @@
         </section>
         <section aria-labelledby="radar-title">
           <h3 id="radar-title">前向雷達</h3>
-          <p>固定朝機體前方的幾何量測；速度為相對距離變化：負值靠近、正值遠離。橙色回波表示靠近，青色表示遠離或零。此模型不包含電波、材質反射或目標識別，資料不控制飛行器。</p>
+          <p>
+            固定朝機體前方的幾何量測；速度為相對距離變化：負值靠近、正值遠離。橙色回波表示靠近，青色表示遠離或零。此模型不包含電波、材質反射或目標識別，資料不控制飛行器。
+          </p>
           <p id="radar-status">尚未量測</p>
-          <canvas id="radar-map" width="480" height="300" role="img" aria-label="前向雷達俯視回波圖"></canvas>
-          <details><summary>量測姿態與速度</summary><p id="radar-pose">尚無量測姿態</p></details>
-          <div class="radar-table-wrap"><table><thead><tr><th>距離 m</th><th>方位 °</th><th>仰角 °</th><th>距離變化 m/s</th></tr></thead><tbody id="radar-returns"></tbody></table></div>
+          <canvas
+            id="radar-map"
+            width="480"
+            height="300"
+            role="img"
+            aria-label="前向雷達俯視回波圖"
+          ></canvas>
+          <details>
+            <summary>量測姿態與速度</summary>
+            <p id="radar-pose">尚無量測姿態</p>
+          </details>
+          <div class="radar-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>距離 m</th>
+                  <th>方位 °</th>
+                  <th>仰角 °</th>
+                  <th>距離變化 m/s</th>
+                </tr>
+              </thead>
+              <tbody id="radar-returns"></tbody>
+            </table>
+          </div>
           <p id="radar-count"></p>
-          <div class="feature-actions"><button type="button" id="radar-export-json" disabled>匯出雷達 JSON</button><button type="button" id="radar-export-csv" disabled>匯出雷達 CSV</button></div>
+          <div class="feature-actions">
+            <button type="button" id="radar-export-json" disabled>
+              匯出雷達 JSON</button
+            ><button type="button" id="radar-export-csv" disabled>
+              匯出雷達 CSV
+            </button>
+          </div>
         </section>
         <h3>LiDAR 多層掃描（俯視投影）</h3>
         <p>
@@ -602,7 +657,10 @@
         <section class="flight-column" aria-label="飛行視覺化與遙測">
           <section class="panel" id="fleet-panel">
             <h2>飛行器 <span>VEHICLES</span></h2>
-            <label>目前控制 <select id="vehicle-select"></select></label>
+            <label
+              >目前控制
+              <select id="vehicle-select"></select
+            ></label>
             <div id="vehicle-status"></div>
             <details>
               <summary>管理機隊（套用會重設整個實驗）</summary>

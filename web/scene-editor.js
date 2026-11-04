@@ -6,6 +6,7 @@ import {
   SCENE_MAX_IMPORT_BYTES,
 } from "./scene-data.js";
 import { validateTerrain } from "./terrain.js";
+import { inspectionTemplate } from "./inspection.js";
 
 const warehouse = [
   { north: 12, east: 3, width: 2, depth: 3, height: 3 },
@@ -243,12 +244,24 @@ export function createSceneEditor({ apply, confirm, download, notify }) {
   $("scene-add-gate").onclick = () => add("gate");
   $("scene-template").onclick = () => {
     draft.obstacles = clone(warehouse);
+    draft.inspectionTargets = [];
     draft.environment.preset = "warehouse";
     selected = null;
     render();
   };
   $("scene-remove").onclick = () => {
     if (!selected || readonly) return;
+    if (selected.kind === "obstacle") {
+      draft.inspectionTargets = draft.inspectionTargets
+        .filter((target) => target.obstacleIndex !== selected.index)
+        .map((target) => ({
+          ...target,
+          obstacleIndex:
+            target.obstacleIndex > selected.index
+              ? target.obstacleIndex - 1
+              : target.obstacleIndex,
+        }));
+    }
     items(selected.kind).splice(selected.index, 1);
     selected = null;
     render();
@@ -462,6 +475,14 @@ export function createSceneEditor({ apply, confirm, download, notify }) {
   for (const id of terrainInputs) $(id).oninput = editTerrain;
   render();
   return {
+    loadInspectionTemplate(kind) {
+      if (readonly) throw new Error("目前場景為唯讀");
+      Object.assign(draft, clone(inspectionTemplate(kind)));
+      for (const input of invalidInputs)
+        if (input !== terrainInvalid) invalidInputs.delete(input);
+      selected = null;
+      render();
+    },
     getApplied: () => clone(applied),
     setScene(value, viewOnly = false) {
       const wasDirty = dirty(),

@@ -11,23 +11,32 @@ test("vehicle operations require and preserve explicit vehicle IDs", async () =>
     },
     () => () => {},
   );
-  assert.equal(api.version, "2.1");
+  assert.equal(api.version, "2.2");
   await api.getState("one");
   const target = { altitude: 3 };
   await api.setTargets("two", target);
   target.altitude = 10;
   await api.takeoff("two");
   await api.exportRadarData("two", "csv");
+  await api.captureInspection("two", "tower-south");
+  await api.getInspectionReport("two");
   await api.getWorldState();
   assert.deepEqual(calls, [
     { type: "inspect", vehicleId: "one" },
     { type: "targets", vehicleId: "two", value: { altitude: 3 } },
     { type: "takeoff", vehicleId: "two" },
     { type: "radarExport", vehicleId: "two", value: "csv" },
+    { type: "captureInspection", vehicleId: "two", value: "tower-south" },
+    { type: "inspectionReport", vehicleId: "two" },
     { type: "inspectWorld" },
   ]);
   assert.throws(() => api.getState(), /vehicleId/);
   assert.throws(() => api.takeoff("bad id"), /vehicleId/);
+  assert.throws(
+    () => api.captureInspection(undefined, "tower-south"),
+    /vehicleId/,
+  );
+  assert.throws(() => api.getInspectionReport(), /vehicleId/);
 });
 
 test("subscriptions isolate delivered state and can be removed", () => {

@@ -1,0 +1,275 @@
+{
+  "release": "0.22.0",
+  "sourceBaseCommit": "ffdca24c4360bd5f3ab7f1756d376d0489e2a4f8",
+  "formats": {
+    "model": "0.9.0",
+    "recording": 14,
+    "scene": 5,
+    "camera": 5,
+    "inspectionReport": 1,
+    "api": "2.2",
+    "native": 1,
+    "csvColumns": 174
+  },
+  "tests": {
+    "fullSuite": {
+      "passed": 336,
+      "failed": 0,
+      "durationSeconds": 48.504753667
+    },
+    "actualLimits": {
+      "physicalSteps": 360000,
+      "simSeconds": 1800,
+      "retainedCapBytes": 100663296
+    }
+  },
+  "browser": {
+    "capturedAt": "2026-11-04T23:53:01.215Z",
+    "verification": [
+      {
+        "passed": true,
+        "sourceVehicleId": "drone-1",
+        "receipts": 2,
+        "matched": 2,
+        "missingCaptureIds": [],
+        "mismatchedCaptureIds": []
+      },
+      {
+        "passed": true,
+        "sourceVehicleId": "drone-1",
+        "receipts": 3,
+        "matched": 3,
+        "missingCaptureIds": [],
+        "mismatchedCaptureIds": []
+      }
+    ],
+    "pixels": [
+      {
+        "targetId": "tower-south",
+        "captureId": "f1cd5542-34bc-4b46-9b2a-66d7bb97c8cc",
+        "tick": 2779,
+        "assessment": {
+          "targetId": "tower-south",
+          "passed": true,
+          "reasons": [],
+          "rangeM": 18,
+          "angleDeg": 0,
+          "minPixels": 17.77777777777777,
+          "speedMps": 8.750573383230096e-9,
+          "visibleSamples": 25,
+          "totalSamples": 25
+        },
+        "projectedCenter": [160, 120],
+        "classId": 5,
+        "actualDepthM": 17.99799919128418,
+        "panelPlaneDepthM": 18,
+        "absoluteDepthDifferenceM": 0.0020008087158203125
+      },
+      {
+        "targetId": "tower-north",
+        "captureId": "243bfee1-57f8-468c-8ded-979da4d6d73b",
+        "tick": 4477,
+        "assessment": {
+          "targetId": "tower-north",
+          "passed": false,
+          "reasons": ["angle", "occluded"],
+          "rangeM": 22,
+          "angleDeg": 180,
+          "minPixels": 14.545454545454547,
+          "speedMps": 7.744311896351428e-16,
+          "visibleSamples": 0,
+          "totalSamples": 25
+        },
+        "projectedCenter": [160, 119],
+        "classId": 5,
+        "actualDepthM": 17.99799919128418,
+        "panelPlaneDepthM": 22,
+        "absoluteDepthDifferenceM": 4.00200080871582
+      },
+      {
+        "targetId": "facade-1",
+        "captureId": "4f83bc44-0664-4348-b3b5-31b0e45459ff",
+        "tick": 4477,
+        "assessment": {
+          "targetId": "facade-1",
+          "passed": true,
+          "reasons": [],
+          "rangeM": 19.6468827043885,
+          "angleDeg": 14.74356283647072,
+          "minPixels": 16.84210526315789,
+          "speedMps": 7.744311896351428e-16,
+          "visibleSamples": 25,
+          "totalSamples": 25
+        },
+        "projectedCenter": [117, 119],
+        "classId": 5,
+        "actualDepthM": 18.99799919128418,
+        "panelPlaneDepthM": 19,
+        "absoluteDepthDifferenceM": 0.0020008087158203125
+      },
+      {
+        "targetId": "facade-2",
+        "captureId": "b53e4694-d706-4444-992c-03fcc113b6b9",
+        "tick": 4477,
+        "assessment": {
+          "targetId": "facade-2",
+          "passed": true,
+          "reasons": [],
+          "rangeM": 19,
+          "angleDeg": 0,
+          "minPixels": 16.84210526315789,
+          "speedMps": 7.744311896351428e-16,
+          "visibleSamples": 25,
+          "totalSamples": 25
+        },
+        "projectedCenter": [160, 119],
+        "classId": 5,
+        "actualDepthM": 18.99799919128418,
+        "panelPlaneDepthM": 19,
+        "absoluteDepthDifferenceM": 0.0020008087158203125
+      },
+      {
+        "targetId": "facade-3",
+        "captureId": "ca5df730-101b-4ce5-9135-816dee5c6f94",
+        "tick": 4477,
+        "assessment": {
+          "targetId": "facade-3",
+          "passed": true,
+          "reasons": [],
+          "rangeM": 19.6468827043885,
+          "angleDeg": 14.74356283647072,
+          "minPixels": 16.84210526315789,
+          "speedMps": 7.744311896351428e-16,
+          "visibleSamples": 25,
+          "totalSamples": 25
+        },
+        "projectedCenter": [202, 119],
+        "classId": 5,
+        "actualDepthM": 18.99799919128418,
+        "panelPlaneDepthM": 19,
+        "absoluteDepthDifferenceM": 0.0020008087158203125
+      }
+    ],
+    "replay": {
+      "passed": true,
+      "vehicles": 1,
+      "frames": 451,
+      "ticks": 4477,
+      "simSeconds": 22.38499999999983,
+      "maximum": {
+        "positionM": 0,
+        "quaternion": 0,
+        "motors": 0,
+        "allState": 5.551115123125783e-17,
+        "sensors": 7.105427357601002e-15
+      }
+    },
+    "replayReportExactlyMatchesLive": true
+  },
+  "native": {
+    "capturedAt": "2026-11-04T23:53:02.871Z",
+    "nativeFormat": 1,
+    "results": [
+      {
+        "source": "gcs-proof-v017/px4-mavproxy-6/recording.json",
+        "sourceSha256": "6c107c01f36c676640230835e40d33792045625f2b8fed5d12136e5262e7a515",
+        "runtimeSeconds": 0.5517611670000001,
+        "passed": true,
+        "bootstrapTicks": 17,
+        "acceptedActuators": 23212,
+        "checkedSamples": 1859,
+        "simSeconds": 92.91600000002163,
+        "maxPositionErrorM": 0,
+        "maxQuaternionError": 0,
+        "maxMotorError": 0
+      },
+      {
+        "source": "gcs-proof-v017/ardupilot-mavproxy-4/recording.json",
+        "sourceSha256": "a166106b16aad525454452e4db517e6f49b728409a2343f6f93e75560b2f6a25",
+        "runtimeSeconds": 3.101137125,
+        "passed": true,
+        "bootstrapTicks": 1007,
+        "acceptedActuators": 148442,
+        "checkedSamples": 2970,
+        "simSeconds": 148.44200000034473,
+        "maxPositionErrorM": 0,
+        "maxQuaternionError": 0,
+        "maxMotorError": 0
+      }
+    ]
+  },
+  "baseline": {
+    "baselineCommit": "ffdca24",
+    "currentFeature": "inspection missions",
+    "comparison": "All world snapshot fields, stripping only new per-vehicle entry.inspection and entry.snapshot.inspection fields (null because no targets).",
+    "ticks": 600,
+    "dt": 0.005,
+    "durationSimSeconds": 3,
+    "airframes": ["quadrotor", "hexarotor", "vtol", "fixedwing"],
+    "commands": [
+      {
+        "tick": 50,
+        "vehicleId": "v0",
+        "type": "gust"
+      },
+      {
+        "tick": 100,
+        "vehicleId": "v1",
+        "type": "targets",
+        "value": {
+          "roll": 0.1,
+          "pitch": -0.05
+        }
+      },
+      {
+        "tick": 200,
+        "vehicleId": "v2",
+        "type": "gimbal",
+        "value": {
+          "mode": "ned",
+          "target": {
+            "yaw": 0.2,
+            "pitch": 0.3,
+            "roll": 0.1
+          },
+          "maxRate": {
+            "yaw": 1,
+            "pitch": 1,
+            "roll": 1
+          }
+        }
+      }
+    ],
+    "bitwiseDeepEqual": true,
+    "nativeProcessesStarted": false
+  },
+  "artifacts": {
+    "tower-report.json": {
+      "bytes": 4069,
+      "sha256": "fee3399fc646665504381704c1e28caee2ad205eaeb00f9dbcb8315dfa611203"
+    },
+    "facade-report.json": {
+      "bytes": 5073,
+      "sha256": "577772b3613364d865e609820d6c1c27c29e0c128d9a482fd86e1fc4940d8bbb"
+    },
+    "camera-dataset.json": {
+      "bytes": 4613537,
+      "sha256": "c26213e7887f643b21e19bce6afe0107f5bf5d36d14ecee4978b301a44220c98"
+    },
+    "inspection-world.json": {
+      "bytes": 7849031,
+      "sha256": "971cf83a8099ffb5dc325c4d30c0e4a71c3de91f8b2f021116e4f5a5a25d0f8a"
+    },
+    "replay-facade-report.json": {
+      "bytes": 5073,
+      "sha256": "577772b3613364d865e609820d6c1c27c29e0c128d9a482fd86e1fc4940d8bbb"
+    }
+  },
+  "limits": [
+    "25 geometric visibility samples, not pixel-complete visibility or visual defect detection",
+    "Tower and facade only; no elevated bridge geometry or NIST certification",
+    "Camera evidence is a checksum correspondence, not cryptographic renderer attestation",
+    "Inspection progress cleared by any scene change or reset; images exported separately",
+    "Legacy recording 1-13, scene 1-4 and camera dataset 1-4 unsupported"
+  ]
+}

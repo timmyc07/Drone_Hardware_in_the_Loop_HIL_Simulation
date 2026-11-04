@@ -14,6 +14,8 @@ import {
 } from "./training.js";
 import { createTerrain } from "./terrain.js";
 import { getVehicleEnvelope, relativeSweep } from "./peer-geometry.js";
+import { cameraMetadata, validateCameraConfig } from "./camera.js";
+import { assessInspection } from "./inspection.js";
 
 const DT = 0.005;
 const plain = (value) =>
@@ -244,6 +246,33 @@ export function validateWorldConfig(input) {
   return freeze({ scene, wind, vehicles });
 }
 
+export function inspectionSummary(receipts, targets) {
+  const targetIds = new Set(targets.map((target) => target.id));
+  const passed = new Set(
+    receipts
+      .filter(
+        (receipt) =>
+          receipt.assessment.passed && targetIds.has(receipt.targetId),
+      )
+      .map((receipt) => receipt.targetId),
+  ).size;
+  const last = receipts.at(-1);
+  return {
+    passed,
+    total: targets.length,
+    attempts: receipts.length,
+    complete: targets.length > 0 && passed === targets.length,
+    latest: last
+      ? copy({
+          captureId: last.captureId,
+          targetId: last.targetId,
+          sha256: last.sha256,
+          assessment: last.assessment,
+        })
+      : null,
+  };
+}
+
 export function createWorld(input) {
   const initial = validateWorldConfig(input);
   let scene = copy(initial.scene),
@@ -277,6 +306,7 @@ export function createWorld(input) {
       radius: getVehicleEnvelope(spec.config).radius,
       training: trainer.update(sim.snapshot()),
       sensors: null,
+      receipts: [],
     };
   });
   const peers = () =>
@@ -321,7 +351,16 @@ export function createWorld(input) {
         const state = v.sim.snapshot();
         return {
           ...vehicleConfiguration(v, state),
-          snapshot: { ...state, training: copy(v.training) },
+          snapshot: {
+            ...state,
+            training: copy(v.training),
+            inspection: scene.inspectionTargets.length
+              ? inspectionSummary(v.receipts, scene.inspectionTargets)
+              : null,
+          },
+          inspection: scene.inspectionTargets.length
+            ? inspectionSummary(v.receipts, scene.inspectionTargets)
+            : null,
           sensors: copy(v.sensors),
           training: copy(v.training),
         };
@@ -338,6 +377,7 @@ export function createWorld(input) {
       trainer: v.trainer,
       sensors: v.sensors,
       training: v.training,
+      receipts: v.receipts,
       simRestore: v.sim.checkpoint(),
       sensorRestore: v.suite.checkpoint(),
       trainerRestore: v.trainer.checkpoint(),
@@ -356,6 +396,7 @@ export function createWorld(input) {
           trainer: x.trainer,
           sensors: x.sensors,
           training: x.training,
+          receipts: x.receipts,
         });
       }
       ({ scene, wind, tick, time, collisions, collisionLatched } = saved);
@@ -471,6 +512,61 @@ export function createWorld(input) {
         v.training = next.update(v.sim.snapshot());
         v.trainer = next;
         v.spec.setup.training = value;
+      } else if (type === "inspection") {
+        fields(value, ["captureId", "targetId", "config", "sha256"]);
+        if (
+          typeof value.captureId !== "string" ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+            value.captureId,
+          )
+        )
+          throw new Error("Inspection captureId must be a canonical UUID");
+        if (
+          typeof value.sha256 !== "string" ||
+          !/^[0-9a-f]{64}$/.test(value.sha256)
+        )
+          throw new Error(
+            "Inspection sha256 must be 64 lowercase hexadecimal characters",
+          );
+        if (
+          vehicles.some((actor) =>
+            actor.receipts.some((r) => r.captureId === value.captureId),
+          )
+        )
+          throw new Error("Inspection captureId was already used");
+        if (v.receipts.length >= 100)
+          throw new Error("Inspection receipt limit reached");
+        const target = scene.inspectionTargets.find(
+          (target) => target.id === value.targetId,
+        );
+        if (!target) throw new Error("Unknown inspection target");
+        const config = validateCameraConfig(value.config);
+        const state = v.sim.snapshot();
+        const metadata = cameraMetadata(state, config, scene.geography, {
+          sourceVehicleId: v.spec.id,
+          worldTick: tick,
+          captureId: value.captureId,
+        });
+        const assessment = assessInspection(
+          target,
+          scene.obstacles,
+          createTerrain(scene.terrain),
+          metadata,
+          peers().filter((peer) => peer.id !== v.spec.id),
+          state.velocity,
+        );
+        v.receipts = [
+          ...v.receipts,
+          copy({
+            captureId: value.captureId,
+            targetId: target.id,
+            sourceVehicleId: v.spec.id,
+            worldTick: tick,
+            metadata,
+            sha256: value.sha256,
+            assessment,
+          }),
+        ];
       } else throw new Error("Unknown vehicle command");
       if (type === "mission")
         v.spec.setup.mission = copy(v.sim.snapshot().navigation.waypoints);
@@ -517,6 +613,7 @@ export function createWorld(input) {
         v.suite.setObstacles(next.obstacles);
       }
       scene = next;
+      for (const v of vehicles) v.receipts = [];
       updateSensors();
       return snapshot();
     });
@@ -544,6 +641,23 @@ export function createWorld(input) {
     setScene,
     setWind,
     checkpoint,
+    inspectionReport(id) {
+      const v = find(id);
+      const summary = inspectionSummary(v.receipts, scene.inspectionTargets);
+      return {
+        format: "flight-lab-inspection",
+        version: 1,
+        sourceVehicleId: v.spec.id,
+        scene: copy(scene),
+        receipts: copy(v.receipts),
+        summary: {
+          passed: summary.passed,
+          total: summary.total,
+          attempts: summary.attempts,
+          complete: summary.complete,
+        },
+      };
+    },
     getVehicle: (id) =>
       snapshot().vehicles.find((v) => v.id === find(id).spec.id),
   };

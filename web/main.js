@@ -7,6 +7,7 @@ import {
   recordingToCsv,
   recordingToJson,
   recordingWorldAt,
+  recordingInspectionReport,
 } from "./recording.js";
 import { readPilotInput, takeoffPlayAction } from "./input.js";
 import { exportVehiclePointCloud } from "./pointcloud.js";
@@ -30,6 +31,7 @@ import {
   cameraPreview,
   cameraFrameBytes,
   cameraDatasetToJson,
+  hashCameraFrame,
   parseCameraDataset,
   CAMERA_DATASET_MAX_FRAMES,
   CAMERA_DATASET_MAX_BYTES,
@@ -451,6 +453,8 @@ function requestApi(command, internal = false) {
   }
   if (command.type === "captureCamera")
     return captureCameraFrame(command.vehicleId);
+  if (command.type === "captureInspection")
+    return captureInspectionFrame(command.vehicleId, command.value);
   const id = ++requestId;
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -1217,6 +1221,7 @@ worker.onerror = (event) => {
 };
 
 function updateTelemetry() {
+  renderInspection();
   renderGimbal();
   if (!latest) return;
   const s = latest;
@@ -1971,14 +1976,20 @@ async function applyScene(value, restart = false) {
       geographyChanged ||
       JSON.stringify(valid.terrain) !==
         JSON.stringify(current.setup.scene.terrain);
-    if (
-      reset &&
-      dirty() &&
-      !(await confirmAction(
-        "變更共享地形或地理場景會重設所有載具並清除尚未匯出的紀錄。確定繼續？",
-      ))
-    )
-      throw new Error("已取消套用，原實驗已保留。");
+    const losesRecording = reset && dirty();
+    const losesInspection = current.world.vehicles.some(
+      (item) => item.snapshot.inspection?.attempts > 0,
+    );
+    if (losesRecording || losesInspection) {
+      const message =
+        losesRecording && losesInspection
+          ? "變更共享地形或地理場景會重設所有載具、清除尚未匯出的紀錄及各機巡檢進度；請先匯出紀錄與巡檢報告。確定繼續？"
+          : losesRecording
+            ? "變更共享地形或地理場景會重設所有載具並清除尚未匯出的紀錄。確定繼續？"
+            : "套用場景會清除各機巡檢進度，請先匯出巡檢報告。確定繼續？";
+      if (!(await confirmAction(message)))
+        throw new Error("已取消套用，原實驗已保留。");
+    }
     const origin = valid.geography?.origin;
     const nextSensors = geographyChanged
       ? {
@@ -2294,6 +2305,7 @@ for (const button of document.querySelectorAll("[data-workspace]"))
       "mission",
       "training",
       "scene",
+      "inspection",
       "sensors",
       "hil",
       "catalog",
@@ -2494,7 +2506,7 @@ function renderScene(value, viewOnly) {
   showSceneControls(value);
   scene?.setTerrain(value.terrain);
   scene?.setEnvironment(value.environment);
-  scene?.setObstacles(value.obstacles);
+  scene?.setObstacles(value.obstacles, value.inspectionTargets);
   const selected = worldState?.vehicles.find(
     (item) => item.id === activeVehicleId,
   );
@@ -3125,21 +3137,27 @@ async function captureCameraFrame(vehicleId = activeVehicleId) {
   const epoch = cameraEpoch;
   updateCameraStatus();
   try {
-    const selected = externalActive
-      ? null
-      : worldState?.vehicles.find((item) => item.id === vehicleId);
+    const frozen = externalActive ? null : structuredClone(worldState);
+    const selected = frozen?.vehicles.find((item) => item.id === vehicleId);
     if (!externalActive && !selected) throw new Error("找不到所選飛行器。");
-    const frame = await scene.captureCamera(
-      structuredClone(externalActive ? latest : selected.snapshot),
-      {
-        ...cameraConfig,
-      },
-      externalActive ? null : (sceneEditor?.getApplied().geography ?? null),
-      {
-        sourceVehicleId: vehicleId,
-        worldTick: externalActive ? latest.metrics.steps : worldState.tick,
-      },
-    );
+    if (frozen) scene.updateWorld(frozen, vehicleId, 0);
+    let pending;
+    try {
+      pending = scene.captureCamera(
+        structuredClone(externalActive ? latest : selected.snapshot),
+        { ...cameraConfig },
+        externalActive ? null : frozen.scene.geography,
+        {
+          sourceVehicleId: vehicleId,
+          worldTick: externalActive ? latest.metrics.steps : frozen.tick,
+          captureId: crypto.randomUUID(),
+        },
+      );
+    } finally {
+      if (frozen && worldState)
+        scene.updateWorld(worldState, activeVehicleId, 0);
+    }
+    const frame = await pending;
     if (epoch !== cameraEpoch || replay)
       throw new Error("實驗已切換，本次影像已取消。");
     showCameraFrame(frame);
@@ -3149,6 +3167,206 @@ async function captureCameraFrame(vehicleId = activeVehicleId) {
     updateCameraStatus();
   }
 }
+let inspectionBusy = false;
+let inspectionMatch = { key: "", status: "影像未核對" };
+let inspectionMatchEpoch = 0;
+async function checkInspectionImage() {
+  const last = latest?.inspection?.latest;
+  const key = `${activeVehicleId}:${last?.captureId || ""}:${last?.sha256 || ""}`;
+  const epoch = ++inspectionMatchEpoch;
+  inspectionMatch = { key, status: "影像未核對" };
+  if (!last) return;
+  const frame = cameraDataset.find((item) => item.captureId === last.captureId);
+  if (!frame) {
+    renderInspection();
+    return;
+  }
+  try {
+    const hash = await hashCameraFrame(frame);
+    if (epoch !== inspectionMatchEpoch) return;
+    inspectionMatch = {
+      key,
+      status: hash === last.sha256 ? "影像雜湊相符" : "影像雜湊不符",
+    };
+  } catch {
+    if (epoch !== inspectionMatchEpoch) return;
+    inspectionMatch = { key, status: "影像無法核對" };
+  }
+  renderInspection();
+}
+const inspectionReasons = {
+  range: "距離不合格",
+  angle: "朝向不合格",
+  frustum: "目標超出畫面",
+  pixels: "影像解析度不足",
+  speed: "移動過快",
+  occluded: "遮擋",
+};
+function renderInspection() {
+  const targets = worldState?.scene?.inspectionTargets || [];
+  const select = $("inspection-target"),
+    previous = select.value;
+  const targetKey = JSON.stringify(
+    targets.map((target) => [target.id, target.name]),
+  );
+  if (select.dataset.targets !== targetKey) {
+    select.replaceChildren(
+      ...targets.map(
+        (target) => new Option(target.name || target.id, target.id),
+      ),
+    );
+    select.dataset.targets = targetKey;
+    if (targets.some((target) => target.id === previous))
+      select.value = previous;
+  }
+  const status = latest?.inspection;
+  $("inspection-progress").textContent = targets.length
+    ? worldState.vehicles
+        .map((vehicle) => {
+          const progress = vehicle.snapshot.inspection;
+          return `${vehicle.name}（${vehicle.id}）${progress ? `已合格 ${progress.passed}/${progress.total} · 拍攝 ${progress.attempts} 次` : "尚無進度"}`;
+        })
+        .join(" ｜ ")
+    : "尚無巡檢目標。";
+  const last = status?.latest;
+  const key = `${activeVehicleId}:${last?.captureId || ""}:${last?.sha256 || ""}`;
+  if (inspectionMatch.key !== key) void checkInspectionImage();
+  $("inspection-result").textContent = last
+    ? `${last.targetId}：${last.assessment.passed ? "合格" : last.assessment.reasons.map((reason) => inspectionReasons[reason] || reason).join("、")} · 可見 ${last.assessment.visibleSamples}/${last.assessment.totalSamples} · ${inspectionMatch.status}`
+    : "";
+  $("inspection-capture").disabled =
+    !!replay ||
+    externalActive ||
+    inspectionBusy ||
+    cameraBusy ||
+    !targets.length;
+  $("inspection-export").disabled =
+    externalActive || inspectionBusy || !targets.length;
+  for (const id of ["inspection-template-tower", "inspection-template-facade"])
+    $(id).disabled = !!replay || externalActive || inspectionBusy;
+}
+for (const kind of ["tower", "facade"])
+  $("inspection-template-" + kind).onclick = () => {
+    try {
+      sceneEditor.loadInspectionTemplate(kind);
+      document.querySelector('[data-workspace="scene"]').click();
+      toast("巡檢範本已載入場景草稿，請檢查並套用。");
+    } catch (error) {
+      toast(`無法載入巡檢範本：${error.message}`);
+    }
+  };
+$("inspection-export").onclick = async () => {
+  if (externalActive) return;
+  try {
+    const report = replay
+      ? recordingInspectionReport(replay, replayIndex, activeVehicleId)
+      : await requestApi({
+          type: "inspectionReport",
+          vehicleId: activeVehicleId,
+        });
+    download(
+      JSON.stringify(report),
+      "json",
+      "application/json",
+      `flight-lab-inspection-${activeVehicleId}.json`,
+    );
+  } catch (error) {
+    toast(`無法匯出巡檢報告：${error.message}`);
+  }
+};
+async function captureInspectionFrame(vehicleId, targetId) {
+  if (replay || externalActive || inspectionBusy || cameraBusy)
+    throw new Error("目前無法拍攝巡檢影像");
+  if (vehicleId !== activeVehicleId) throw new Error("請先選擇要拍攝的飛行器");
+  if (
+    cameraDataset.length >= CAMERA_DATASET_MAX_FRAMES ||
+    cameraDatasetBytes + cameraConfig.width * cameraConfig.height * 9 >
+      CAMERA_DATASET_MAX_BYTES
+  )
+    throw new Error("相機資料集已滿，請先匯出並清除。");
+  const captureConfig = { ...cameraConfig };
+  inspectionBusy = true;
+  cameraBusy = true;
+  renderInspection();
+  updateCameraStatus();
+  let captureId;
+  try {
+    const ticket = await requestApi({
+      type: "inspectionBegin",
+      vehicleId,
+      value: { targetId, config: captureConfig },
+    });
+    captureId = ticket.captureId;
+    const selected = ticket.world.vehicles.find(
+      (item) => item.id === vehicleId,
+    );
+    if (!selected) throw new Error("找不到巡檢載具");
+    scene.updateWorld(ticket.world, vehicleId, 0);
+    let pending;
+    try {
+      pending = scene.captureCamera(
+        selected.snapshot,
+        captureConfig,
+        ticket.world.scene.geography,
+        { sourceVehicleId: vehicleId, worldTick: ticket.world.tick, captureId },
+      );
+    } finally {
+      if (worldState) scene.updateWorld(worldState, activeVehicleId, 0);
+    }
+    const frame = { ...(await pending), ...ticket.metadata };
+    const bytes = cameraFrameBytes(frame);
+    if (
+      cameraDatasetBytes + bytes > CAMERA_DATASET_MAX_BYTES ||
+      cameraDataset.length >= CAMERA_DATASET_MAX_FRAMES
+    )
+      throw new Error("相機資料集已達上限");
+    cameraDataset.push(frame);
+    cameraDatasetBytes += bytes;
+    cameraDatasetDirty = true;
+    refreshCameraSelector();
+    $("camera-frame-select").value = String(cameraDataset.length - 1);
+    showCameraFrame(frame);
+    const report = await requestApi({
+      type: "inspectionSubmit",
+      vehicleId,
+      value: { captureId, frame },
+    });
+    captureId = undefined;
+    void checkInspectionImage();
+    return report;
+  } finally {
+    if (captureId)
+      try {
+        await requestApi({
+          type: "inspectionCancel",
+          vehicleId,
+          value: { captureId },
+        });
+      } catch {}
+    inspectionBusy = false;
+    cameraBusy = false;
+    renderInspection();
+    updateCameraStatus();
+  }
+}
+$("inspection-capture").onclick = async () => {
+  try {
+    const report = await captureInspectionFrame(
+      activeVehicleId,
+      $("inspection-target").value,
+    );
+    toast(
+      report.receipts.at(-1).assessment.passed
+        ? "巡檢拍攝合格，影格已加入相機資料集。"
+        : "拍攝已記錄，請依檢查原因調整位置或相機。",
+    );
+  } catch (error) {
+    toast(
+      `巡檢失敗：${error.message}；若已拍攝，影像保留於資料集但未通過核對。`,
+    );
+  }
+};
+
 function refreshCameraSelector() {
   const select = $("camera-frame-select");
   select.replaceChildren(new Option("選擇畫面", ""));
@@ -3161,6 +3379,7 @@ function refreshCameraSelector() {
     ),
   );
   updateCameraStatus();
+  void checkInspectionImage();
 }
 $("camera-capture").onclick = async () => {
   try {
@@ -3193,6 +3412,7 @@ $("camera-add").onclick = async () => {
 $("camera-frame-select").onchange = (event) => {
   if (event.target.value !== "")
     showCameraFrame(cameraDataset[Number(event.target.value)]);
+  void checkInspectionImage();
 };
 $("camera-png").onclick = () =>
   $("camera-rgb").toBlob((blob) => {

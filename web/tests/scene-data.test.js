@@ -54,6 +54,7 @@ test("scene boundary rejects unknown, missing, sparse and invalid geometry and a
   for (const patch of [
     { version: 1 },
     { version: 2 },
+    { version: 4 },
     { frame: "ENU" },
     { units: "cm" },
     { format: "other" },
@@ -103,7 +104,7 @@ test("DEM scene round trips its full grid and provenance and enforces covered ze
   };
   const scene = { ...DEFAULT_SCENE, terrain, geography };
   const text = sceneToJson(scene);
-  assert.equal(JSON.parse(text).version, 4);
+  assert.equal(JSON.parse(text).version, 5);
   assert.deepEqual(parseSceneJson(text), scene);
   assert.ok(new TextEncoder().encode(text).length <= SCENE_MAX_IMPORT_BYTES);
   for (const invalid of [

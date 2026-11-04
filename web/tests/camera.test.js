@@ -14,12 +14,14 @@ import {
   cameraFrameBytes,
   cameraDatasetToJson,
   parseCameraDataset,
+  hashCameraFrame,
 } from "../camera.js";
 
 const cameraMetadata = (snapshot, config, geography = null) =>
   strictCameraMetadata(snapshot, config, geography, {
     sourceVehicleId: "drone-1",
     worldTick: Math.round(snapshot.time * 200),
+    captureId: crypto.randomUUID(),
   });
 const snapshot = {
   time: 2,
@@ -73,6 +75,41 @@ test("camera configuration validates strictly without mutating defaults", () => 
   assert.deepEqual(validateCameraConfig(), before);
   assert.throws(() => validateCameraConfig({ pitchDeg: 90 }));
   assert.throws(() => validateCameraConfig({ yawDeg: 0 }));
+});
+test("camera evidence hashes bind UUID, original metadata and every pixel stream independent of object order", async () => {
+  const input = frame(),
+    digest = await hashCameraFrame(input);
+  assert.match(digest, /^[0-9a-f]{64}$/);
+  assert.equal(
+    await hashCameraFrame(parseCameraDataset(cameraDatasetToJson([input]))[0]),
+    digest,
+  );
+  const reordered = {
+    ...input,
+    config: Object.fromEntries(Object.entries(input.config).reverse()),
+    pose: Object.fromEntries(Object.entries(input.pose).reverse()),
+  };
+  assert.equal(await hashCameraFrame(reordered), digest);
+  for (const change of [
+    (f) => (f.rgbRgba[0] ^= 1),
+    (f) => (f.depthM[0] = 3),
+    (f) => (f.classes[0] = 2),
+    (f) => (f.captureId = crypto.randomUUID()),
+    (f) => (f.intrinsics.fx += 1e-12),
+  ]) {
+    const changed = structuredClone(input);
+    change(changed);
+    assert.notEqual(await hashCameraFrame(changed), digest);
+  }
+  assert.throws(() => cameraDatasetToJson([input, input]), /Duplicate/);
+  const repeated = JSON.parse(cameraDatasetToJson([input]));
+  repeated.frames.push(repeated.frames[0]);
+  assert.throws(
+    () => parseCameraDataset(JSON.stringify(repeated)),
+    /Duplicate/,
+  );
+  const malformed = { ...input, captureId: "old-tick-0" };
+  await assert.rejects(hashCameraFrame(malformed), /identity/);
 });
 test("pinhole intrinsics use pixel centers and convert horizontal to vertical FOV", () => {
   const result = cameraMetadata(snapshot, {
@@ -162,7 +199,7 @@ test("camera metadata uses the acquired joints while a commanded target is still
   acquired.gimbal.trackingErrorRad = Math.PI / 2;
   acquired.gimbal.rateLimited.yaw = true;
   const metadata = cameraMetadata(acquired);
-  assert.equal(metadata.version, 4);
+  assert.equal(metadata.version, 5);
   assert.equal(metadata.gimbal.target.yaw, Math.PI / 2);
   assert.equal(metadata.gimbal.actual.yaw, 0);
   [1, 0, 0].forEach((v, row) =>
@@ -237,7 +274,9 @@ test("camera dataset trust boundaries reject malformed buffers, schemas and limi
       cameraDatasetToJson(
         Array(
           Math.floor(CAMERA_DATASET_MAX_BYTES / cameraFrameBytes(large)) + 1,
-        ).fill(large),
+        )
+          .fill(large)
+          .map((value) => ({ ...value, captureId: crypto.randomUUID() })),
       ),
     /byte limit/,
   );
@@ -280,7 +319,7 @@ test("geographic camera metadata survives dataset roundtrip and rejects malforme
   const restored = parseCameraDataset(cameraDatasetToJson([acquired]))[0];
   assert.equal(restored.geography.origin.latitudeDeg, 25.033);
   assert.equal(restored.geography.source.sha256, "a".repeat(64));
-  assert.equal(restored.version, 4);
+  assert.equal(restored.version, 5);
   assert.equal(
     parseCameraDataset(cameraDatasetToJson([base]))[0].geography,
     null,

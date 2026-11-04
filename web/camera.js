@@ -130,8 +130,12 @@ export function cameraMetadata(
     !/^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/.test(identity.sourceVehicleId) ||
     !Number.isSafeInteger(identity.worldTick) ||
     identity.worldTick < 0 ||
+    typeof identity.captureId !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+      identity.captureId,
+    ) ||
     Object.keys(identity).some(
-      (key) => !["sourceVehicleId", "worldTick"].includes(key),
+      (key) => !["sourceVehicleId", "worldTick", "captureId"].includes(key),
     )
   )
     throw new Error("Invalid camera source identity");
@@ -163,7 +167,8 @@ export function cameraMetadata(
   );
   const fx = width / (2 * Math.tan((horizontalFovDeg * Math.PI) / 360));
   return {
-    version: 4,
+    version: 5,
+    captureId: identity.captureId,
     sourceVehicleId: identity.sourceVehicleId,
     worldTick: identity.worldTick,
     geography: geography === null ? null : validateGeography(geography),
@@ -192,7 +197,7 @@ export function cameraMetadata(
     depthDefinition: "camera-z-meters-zero-invalid",
   };
 }
-function checkFrame(value) {
+export function validateCameraMetadata(value) {
   plain(value);
   plain(value.pose);
   const metadata = cameraMetadata(
@@ -205,7 +210,11 @@ function checkFrame(value) {
     },
     value.config,
     value.geography,
-    { sourceVehicleId: value.sourceVehicleId, worldTick: value.worldTick },
+    {
+      sourceVehicleId: value.sourceVehicleId,
+      worldTick: value.worldTick,
+      captureId: value.captureId,
+    },
   );
   for (const key of Object.keys(metadata)) {
     // Trigonometric results can differ by a few ULPs across browser and Node engines.
@@ -228,6 +237,12 @@ function checkFrame(value) {
     )
   )
     throw new Error("Unknown camera frame field");
+  return Object.fromEntries(
+    Object.keys(metadata).map((key) => [key, structuredClone(value[key])]),
+  );
+}
+function checkFrame(value) {
+  const metadata = validateCameraMetadata(value);
   const count = metadata.width * metadata.height;
   if (
     !(value.rgbRgba instanceof Uint8Array) ||
@@ -318,12 +333,48 @@ function depthBytes(depth) {
   depth.forEach((value, i) => view.setFloat32(i * 4, value, true));
   return bytes;
 }
+export async function hashCameraFrame(frame) {
+  const metadata = checkFrame(frame),
+    canonical = (value) =>
+      Array.isArray(value)
+        ? value.map(canonical)
+        : value && typeof value === "object"
+          ? Object.fromEntries(
+              Object.keys(value)
+                .sort()
+                .map((key) => [key, canonical(value[key])]),
+            )
+          : value,
+    header = new TextEncoder().encode(JSON.stringify(canonical(metadata))),
+    depth = depthBytes(frame.depthM),
+    bytes = new Uint8Array(
+      header.length +
+        1 +
+        frame.rgbRgba.length +
+        depth.length +
+        frame.classes.length,
+    );
+  let offset = header.length + 1;
+  bytes.set(header);
+  for (const buffer of [frame.rgbRgba, depth, frame.classes]) {
+    bytes.set(buffer, offset);
+    offset += buffer.length;
+  }
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (value) =>
+    value.toString(16).padStart(2, "0"),
+  ).join("");
+}
 export function cameraDatasetToJson(frames) {
   if (!Array.isArray(frames) || frames.length > CAMERA_DATASET_MAX_FRAMES)
     throw new Error("Camera dataset frame limit exceeded");
   let size = 0;
+  const ids = new Set();
   const encoded = Array.from(frames, (frame) => {
     const metadata = checkFrame(frame);
+    if (ids.has(metadata.captureId))
+      throw new Error("Duplicate camera capture ID");
+    ids.add(metadata.captureId);
     size += frame.width * frame.height * 9;
     if (size > CAMERA_DATASET_MAX_BYTES)
       throw new Error("Camera dataset byte limit exceeded");
@@ -336,7 +387,7 @@ export function cameraDatasetToJson(frames) {
   });
   return JSON.stringify({
     format: "flight-lab-camera-dataset",
-    version: 4,
+    version: 5,
     encoding,
     classes: classLegend,
     frames: encoded,
@@ -348,7 +399,7 @@ export function parseCameraDataset(text) {
   const data = plain(JSON.parse(text));
   if (
     data.format !== "flight-lab-camera-dataset" ||
-    data.version !== 4 ||
+    data.version !== 5 ||
     !same(data.encoding, encoding) ||
     !same(data.classes, classLegend) ||
     !Array.isArray(data.frames) ||
@@ -360,6 +411,7 @@ export function parseCameraDataset(text) {
   )
     throw new Error("Unsupported camera dataset format");
   let size = 0;
+  const ids = new Set();
   return Array.from(data.frames, (input) => {
     plain(input);
     plain(input.pose);
@@ -379,6 +431,9 @@ export function parseCameraDataset(text) {
       classes: fromBase64(input.classes, count),
     };
     checkFrame(frame);
+    if (ids.has(frame.captureId))
+      throw new Error("Duplicate camera capture ID");
+    ids.add(frame.captureId);
     return frame;
   });
 }

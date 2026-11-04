@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { createTerrain } from "./terrain.js";
+import { inspectionPanel } from "./inspection.js";
 import { lidarPoints, MAX_LIDAR_POINTS } from "./sensors.js";
 import { getRotorLayout, MULTIROTOR_AIRFRAMES } from "./rotor-geometry.js";
 import { AIRFRAME_PRESETS, RUNWAY } from "./sim.js";
@@ -446,7 +447,7 @@ export function createScene(container) {
       environment.add(rain);
     }
   }
-  function setObstacles(items) {
+  function setObstacles(items, targets = []) {
     clear(obstacles);
     for (const item of items.slice(0, 100)) {
       box(
@@ -455,6 +456,40 @@ export function createScene(container) {
         [item.east, item.height / 2, -item.north],
         material(0x9b765b, 0.2, 0.75),
       );
+    }
+    const vec = ([n, e, d]) => new THREE.Vector3(e, -d, -n);
+    for (const target of targets) {
+      const panel = inspectionPanel(target, items);
+      const c = vec(panel.centerNed).addScaledVector(
+        vec(panel.normalNed),
+        0.002,
+      );
+      const right = vec(panel.rightNed),
+        down = vec(panel.downNed);
+      for (const [u, v, color] of [
+        [-0.25, -0.25, 0xf6d781],
+        [0.25, -0.25, 0x325867],
+        [-0.25, 0.25, 0x325867],
+        [0.25, 0.25, 0xf6d781],
+      ]) {
+        const geometry = new THREE.PlaneGeometry(
+          target.width / 2,
+          target.height / 2,
+        );
+        const mesh = new THREE.Mesh(
+          geometry,
+          new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide }),
+        );
+        const normal = right.clone().cross(down.clone().negate());
+        mesh.quaternion.setFromRotationMatrix(
+          new THREE.Matrix4().makeBasis(right, down.clone().negate(), normal),
+        );
+        mesh.position
+          .copy(c)
+          .addScaledVector(right, u * target.width)
+          .addScaledVector(down, v * target.height);
+        obstacles.add(mesh);
+      }
     }
   }
   function setMission(waypoints) {

@@ -169,6 +169,7 @@ test("capture uses physical camera pose, excludes annotations/ownship, restores 
   const pending = capture.captureCamera(pose, config, null, {
     sourceVehicleId: "drone-1",
     worldTick: 200,
+    captureId: "11111111-1111-4111-8111-111111111111",
   });
   pose.gimbal.target.yaw = 1;
   assert.equal(f.passes.length, 3);
@@ -203,6 +204,7 @@ test("capture uses physical camera pose, excludes annotations/ownship, restores 
     capture.captureCamera(pose, config, null, {
       sourceVehicleId: "drone-1",
       worldTick: 200,
+      captureId: "11111111-1111-4111-8111-111111111111",
     }),
     /already in progress/,
   );
@@ -224,6 +226,7 @@ test("capture uses physical camera pose, excludes annotations/ownship, restores 
     capture.captureCamera(pose, config, null, {
       sourceVehicleId: "drone-1",
       worldTick: 200,
+      captureId: "11111111-1111-4111-8111-111111111111",
     }),
     /disposed/,
   );
@@ -236,6 +239,7 @@ test("render exceptions restore every mesh/material and release busy; context lo
     capture.captureCamera(pose, config, null, {
       sourceVehicleId: "drone-1",
       worldTick: 200,
+      captureId: "11111111-1111-4111-8111-111111111111",
     }),
     /injected render failure/,
   );
@@ -251,6 +255,7 @@ test("render exceptions restore every mesh/material and release busy; context lo
     capture.captureCamera(pose, config, null, {
       sourceVehicleId: "drone-1",
       worldTick: 200,
+      captureId: "11111111-1111-4111-8111-111111111111",
     }),
     /context lost/,
   );
@@ -286,9 +291,10 @@ test("camera capture preserves the acquired geographic provenance", async () => 
   const result = await camera.captureCamera(pose, config, geography, {
     sourceVehicleId: "drone-1",
     worldTick: 200,
+    captureId: "11111111-1111-4111-8111-111111111111",
   });
   assert.deepEqual(result.geography, geography);
-  assert.equal(result.version, 4);
+  assert.equal(result.version, 5);
   camera.dispose();
 });
 
@@ -310,7 +316,11 @@ test("camera excludes only the selected aircraft and includes its peer in every 
     pose,
     config,
     null,
-    { sourceVehicleId: "drone-1", worldTick: 200 },
+    {
+      sourceVehicleId: "drone-1",
+      worldTick: 200,
+      captureId: "11111111-1111-4111-8111-111111111111",
+    },
   );
   for (const pass of f.passes) {
     assert.ok(!pass.visible.includes("drone-1"));

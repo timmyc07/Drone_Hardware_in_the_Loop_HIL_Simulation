@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createSceneEditor } from "../scene-editor.js";
+import { DEFAULT_SCENE } from "../scene-data.js";
+import { inspectionTemplate } from "../inspection.js";
 
 class Element {
   constructor() {
@@ -93,6 +95,14 @@ test("numeric input updates exported draft, retains subsequent edits and support
     elements["terrain-flat"].onclick();
     elements["scene-export"].onclick();
     assert.equal(exported.terrain.kind, "flat");
+    editor.loadInspectionTemplate("tower");
+    elements["scene-export"].onclick();
+    assert.equal(exported.terrain.kind, "flat");
+    assert.ok(exported.inspectionTargets.length > 0);
+    assert.ok(exported.obstacles.length > 0);
+    editor.loadInspectionTemplate("facade");
+    elements["scene-export"].onclick();
+    assert.equal(exported.inspectionTargets.length, 3);
     elements["terrain-hill"].onclick();
     elements["scene-export"].onclick();
     assert.equal(exported.terrain.kind, "heightfield");
@@ -110,7 +120,7 @@ test("numeric input updates exported draft, retains subsequent edits and support
     field.oninput();
     assert.equal(elements["scene-dirty"].textContent, "草稿尚未套用");
     elements["scene-export"].onclick();
-    assert.equal(exported.obstacles[0].north, 10);
+    assert.equal(exported.obstacles.at(-1).north, 10);
     field.value = "";
     field.oninput();
     assert.equal(elements["scene-export"].disabled, true);
@@ -137,6 +147,43 @@ test("numeric input updates exported draft, retains subsequent edits and support
     editor.setScene(submitted, false);
     elements["scene-export"].onclick();
     assert.equal(exported.name, "後續修改");
+
+    const second = createSceneEditor({
+      apply: async () => {},
+      confirm: async () => true,
+      download: (text) => {
+        exported = JSON.parse(text).scene;
+      },
+      notify: () => {},
+    });
+    const template = inspectionTemplate("facade");
+    const otherBox = { ...template.obstacles[0], north: 40 };
+    const otherTarget = {
+      ...template.inspectionTargets[0],
+      id: "other",
+      obstacleIndex: 1,
+    };
+    second.setScene({
+      ...structuredClone(DEFAULT_SCENE),
+      ...template,
+      obstacles: [template.obstacles[0], otherBox],
+      inspectionTargets: [template.inspectionTargets[0], otherTarget],
+    });
+    elements["scene-object-list"].children[0].onclick();
+    elements["scene-remove"].onclick();
+    elements["scene-export"].onclick();
+    assert.equal(exported.obstacles.length, 1);
+    assert.equal(exported.obstacles[0].north, 40);
+    assert.deepEqual(
+      exported.inspectionTargets.map((target) => [
+        target.id,
+        target.obstacleIndex,
+      ]),
+      [["other", 0]],
+    );
+    elements["scene-template"].onclick();
+    elements["scene-export"].onclick();
+    assert.deepEqual(exported.inspectionTargets, []);
   } finally {
     globalThis.document = previous;
   }

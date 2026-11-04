@@ -12,7 +12,14 @@ import {
   resolveTrainingGates,
 } from "./training.js";
 import { DEFAULT_SCENE, validateScene } from "./scene-data.js";
-import { validateWorldConfig, validateVehicleSetup } from "./world.js";
+import {
+  validateWorldConfig,
+  validateVehicleSetup,
+  inspectionSummary,
+} from "./world.js";
+import { validateCameraConfig, validateCameraMetadata } from "./camera.js";
+import { assessInspection } from "./inspection.js";
+import { getVehicleEnvelope } from "./peer-geometry.js";
 import { validateRadarReading, compactRadarReading } from "./radar.js";
 import { AIRFRAMES, rotorCount } from "./rotor-geometry.js";
 import { createTerrain } from "./terrain.js";
@@ -22,7 +29,7 @@ import {
   validateGimbalState,
 } from "./gimbal.js";
 
-export const RECORDING_VERSION = 13;
+export const RECORDING_VERSION = 14;
 export const MODEL_VERSION = "0.9.0";
 const MODES = ["attitude", "position", "mission", "rtl", "land", "takeoff"];
 const TAKEOFF_PHASES = [
@@ -484,6 +491,29 @@ function event(input, sim, initialScene) {
   object(input);
   const result = { time: number(input.time, 0, 1800.001), type: input.type };
   switch (input.type) {
+    case "inspection": {
+      exactKeys(
+        input.value,
+        ["captureId", "targetId", "config", "sha256"],
+        "inspection command",
+      );
+      if (
+        typeof input.value.captureId !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+          input.value.captureId,
+        ) ||
+        typeof input.value.targetId !== "string" ||
+        typeof input.value.sha256 !== "string" ||
+        !/^[0-9a-f]{64}$/.test(input.value.sha256)
+      )
+        throw new Error("Invalid inspection command");
+      result.value = {
+        ...input.value,
+        config: validateCameraConfig(input.value.config),
+      };
+      result.receipt = structuredClone(object(input.receipt));
+      break;
+    }
     case "gimbal":
       result.value = validateGimbalSettings(input.value);
       break;
@@ -770,7 +800,93 @@ const VEHICLE_EVENTS = [
   "training",
   "sensorConfig",
   "sensorFault",
+  "inspection",
 ];
+function inspectionEqual(actual, expected) {
+  if (typeof expected === "number")
+    return (
+      Number.isFinite(actual) &&
+      Math.abs(actual - expected) <= 1e-9 * Math.max(1, Math.abs(expected))
+    );
+  if (expected === null || typeof expected !== "object")
+    return actual === expected;
+  if (Array.isArray(actual) !== Array.isArray(expected)) return false;
+  return (
+    actual &&
+    typeof actual === "object" &&
+    Object.keys(actual).length === Object.keys(expected).length &&
+    Object.keys(expected).every(
+      (key) =>
+        Object.hasOwn(actual, key) &&
+        inspectionEqual(actual[key], expected[key]),
+    )
+  );
+}
+function validateInspectionReceipt(e, scene, frame, roster, gimbal) {
+  const receipt = e.receipt;
+  exactKeys(
+    receipt,
+    [
+      "captureId",
+      "targetId",
+      "sourceVehicleId",
+      "worldTick",
+      "metadata",
+      "sha256",
+      "assessment",
+    ],
+    "inspection receipt",
+  );
+  const metadata = validateCameraMetadata(receipt.metadata),
+    source = frame.vehicles.find((v) => v.id === e.vehicleId).snapshot;
+  exactKeys(receipt.metadata, Object.keys(metadata), "inspection metadata");
+  const target = scene.inspectionTargets.find((t) => t.id === e.value.targetId);
+  for (const key of ["mode", "target", "maxRate"])
+    if (!inspectionEqual(metadata.gimbal[key], gimbal[key]))
+      throw new Error(
+        "Inspection gimbal settings disagree with exposure event order",
+      );
+  if (
+    !target ||
+    frame.tick !== e.tick ||
+    receipt.captureId !== e.value.captureId ||
+    receipt.targetId !== target.id ||
+    receipt.sha256 !== e.value.sha256 ||
+    receipt.sourceVehicleId !== e.vehicleId ||
+    receipt.worldTick !== e.tick ||
+    metadata.captureId !== receipt.captureId ||
+    metadata.sourceVehicleId !== e.vehicleId ||
+    metadata.worldTick !== e.tick ||
+    !inspectionEqual(metadata.config, e.value.config) ||
+    !inspectionEqual(metadata.pose.positionNed, source.position) ||
+    !inspectionEqual(metadata.pose.bodyQuaternionWxyz, source.quaternion) ||
+    !inspectionEqual(metadata.time, source.time) ||
+    metadata.airframe !== source.airframe ||
+    !inspectionEqual(metadata.gimbal.actual, source.gimbal.actual) ||
+    !inspectionEqual(metadata.geography, scene.geography)
+  )
+    throw new Error("Inspection receipt disagrees with its exposure tick");
+  const peers = frame.vehicles
+    .filter((v) => v.id !== e.vehicleId)
+    .map((v) => ({
+      id: v.id,
+      position: v.snapshot.position,
+      velocity: v.snapshot.velocity,
+      radius: getVehicleEnvelope(roster.find((spec) => spec.id === v.id).config)
+        .radius,
+    }));
+  const assessment = assessInspection(
+    target,
+    scene.obstacles,
+    createTerrain(scene.terrain),
+    metadata,
+    peers,
+    source.velocity,
+  );
+  if (!inspectionEqual(receipt.assessment, assessment))
+    throw new Error("Inspection assessment disagrees with captured geometry");
+  return receipt;
+}
 function exactKeys(value, keys, label) {
   object(value);
   if (
@@ -851,7 +967,7 @@ export function validateRecording(value) {
   object(value);
   if (value.version !== RECORDING_VERSION)
     throw new Error(
-      "Unsupported recording version: version 13 required; legacy recordings are not supported",
+      "Unsupported recording version: version 14 required; legacy recordings are not supported",
     );
   exactKeys(
     value,
@@ -920,6 +1036,7 @@ export function validateRecording(value) {
         routeCache: new WeakMap(),
         trainingEpochTime: 0,
         previousTutorial: undefined,
+        inspectionReceipts: [],
         channelTimes: {},
         validator: createSimulation(v.config, {
           gimbal: v.setup.gimbal,
@@ -949,6 +1066,7 @@ export function validateRecording(value) {
       ...(!global ? ["vehicleId"] : []),
       ...(Object.hasOwn(parsed, "value") ? ["value"] : []),
       ...(Object.hasOwn(parsed, "fault") ? ["fault"] : []),
+      ...(input.type === "inspection" ? ["receipt"] : []),
     ];
     exactKeys(input, keys, "event");
     if (tick < lastEvent) throw new Error("Events out of order");
@@ -965,6 +1083,7 @@ export function validateRecording(value) {
     lastTick = -1,
     lastTime = -1;
   const sensorFrames = [];
+  const captureIds = new Set();
   const samples = Array.from(value.samples, (input, index) => {
     exactKeys(
       input,
@@ -974,9 +1093,11 @@ export function validateRecording(value) {
     const { tick, time } = frameTime(input);
     if (tick <= lastTick || (index === 0 && tick !== 0))
       throw new Error("Samples out of order or missing initial tick");
+    const inspectionActions = [];
     while (eventIndex < events.length && events[eventIndex].tick <= tick) {
       const e = events[eventIndex++];
       if (e.type === "scene") {
+        inspectionActions.push({ clear: true });
         const changed =
           JSON.stringify(activeScene.customGates) !==
           JSON.stringify(e.value.customGates);
@@ -990,6 +1111,12 @@ export function validateRecording(value) {
             }
       } else if (e.vehicleId) {
         const c = contexts.get(e.vehicleId);
+        if (e.type === "inspection")
+          inspectionActions.push({
+            event: e,
+            scene: activeScene,
+            gimbal: structuredClone(c.setup.gimbal),
+          });
         if (e.type === "training") {
           c.setup.training = e.value;
           c.trainingEpochTime = e.time;
@@ -1070,6 +1197,41 @@ export function validateRecording(value) {
       sensorVehicles.push({ id: entry.id, sensors });
       return { id: entry.id, snapshot: state };
     });
+    for (const action of inspectionActions) {
+      if (action.clear) {
+        for (const context of contexts.values())
+          context.inspectionReceipts = [];
+        captureIds.clear();
+      } else {
+        const e = action.event,
+          context = contexts.get(e.vehicleId);
+        if (
+          captureIds.has(e.value.captureId) ||
+          context.inspectionReceipts.length >= 100
+        )
+          throw new Error("Duplicate or excessive inspection captures");
+        const receipt = validateInspectionReceipt(
+          e,
+          action.scene,
+          { tick, vehicles },
+          world.vehicles,
+          action.gimbal,
+        );
+        captureIds.add(receipt.captureId);
+        context.inspectionReceipts.push(receipt);
+      }
+    }
+    for (const [i, vehicle] of vehicles.entries()) {
+      const expected = activeScene.inspectionTargets.length
+        ? inspectionSummary(
+            contexts.get(vehicle.id).inspectionReceipts,
+            activeScene.inspectionTargets,
+          )
+        : null;
+      if (!inspectionEqual(input.vehicles[i].snapshot.inspection, expected))
+        throw new Error("Inspection progress disagrees with retained receipts");
+      vehicle.snapshot.inspection = structuredClone(expected);
+    }
     const contacts = collisions(input.collisions, world.vehicles, tick, time);
     for (const contact of contacts)
       for (const id of contact.vehicleIds) {
@@ -1187,8 +1349,33 @@ export function recordingWorldAt(record, index) {
       snapshot: frame.vehicles[i].snapshot,
       sensors: record.sensorFrames[index].vehicles[i].sensors,
       training: frame.vehicles[i].snapshot.training,
+      inspection: frame.vehicles[i].snapshot.inspection,
     })),
   };
+}
+export function recordingInspectionReport(record, index, vehicleId) {
+  const state = recordingWorldAt(record, index);
+  if (!state.vehicles.some((v) => v.id === vehicleId))
+    throw new Error("Unknown inspection source vehicle");
+  let receipts = [];
+  for (const e of record.events) {
+    if (e.tick > state.tick) break;
+    if (e.type === "scene") receipts = [];
+    else if (e.type === "inspection" && e.vehicleId === vehicleId)
+      receipts.push(e.receipt);
+  }
+  const { latest, ...summary } = inspectionSummary(
+    receipts,
+    state.scene.inspectionTargets,
+  );
+  return structuredClone({
+    format: "flight-lab-inspection",
+    version: 1,
+    sourceVehicleId: vehicleId,
+    scene: state.scene,
+    receipts,
+    summary,
+  });
 }
 export function recordingToCsv(record) {
   const clean = validateRecording(record);
