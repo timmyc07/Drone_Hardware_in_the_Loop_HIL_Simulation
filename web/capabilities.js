@@ -533,7 +533,8 @@ export const CAPABILITIES = [
     id: "magnetometer",
     category: "感測與通訊",
     title: "磁力計",
-    description: "輸出簡化固定磁場的機體座標讀數；沒有地磁模型或實體校準。",
+    description:
+      "內建模式輸出簡化固定磁場；PX4 SITL 使用 WMM-2020 查表，均未實機校準。",
     status: "partial",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/sensors.md"],
   },
@@ -784,8 +785,9 @@ export const CAPABILITIES = [
     id: "sitl-px4",
     category: "資料與整合",
     title: "PX4 SITL",
-    description: "連接實際 PX4 軟體飛行堆疊。",
-    status: "external",
+    description:
+      "本機連接指定 PX4 v1.17.0 四旋翼閉環；固定翼、VTOL 與其他版本尚未支援。",
+    status: "partial",
     sources: [
       "https://github.com/PX4/PX4-Autopilot/blob/main/docs/en/simulation/index.md",
       "https://www.simnet.aero/post/autonomous-sitl-flight-simulation-tutorial",
@@ -816,8 +818,9 @@ export const CAPABILITIES = [
     id: "mavlink",
     category: "資料與整合",
     title: "MAVLink 模擬介面",
-    description: "與支援的飛控或地面站交換資料。",
-    status: "external",
+    description:
+      "本機 PX4 SITL 使用 MAVLink 模擬感測器及執行器通訊；不提供通用地面站連接或實體 HIL。",
+    status: "partial",
     sources: [
       "https://github.com/PX4/PX4-Autopilot/blob/main/docs/en/simulation/index.md",
     ],

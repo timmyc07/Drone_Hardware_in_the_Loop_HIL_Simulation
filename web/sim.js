@@ -167,8 +167,31 @@ function angles(q) {
     Math.atan2(r[3], r[0]),
   ];
 }
-export function createSimulation(configuration = {}) {
+export function createSimulation(configuration = {}, options = {}) {
   const config = validateConfig(configuration);
+  if (
+    !options ||
+    Object.getPrototypeOf(options) !== Object.prototype ||
+    Object.keys(options).some((key) => key !== "controlSource")
+  )
+    throw new Error("Simulation options must be a plain controlSource object");
+  const controlSource = options.controlSource ?? "internal";
+  if (!["internal", "external"].includes(controlSource))
+    throw new Error("controlSource must be internal or external");
+  const external = controlSource === "external";
+  if (external && (config.airframe !== "quadrotor" || !config.startOnGround))
+    throw new Error(
+      "External control requires quadrotor and startOnGround=true",
+    );
+  let externalInput = null,
+    externalPending = false,
+    externalTimeUs = 0;
+  const requireInternal = () => {
+    if (external)
+      throw new Error(
+        "Internal flight commands are disabled under external control",
+      );
+  };
   const lever = config.arm / Math.SQRT2;
   const hasWing = config.airframe !== "quadrotor";
   const fixedWing = config.airframe === "fixedwing";
@@ -292,6 +315,9 @@ export function createSimulation(configuration = {}) {
         Math.sqrt(-2 * Math.log(random())) *
         Math.cos(2 * Math.PI * random());
   function reset() {
+    externalInput = null;
+    externalPending = false;
+    externalTimeUs = 0;
     time = 0;
     state = [
       0,
@@ -1721,12 +1747,86 @@ export function createSimulation(configuration = {}) {
     );
   }
   function step(dt = 0.005) {
+    if (external) throw new Error("External control requires stepExternal()");
+    return integrate(dt);
+  }
+  function applyExternalActuators(input) {
+    if (!external)
+      throw new Error("External actuators require external control");
+    if (
+      !input ||
+      Object.getPrototypeOf(input) !== Object.prototype ||
+      Object.keys(input).some(
+        (key) =>
+          !["sequence", "timeUs", "armed", "rotorSpeedCommands"].includes(key),
+      ) ||
+      !Number.isSafeInteger(input.sequence) ||
+      input.sequence <= 0 ||
+      input.sequence <= (externalInput?.sequence ?? 0) ||
+      externalPending ||
+      !Number.isSafeInteger(input.timeUs) ||
+      input.timeUs !== externalTimeUs ||
+      typeof input.armed !== "boolean" ||
+      !Array.isArray(input.rotorSpeedCommands) ||
+      input.rotorSpeedCommands.length !== 4 ||
+      !Array.from(input.rotorSpeedCommands).every(
+        (value) => Number.isFinite(value) && value >= 0 && value <= 1,
+      )
+    )
+      throw new Error(
+        "External input requires a fresh positive sequence, exact plant timeUs, armed boolean and four rotor speeds in [0,1]",
+      );
+    externalInput = {
+      ...input,
+      rotorSpeedCommands: [...input.rotorSpeedCommands],
+    };
+    externalPending = true;
+  }
+  function stepExternal(dt = 0.004) {
+    if (!external) throw new Error("stepExternal requires external control");
+    if (
+      !Number.isFinite(dt) ||
+      dt <= 0 ||
+      dt > 0.02 ||
+      !Number.isSafeInteger(dt * 1e6)
+    )
+      throw new Error(
+        "External dt must be positive integer microseconds and at most 0.02 seconds",
+      );
+    if (!externalPending)
+      throw new Error(
+        "A fresh external actuator input is required for each step",
+      );
+    const result = integrate(dt);
+    externalPending = false;
+    externalTimeUs += Math.round(dt * 1e6);
+    return result;
+  }
+  function readSensors() {
+    const acceleration = derivative(state).slice(3, 6);
+    // Flat unilateral ground support cancels downward acceleration, including while armed.
+    if (state[2] >= -1e-9 && state[5] >= 0)
+      acceleration[2] = Math.min(0, acceleration[2]);
+    acceleration[2] -= G;
+    return {
+      timeUs: external ? externalTimeUs : Math.round(time * 1e6),
+      positionNed: state.slice(0, 3),
+      velocityNed: state.slice(3, 6),
+      quaternionWxyz: state.slice(6, 10),
+      ratesFrd: state.slice(10, 13),
+      specificForceFrd: inverseRotate(
+        rotation(state.slice(6, 10)),
+        acceleration,
+      ),
+    };
+  }
+  function integrate(dt) {
     if (!Number.isFinite(dt) || dt <= 0 || dt > 0.02)
       throw new Error("dt must be greater than zero and at most 0.02 seconds");
     const previousTarget = target;
     const elapsed = time - scenarioStart;
     target = { ...baseTarget };
-    if (scenario === "step" && elapsed >= 2 && elapsed < 6)
+    if (!external && scenario === "step" && elapsed >= 2 && elapsed < 6)
       target.roll = Math.PI / 18;
     if (config.turbulence > 0) {
       if (time >= nextTurbulence) {
@@ -1744,9 +1844,17 @@ export function createSimulation(configuration = {}) {
       previousCommands = commands,
       previousPusher = pusherCommand,
       previousSurfaces = surfaceCommands;
-    sample();
-    navigate(dt);
-    control(dt);
+    if (external) {
+      armed = externalInput.armed && !crashed && !failed && battery.soc > 0;
+      launchAuthorized = armed;
+      commands = armed ? [...externalInput.rotorSpeedCommands] : [0, 0, 0, 0];
+      pusherCommand = 0;
+      surfaceCommands = [0, 0, 0];
+    } else {
+      sample();
+      navigate(dt);
+      control(dt);
+    }
     const add = (s, k, f) => s.map((v, i) => v + k[i] * f);
     const a = derivative(state),
       b = derivative(add(state, a, dt / 2));
@@ -1882,6 +1990,10 @@ export function createSimulation(configuration = {}) {
     battery = batterySnapshot();
     if (battery.soc <= 0) disarm();
     time += dt;
+    if (external) {
+      const sensors = readSensors();
+      imu = { accel: sensors.specificForceFrd, gyro: sensors.ratesFrd };
+    }
     steps++;
     wind = currentWind();
     // Cumulative roll/pitch tracking norm in radians; altitude tracked separately in meters.
@@ -1900,6 +2012,17 @@ export function createSimulation(configuration = {}) {
   function snapshot() {
     return {
       time,
+      ...(external
+        ? {
+            controlSource,
+            externalInput: externalInput
+              ? {
+                  ...externalInput,
+                  rotorSpeedCommands: [...externalInput.rotorSpeedCommands],
+                }
+              : null,
+          }
+        : {}),
       position: state.slice(0, 3),
       velocity: state.slice(3, 6),
       quaternion: state.slice(6, 10),
@@ -1958,24 +2081,33 @@ export function createSimulation(configuration = {}) {
       wind: [...wind],
     };
   }
+  const internalCommand =
+    (fn) =>
+    (...args) => {
+      requireInternal();
+      return fn(...args);
+    };
   reset();
   return {
-    setTargets,
+    setTargets: internalCommand(setTargets),
     setScenario,
     gust,
     step,
+    applyExternalActuators,
+    stepExternal,
+    readSensors,
     snapshot,
     reset,
-    setMode,
-    setPositionTarget,
-    setMission,
-    takeoff,
-    arm,
-    disarm,
+    setMode: internalCommand(setMode),
+    setPositionTarget: internalCommand(setPositionTarget),
+    setMission: internalCommand(setMission),
+    takeoff: internalCommand(takeoff),
+    arm: internalCommand(arm),
+    disarm: internalCommand(disarm),
     injectFault,
     clearFaults,
     setObstacles,
-    setTransition,
-    abortTakeoff,
+    setTransition: internalCommand(setTransition),
+    abortTakeoff: internalCommand(abortTakeoff),
   };
 }

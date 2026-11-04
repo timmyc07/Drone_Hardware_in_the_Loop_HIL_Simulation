@@ -6,6 +6,7 @@ import {
   recordingToJson,
 } from "./recording.js";
 import { readPilotInput, takeoffPlayAction } from "./input.js";
+import { createHilClient, isCompanionOrigin } from "./hil-client.js";
 import { createFlightApi } from "./api.js";
 import {
   DEFAULT_CAMERA_CONFIG,
@@ -82,14 +83,20 @@ function confirmAction(message) {
 }
 let timing = {};
 let firstState = true;
+let externalActive = false;
+let hilClient;
+let hilState;
+let internalSaved;
 const worker = new Worker(new URL("./worker.js", import.meta.url), {
   type: "module",
 });
 let requestId = 0;
 const pendingApi = new Map();
 const apiSubscribers = new Set();
-function requestApi(command) {
-  if (replay)
+function requestApi(command, internal = false) {
+  if (externalActive && !internal)
+    return Promise.reject(new Error("請先回到內建模擬再使用程式介面"));
+  if (replay && !internal)
     return Promise.reject(new Error("請先離開重播模式再使用程式介面"));
   if (command.type === "getCameraConfig")
     return Promise.resolve({ ...cameraConfig });
@@ -148,9 +155,15 @@ function setPlaying(value) {
         : latest?.time > 0
           ? "繼續模擬"
           : "開始模擬";
-  $("play").innerHTML = value
-    ? '<span aria-hidden="true">Ⅱ</span> 暫停模擬'
-    : `<span aria-hidden="true">▶</span> ${playLabel}`;
+  const externalTakeoff =
+    externalActive &&
+    hilState?.phase === "running" &&
+    latest?.runway.weightOnWheels;
+  $("play").innerHTML = externalTakeoff
+    ? '<span aria-hidden="true">▶</span> PX4 起飛'
+    : value
+      ? '<span aria-hidden="true">Ⅱ</span> 暫停模擬'
+      : `<span aria-hidden="true">▶</span> ${externalActive ? "繼續 PX4 模擬" : playLabel}`;
   $("runtime-status").textContent = replay
     ? "紀錄重播"
     : value
@@ -177,7 +190,8 @@ function setPlaying(value) {
             : latest?.time > 0
               ? "已暫停"
               : "準備就緒";
-  $("view-status").innerHTML = `<span class="dot"></span>${label}`;
+  $("view-status").innerHTML =
+    `<span class="dot"></span>${externalActive ? (hilState?.controller?.verified === true && hilState?.stats?.sensorPackets > 0 && hilState?.stats?.actuatorPackets > 0 ? "PX4 SITL 閉環 · 植物模型真值" : "PX4 介接中") : label}`;
 }
 
 const targets = [
@@ -258,7 +272,7 @@ for (const t of targets) {
 $("motor-bars").innerHTML = [1, 2, 3, 4]
   .map(
     (i) =>
-      `<div class="motor-row"><span class="motor-name">M${i}</span><div class="motor-track"><div id="motor-${i}" class="motor-fill"></div></div><span class="motor-reading"><span id="pwm-${i}">—</span> <small>µs</small></span></div>`,
+      `<div class="motor-row"><span class="motor-name">M${i}</span><div class="motor-track"><div id="motor-${i}" class="motor-fill"></div></div><span class="motor-reading"><span id="pwm-${i}">—</span> <small id="motor-unit-${i}">µs</small></span></div>`,
   )
   .join("");
 
@@ -476,6 +490,10 @@ document.querySelectorAll("[data-scenario]").forEach((button) => {
 });
 let launchPending = false;
 async function launchFlight() {
+  if (externalActive) {
+    await sendHilCommand("takeoff");
+    return;
+  }
   if (launchPending || replay || storageLimited) return;
   if (!latest) {
     toast("模擬器尚未準備完成。");
@@ -499,6 +517,13 @@ async function launchFlight() {
   }
 }
 $("play").onclick = () => {
+  if (externalActive) {
+    if (hilState?.phase === "paused") sendHilCommand("resume");
+    else if (hilState?.phase === "running" && latest?.runway.weightOnWheels)
+      sendHilCommand("takeoff");
+    else if (hilState?.phase === "running") sendHilCommand("pause");
+    return;
+  }
   if (storageLimited && !replay) {
     toast("紀錄已達資料上限，請匯出後重設。");
     return;
@@ -537,7 +562,7 @@ document.querySelectorAll("[data-camera]").forEach((button) => {
 $("render-toggle").onclick = () => {
   rendering = !rendering;
   scene?.setVisible(rendering);
-  worker.postMessage({ type: "render", value: rendering });
+  if (!externalActive) worker.postMessage({ type: "render", value: rendering });
   $("render-message").hidden = rendering;
   $("render-toggle").textContent = rendering ? "關閉渲染" : "開啟渲染";
   $("render-toggle").setAttribute("aria-pressed", String(rendering));
@@ -655,7 +680,7 @@ worker.onmessage = ({ data }) => {
     exportRecording(data.kind, data.recording);
     return;
   }
-  if (replay) return;
+  if (replay || externalActive) return;
   if (firstState) {
     firstState = false;
     worker.postMessage({
@@ -738,11 +763,20 @@ function updateTelemetry() {
     $(`target-${t.key}`).value = value;
     $(`output-${t.key}`).textContent = `${value.toFixed(1)} ${t.unit}`;
   }
-  const minutes = Math.floor(s.time / 60);
+  const centiseconds = Math.round(s.time * 100);
+  const minutes = Math.floor(centiseconds / 6000);
   $("sim-time").textContent =
-    `${String(minutes).padStart(2, "0")}:${(s.time % 60).toFixed(2).padStart(5, "0")}`;
+    `${String(minutes).padStart(2, "0")}:${((centiseconds % 6000) / 100).toFixed(2).padStart(5, "0")}`;
   $("altitude-value").textContent = (-s.position[2]).toFixed(2);
   $("altitude-target").textContent = s.target.altitude.toFixed(1);
+  $("altitude-target").parentElement.hidden = externalActive;
+  $("rmse-value").closest(".metric-card").hidden = externalActive;
+  document.querySelector(".target-panel").hidden = externalActive;
+  $("flight-mode").parentElement.hidden = externalActive;
+  document.querySelector(".legend-target").hidden = externalActive;
+  $("model-rate").innerHTML = externalActive
+    ? '<span class="dot"></span>4 ms 鎖步'
+    : '<span class="dot"></span>200 Hz 模型';
   $("roll-value").textContent = (s.attitude[0] * DEG).toFixed(2);
   $("pitch-value").textContent = (s.attitude[1] * DEG).toFixed(2);
   $("velocity-value").textContent = Math.hypot(...s.velocity).toFixed(2);
@@ -751,9 +785,21 @@ function updateTelemetry() {
   ).toFixed(2);
   $("rmse-value").textContent = (s.metrics.rmse * DEG).toFixed(2);
   for (let i = 0; i < 4; i++) {
-    $(`motor-${i + 1}`).style.width = `${s.motors[i] * 100}%`;
-    $(`pwm-${i + 1}`).textContent = Math.round(s.pwm[i]);
+    const command = s.externalInput?.rotorSpeedCommands?.[i];
+    $(`motor-${i + 1}`).style.width =
+      `${externalActive ? (command ?? 0) * 100 : s.motors[i] * 100}%`;
+    $(`pwm-${i + 1}`).textContent = externalActive
+      ? command == null
+        ? "—"
+        : Math.round(command * 100)
+      : Math.round(s.pwm[i]);
+    $(`motor-unit-${i + 1}`).textContent = externalActive ? "%" : "µs";
   }
+  $("motor-note").textContent = externalActive
+    ? "PX4 馬達通道映射後的正規化轉速指令；模型假設 THR_MDL_FAC=1。"
+    : "固定翼不使用升力旋翼；PWM 為模型換算值，未連接實體飛控。";
+  $("age-label").textContent = externalActive ? "馬達資料齡期" : "感測資料齡期";
+  $("drop-label").textContent = externalActive ? "封包校驗錯誤" : "模擬丟包";
   $("rtf-value").textContent = replay
     ? "重播"
     : timing.realTimeFactor
@@ -762,9 +808,17 @@ function updateTelemetry() {
   $("jitter-value").textContent = replay
     ? "—"
     : `${(timing.p95LateMs || 0).toFixed(2)} ms`;
-  $("age-value").textContent = `${(s.metrics.sampleAge * 1000).toFixed(0)} ms`;
-  $("drop-value").textContent = s.metrics.dropped.toLocaleString();
-  $("samples-value").textContent = sampleCount.toLocaleString();
+  $("age-value").textContent = externalActive
+    ? hilState?.stats?.lastActuatorAgeMs == null
+      ? "—"
+      : `${hilState.stats.lastActuatorAgeMs.toFixed(0)} ms`
+    : `${(s.metrics.sampleAge * 1000).toFixed(0)} ms`;
+  $("drop-value").textContent = externalActive
+    ? String(hilState?.stats?.crcErrors ?? 0)
+    : s.metrics.dropped.toLocaleString();
+  $("samples-value").textContent = externalActive
+    ? "—"
+    : sampleCount.toLocaleString();
   const kind = s.airframe;
   const wing = kind !== "quadrotor";
   $("airframe-eyebrow").textContent = {
@@ -877,9 +931,11 @@ function updateTelemetry() {
     crashed: "碰撞",
   };
   if (nav) $("flight-mode").value = nav.mode;
-  $("flight-details").textContent = nav
-    ? `模式：${modeLabels[nav.mode] || "未知"} · 航點 ${Math.min(nav.index + 1, nav.waypoints?.length || 0)}/${nav.waypoints?.length || 0}${nav.completed && nav.mode === "mission" ? "（任務完成）" : ""} · ${nav.fenceBreached ? "超出圍欄" : "圍欄內"} ${reasons[nav.reason] || ""} · ${s.armed ? "已解鎖" : "已上鎖"} · ${stateLabels[s.status] || "未知"}`
-    : `狀態：${stateLabels[s.status] || "未知"}`;
+  $("flight-details").textContent = externalActive
+    ? "PX4 控制；植物模型真值。飛控估測及圍欄狀態未提供。"
+    : nav
+      ? `模式：${modeLabels[nav.mode] || "未知"} · 航點 ${Math.min(nav.index + 1, nav.waypoints?.length || 0)}/${nav.waypoints?.length || 0}${nav.completed && nav.mode === "mission" ? "（任務完成）" : ""} · ${nav.fenceBreached ? "超出圍欄" : "圍欄內"} ${reasons[nav.reason] || ""} · ${s.armed ? "已解鎖" : "已上鎖"} · ${stateLabels[s.status] || "未知"}`
+      : `狀態：${stateLabels[s.status] || "未知"}`;
   if (s.status === "crashed") {
     $("runtime-status").textContent = "碰撞停機";
     $("view-status").innerHTML = '<span class="dot"></span>碰撞停機';
@@ -904,6 +960,7 @@ function updateTelemetry() {
     $("view-status").innerHTML =
       '<span class="dot"></span>斷訊保護 · 輸出已停用';
   }
+  if (externalActive) setExternalControls(true);
   drawChart();
 }
 
@@ -926,7 +983,7 @@ function drawChart() {
     ...visible.flatMap((s) => [
       Math.abs(s.attitude[0] * DEG),
       Math.abs(s.attitude[1] * DEG),
-      Math.abs(s.target.roll * DEG),
+      ...(externalActive ? [] : [Math.abs(s.target.roll * DEG)]),
     ]),
   );
   const extent = Math.ceil(max / 5) * 5;
@@ -946,7 +1003,9 @@ function drawChart() {
   for (const [color, get, dash] of [
     ["#75e1c6", (s) => s.attitude[0] * DEG, []],
     ["#f3b177", (s) => s.attitude[1] * DEG, []],
-    ["#91a5bf", (s) => s.target.roll * DEG, [4, 4]],
+    ...(!externalActive
+      ? [["#91a5bf", (s) => s.target.roll * DEG, [4, 4]]]
+      : []),
   ]) {
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.6;
@@ -1007,6 +1066,10 @@ document.addEventListener("visibilitychange", () => {
     $("camera-live").checked = false;
   }
   if (document.hidden && running) {
+    if (externalActive) {
+      sendHilCommand("pause");
+      return;
+    }
     if (replay) setPlaying(false);
     else worker.postMessage({ type: "pause" });
     toast("背景分頁已自動暫停。返回後可繼續。");
@@ -1074,7 +1137,7 @@ function drawMission() {
     ctx.fill();
     ctx.fillText(String(i + 1), x + 7, y - 5);
   });
-  scene?.setMission(waypoints);
+  scene?.setMission(externalActive ? [] : waypoints);
 }
 function renderWaypoints() {
   const list = $("waypoint-list");
@@ -1099,7 +1162,7 @@ function renderWaypoints() {
       input.max = max;
       input.step = "0.1";
       input.value = point[key];
-      input.disabled = !!replay;
+      input.disabled = !!replay || externalActive;
       input.onchange = () => {
         const value = Number(input.value);
         if (Number.isFinite(value) && value >= min && value <= max) {
@@ -1116,7 +1179,7 @@ function renderWaypoints() {
     const remove = document.createElement("button");
     remove.type = "button";
     remove.textContent = "移除";
-    remove.disabled = !!replay;
+    remove.disabled = !!replay || externalActive;
     remove.onclick = () => {
       waypoints.splice(index, 1);
       renderWaypoints();
@@ -1127,7 +1190,7 @@ function renderWaypoints() {
   drawMission();
 }
 map.onclick = (event) => {
-  if (replay || waypoints.length >= 50) return;
+  if (replay || externalActive || waypoints.length >= 50) return;
   const rect = map.getBoundingClientRect();
   waypoints.push({
     north:
@@ -1209,15 +1272,15 @@ $("training-select").onchange = () => {
 };
 $("flight-mode").onchange = (event) =>
   worker.postMessage({ type: "mode", value: event.target.value });
-document
-  .querySelectorAll("[data-command]")
-  .forEach(
-    (button) =>
-      (button.onclick = () =>
-        button.dataset.command === "takeoff"
-          ? launchFlight()
-          : worker.postMessage({ type: button.dataset.command })),
-  );
+document.querySelectorAll("[data-command]").forEach(
+  (button) =>
+    (button.onclick = () => {
+      if (externalActive) return sendHilCommand(button.dataset.command);
+      return button.dataset.command === "takeoff"
+        ? launchFlight()
+        : worker.postMessage({ type: button.dataset.command });
+    }),
+);
 document.querySelectorAll("[data-mode]").forEach(
   (button) =>
     (button.onclick = () => {
@@ -1294,7 +1357,7 @@ for (const button of document.querySelectorAll("[data-workspace]"))
       item.classList.toggle("active", item === button);
       item.setAttribute("aria-pressed", String(item === button));
     }
-    for (const name of ["mission", "training", "sensors", "catalog"])
+    for (const name of ["mission", "training", "sensors", "hil", "catalog"])
       $(`${name}-workspace`).hidden = button.dataset.workspace !== name;
     document.querySelector(".workspace").hidden =
       button.dataset.workspace === "catalog";
@@ -1360,7 +1423,7 @@ let pilotTime = 0;
 let pilotWasActive = false;
 function releasePilot() {
   keys.clear();
-  if (pilotWasActive && !replay)
+  if (pilotWasActive && !replay && !externalActive)
     worker.postMessage({
       type: "targets",
       value: { roll: 0, pitch: 0, yawRate: 0 },
@@ -1378,6 +1441,7 @@ window.addEventListener("keydown", (event) => {
   if (
     !$("pilot-enable").checked ||
     replay ||
+    externalActive ||
     event.target.closest("input,select,textarea,button,dialog")
   )
     return;
@@ -1411,6 +1475,7 @@ function updatePilot(now) {
     !$("pilot-enable").checked ||
     !running ||
     replay ||
+    externalActive ||
     !latest ||
     document.hidden ||
     now - pilotTime < 50
@@ -1951,3 +2016,250 @@ function updateCameraLive(now) {
   });
 }
 updateCameraStatus();
+
+const isLocalCompanion = isCompanionOrigin(window.location);
+$("hil-remote-notice").hidden = isLocalCompanion;
+$("hil-local-controls").hidden = !isLocalCompanion;
+let hilOwned = false;
+let hilExportedPackets = 0;
+function setExternalControls(disabled) {
+  const selector =
+    "#reset, #settings-open, #speed, #import-open, #target-controls input, #gust, [data-scenario], #mission-workspace input, #mission-workspace button:not(#mission-export), #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #sensor-export-csv, #flight-mode, [data-mode], #position-apply, #fault-apply, #fault-link, #fault-clear, #fault-pusher, #abort-takeoff, #transition-hover, #transition-cruise, #pilot-enable";
+  document.querySelectorAll(selector).forEach((element) => {
+    element.disabled = disabled;
+  });
+  if (disabled) {
+    $("pilot-enable").checked = false;
+    releasePilot();
+  }
+  document.querySelectorAll("[data-command]").forEach((button) => {
+    button.disabled = disabled && hilState?.phase !== "running";
+  });
+  renderWaypoints();
+  $("play").disabled =
+    disabled && !["running", "paused"].includes(hilState?.phase);
+}
+function presentHilState(state) {
+  hilState = state;
+  for (const button of document.querySelectorAll("[data-hil-command]")) {
+    const action = button.dataset.hilCommand;
+    button.disabled =
+      !externalActive ||
+      (action === "stop"
+        ? !["starting", "running", "paused", "fault"].includes(state.phase)
+        : action === "resume"
+          ? state.phase !== "paused"
+          : state.phase !== "running");
+  }
+  $("hil-return").disabled = !externalActive;
+  $("hil-export").disabled = !hilClient || !state.snapshot;
+  const phases = {
+    idle: "待命",
+    starting: "啟動中",
+    running: "運行中",
+    paused: "已暫停",
+    fault: "發生錯誤",
+    stopped: "已停止",
+  };
+  const connected =
+    state.controller?.verified === true &&
+    state.stats?.sensorPackets > 0 &&
+    state.stats?.actuatorPackets > 0;
+  $("hil-status").textContent =
+    `${phases[state.phase] || "未知狀態"}${connected ? " · PX4 SITL 閉環／植物模型真值" : " · 等待飛控資料"}`;
+  const c = state.controller;
+  $("hil-controller").textContent = c
+    ? `PX4 ${c.version || "—"} · 版本 ${c.sourceSha || "—"} · 機型 ${c.sysAutostart ?? "—"} · ${c.armed ? "已解鎖" : "未解鎖"} · 飛行模式 ${c.flightMode || "—"} · 估測 ${c.estimated == null ? "未提供" : "已提供"}`
+    : "飛控尚未就緒";
+  const stats = state.stats;
+  $("hil-stats").textContent = stats
+    ? `感測封包 ${stats.sensorPackets ?? 0} · 馬達封包 ${stats.actuatorPackets ?? 0} · 校驗錯誤 ${stats.crcErrors ?? 0} · 馬達資料齡期 ${stats.lastActuatorAgeMs == null ? "—" : `${Number(stats.lastActuatorAgeMs).toFixed(0)} ms`}`
+    : "";
+  $("hil-logs").textContent = Array.isArray(state.logs)
+    ? state.logs
+        .slice(-40)
+        .map((line) => String(line))
+        .join("\n")
+    : "";
+  if (!externalActive) return;
+  if (state.snapshot?.controlSource === "external") {
+    latest = state.snapshot;
+    if (state.sensors) {
+      sensors = state.sensors;
+      renderSensors();
+    }
+    history.push(latest);
+    while (history.length > 400) history.shift();
+    timing = {};
+    setPlaying(state.phase === "running");
+    updateTelemetry();
+  }
+  setExternalControls(true);
+}
+async function connectHil() {
+  if (hilClient) return;
+  const client = createHilClient({
+    location: window.location,
+    fetch: window.fetch.bind(window),
+    WebSocket: window.WebSocket,
+    onState: presentHilState,
+    onDisconnect: () => {
+      hilClient = undefined;
+      if (externalActive) {
+        hilState = { ...hilState, phase: "fault" };
+        setPlaying(false);
+        setExternalControls(true);
+        $("hil-status").textContent = "本機連線已中斷；請返回內建模擬。";
+      }
+    },
+  });
+  await client.connect();
+  hilClient = client;
+}
+async function sendHilCommand(command) {
+  if (!hilClient || !externalActive) return;
+  try {
+    await hilClient.request("command", command);
+    if (command === "takeoff") {
+      document.querySelector('[data-workspace="flight"]').click();
+      if (!rendering) $("render-toggle").click();
+      document.querySelector('[data-camera="follow"]').click();
+      $("viewport").scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    toast("命令已送出，請確認飛控狀態與高度回饋。");
+  } catch (error) {
+    toast(`飛控命令失敗：${error.message}`);
+  }
+}
+$("hil-start").onclick = async () => {
+  if (!isLocalCompanion || externalActive) return;
+  if (replay) return toast("請先結束重播並返回內建模擬。");
+  $("hil-start").disabled = true;
+  try {
+    await connectHil();
+    const existing = await hilClient.request("inspect");
+    const reattach =
+      ["starting", "running", "paused", "fault"].includes(existing.phase) &&
+      existing.snapshot;
+    const binaryPath = $("hil-binary").value.trim();
+    if (!reattach) {
+      if (!binaryPath) {
+        toast("請輸入 PX4 執行檔完整路徑。");
+        return;
+      }
+      if (config.airframe !== "quadrotor" || !config.startOnGround) {
+        toast("請在管理參數選擇四旋翼及地面起始後再啟動。");
+        return;
+      }
+      if (
+        (existing.stats?.actuatorPackets ?? 0) > hilExportedPackets &&
+        !(await confirmAction(
+          "啟動新飛控將取代尚未匯出的 SITL 紀錄。確定繼續？",
+        ))
+      )
+        return;
+    }
+    const paused = await requestApi({ type: "pause" });
+    internalSaved = {
+      state: paused,
+      history: [...history],
+      sampleCount,
+      timing,
+      config,
+      scenario,
+    };
+    clearCameraPreview();
+    externalActive = true;
+    hilOwned = true;
+    history = [];
+    sensors = undefined;
+    $("sensor-readings").textContent =
+      "PX4 外部模式未提供此工作區的感測器讀值。";
+    drawLidar(null);
+    scene?.setSensorScan(null);
+    scene?.setObstacles([]);
+    scene?.setMission([]);
+    scene?.setGates([]);
+    presentHilState(reattach ? existing : { phase: "starting" });
+    setExternalControls(true);
+    if (reattach) toast("已接回 PX4；模擬保持目前狀態，請自行選擇是否繼續。");
+    else {
+      await hilClient.request("start", { binaryPath, config });
+      hilExportedPackets = 0;
+      toast("PX4 啟動請求已送出，請等待飛控資料。");
+    }
+  } catch (error) {
+    toast(`無法啟動或接回 PX4：${error.message}`);
+    if (externalActive) await returnInternal(false);
+  } finally {
+    $("hil-start").disabled = externalActive;
+  }
+};
+document
+  .querySelectorAll("[data-hil-command]")
+  .forEach(
+    (button) =>
+      (button.onclick = () => sendHilCommand(button.dataset.hilCommand)),
+  );
+async function returnInternal(stop = true) {
+  if (!externalActive) return;
+  if (stop && hilOwned) {
+    try {
+      if (!hilClient) await connectHil();
+      await hilClient.request("command", "stop");
+    } catch (error) {
+      toast(`無法停止 PX4：${error.message}`);
+      return;
+    }
+  }
+  let current;
+  try {
+    current = await requestApi({ type: "inspect" }, true);
+  } catch (error) {
+    toast(`無法恢復內建模擬：${error.message}`);
+    return;
+  }
+  clearCameraPreview();
+  externalActive = false;
+  hilOwned = false;
+  config = internalSaved.config;
+  scenario = internalSaved.scenario;
+  history = internalSaved.history;
+  sampleCount = internalSaved.sampleCount;
+  timing = internalSaved.timing;
+  latest = current.snapshot;
+  sensors = current.sensors;
+  if (current.setup)
+    for (const key of ["environment", "obstacles", "mission", "training"])
+      showReplayEvent(key, current.setup[key]);
+  setExternalControls(false);
+  setPlaying(false);
+  updateTelemetry();
+  if (sensors) renderSensors();
+  $("hil-start").disabled = false;
+  for (const button of document.querySelectorAll("[data-hil-command]"))
+    button.disabled = true;
+  $("hil-return").disabled = true;
+  $("hil-status").textContent = "已返回內建模擬；原實驗紀錄已保留。";
+}
+$("hil-return").onclick = () => returnInternal();
+$("hil-export").onclick = async () => {
+  try {
+    if (!hilClient) throw new Error("本機服務尚未連線。");
+    const exportedPackets = hilState?.stats?.actuatorPackets ?? 0;
+    download(
+      await hilClient.recording(),
+      "json",
+      "application/json",
+      "flight-lab-px4-sitl.json",
+    );
+    hilExportedPackets = exportedPackets;
+  } catch (error) {
+    toast(`無法匯出 SITL 紀錄：${error.message}`);
+  }
+};
+
+for (const button of document.querySelectorAll("[data-hil-command]"))
+  button.disabled = true;
+$("hil-return").disabled = true;
+$("hil-export").disabled = true;

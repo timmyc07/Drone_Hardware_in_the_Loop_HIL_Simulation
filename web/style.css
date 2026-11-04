@@ -1460,3 +1460,16 @@ select:disabled {
   height: 0.8em;
   border: 1px solid #bbcbd3;
 }
+.hil-logs {
+  max-height: 18rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #101c2d;
+  padding: 1rem;
+  border-radius: 6px;
+  color: #c6d7df;
+}
+#hil-binary {
+  width: min(36rem, 100%);
+}

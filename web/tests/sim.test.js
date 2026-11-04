@@ -1159,3 +1159,139 @@ test("pusher failure just after liftoff glides onto the remaining runway and bra
   assert.ok(stopped.position[0] < RUNWAY.endNorth);
   assert.ok(Math.hypot(...stopped.velocity) < 0.01);
 });
+
+test("external plant validates commands atomically and consumes each tick once", () => {
+  const sim = createSimulation(
+    { startOnGround: true },
+    { controlSource: "external" },
+  );
+  const initial = sim.snapshot();
+  for (const invoke of [
+    () => sim.step(),
+    () => sim.arm(),
+    () => sim.setTargets({ altitude: 2 }),
+    () => sim.setMode("position"),
+    () => sim.takeoff(),
+  ])
+    assert.throws(invoke);
+  const input = {
+    sequence: 1,
+    timeUs: 0,
+    armed: true,
+    rotorSpeedCommands: [0, 0, 0, 0],
+  };
+  for (const bad of [
+    { ...input, timeUs: 1 },
+    { ...input, sequence: 0 },
+    { ...input, armed: 1 },
+    { ...input, rotorSpeedCommands: [0, NaN, 0, 0] },
+    { ...input, rotorSpeedCommands: Array(4) },
+  ]) {
+    assert.throws(() => sim.applyExternalActuators(bad));
+    assert.deepEqual(sim.snapshot(), initial);
+  }
+  sim.applyExternalActuators(input);
+  assert.throws(() => sim.applyExternalActuators({ ...input, sequence: 2 }));
+  sim.stepExternal();
+  assert.equal(sim.readSensors().timeUs, 4000);
+  assert.throws(() => sim.stepExternal());
+  assert.throws(() => sim.applyExternalActuators({ ...input, timeUs: 4000 }));
+  sim.applyExternalActuators({ ...input, sequence: 2, timeUs: 4000 });
+  sim.stepExternal();
+  near(sim.snapshot().time, 0.008);
+  assert.deepEqual(sim.snapshot().target, initial.target);
+  sim.reset();
+  assert.deepEqual(sim.snapshot(), initial);
+});
+
+function externalAdvance(sim, seconds, speeds, dt = 0.004) {
+  for (let i = 0; i < Math.round(seconds / dt); i++) {
+    const sequence = (sim.snapshot().externalInput?.sequence ?? 0) + 1;
+    sim.applyExternalActuators({
+      sequence,
+      timeUs: sim.readSensors().timeUs,
+      armed: true,
+      rotorSpeedCommands: speeds,
+    });
+    sim.stepExternal(dt);
+  }
+  return sim.snapshot();
+}
+
+test("external sensors report current supported specific force and collective physically lifts off", () => {
+  const sim = createSimulation(
+    { startOnGround: true },
+    { controlSource: "external" },
+  );
+  assert.deepEqual(sim.readSensors().specificForceFrd, [0, 0, -9.80665]);
+  externalAdvance(sim, 0.2, [0, 0, 0, 0]);
+  assert.deepEqual(sim.readSensors().specificForceFrd, [0, 0, -9.80665]);
+  const state = externalAdvance(sim, 1, [0.7, 0.7, 0.7, 0.7]);
+  assert.ok(state.position[2] < -0.5);
+  assert.ok(state.velocity[2] < -1);
+  assert.deepEqual(sim.readSensors().positionNed, state.position);
+  assert.equal(sim.readSensors().timeUs, 1200000);
+  const sensors = sim.readSensors();
+  sensors.positionNed[0] = 999;
+  assert.equal(sim.readSensors().positionNed[0], 0);
+});
+
+test("external individual rotor torques match FR RR RL FL signs", () => {
+  const signs = [
+    [-1, 1, 1],
+    [-1, -1, -1],
+    [1, -1, 1],
+    [1, 1, -1],
+  ];
+  for (let rotor = 0; rotor < 4; rotor++) {
+    const sim = createSimulation(
+      { startOnGround: true },
+      { controlSource: "external" },
+    );
+    const speeds = [0, 0, 0, 0];
+    speeds[rotor] = 0.6;
+    const state = externalAdvance(sim, 0.04, speeds);
+    state.rates.forEach((value, axis) =>
+      assert.equal(Math.sign(value), signs[rotor][axis]),
+    );
+  }
+});
+
+test("external RK4 collective flight converges across integration steps without internal guidance", () => {
+  const run = (dt) =>
+    externalAdvance(
+      createSimulation({ startOnGround: true }, { controlSource: "external" }),
+      1,
+      [0.65, 0.65, 0.65, 0.65],
+      dt,
+    );
+  const a = run(0.004),
+    b = run(0.002);
+  near(a.position[2], b.position[2], 0.002);
+  near(a.velocity[2], b.velocity[2], 0.002);
+  assert.throws(() => createSimulation({}, { controlSource: "external" }));
+  assert.throws(() =>
+    createSimulation(
+      { airframe: "fixedwing", startOnGround: true },
+      { controlSource: "external" },
+    ),
+  );
+});
+
+test("external plant retains physical motor faults and empty-battery inhibition", () => {
+  const options = { controlSource: "external" };
+  const healthy = createSimulation({ startOnGround: true }, options);
+  const damaged = createSimulation({ startOnGround: true }, options);
+  damaged.injectFault("motor", { index: 0, efficiency: 0 });
+  const a = externalAdvance(healthy, 0.1, [0.7, 0.7, 0.7, 0.7]);
+  const b = externalAdvance(damaged, 0.1, [0.7, 0.7, 0.7, 0.7]);
+  assert.ok(Math.hypot(...b.rates) > Math.hypot(...a.rates) + 0.1);
+  const empty = createSimulation(
+    { startOnGround: true, batteryInitialSoc: 0 },
+    options,
+  );
+  const c = externalAdvance(empty, 0.1, [1, 1, 1, 1]);
+  assert.equal(c.armed, false);
+  assert.deepEqual(c.motors, [0, 0, 0, 0]);
+  assert.deepEqual(c.position, [0, 0, 0]);
+});

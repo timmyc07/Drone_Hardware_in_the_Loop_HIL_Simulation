@@ -1,0 +1,144 @@
+export function isCompanionOrigin(location) {
+  return (
+    location.protocol === "http:" &&
+    ["127.0.0.1", "localhost"].includes(location.hostname) &&
+    location.port === "8787"
+  );
+}
+export function createHilClient({
+  location,
+  fetch,
+  WebSocket,
+  onState,
+  onDisconnect,
+  timeoutMs = 15000,
+}) {
+  if (!isCompanionOrigin(location))
+    throw new Error("請使用本機 companion 網址。");
+  let token,
+    socket,
+    serial = 0;
+  const pending = new Map();
+  const rejectPending = (message) => {
+    for (const item of pending.values()) {
+      clearTimeout(item.timer);
+      item.reject(new Error(message));
+    }
+    pending.clear();
+  };
+  async function connect() {
+    const response = await fetch("/api/bootstrap", { cache: "no-store" });
+    if (!response.ok) throw new Error("無法連接本機服務。");
+    const initial = await response.json();
+    if (
+      typeof initial.token !== "string" ||
+      !initial.token ||
+      initial.wsPath !== "/bridge"
+    )
+      throw new Error("本機服務回應無效。");
+    token = initial.token;
+    const url = new URL(initial.wsPath, location.href);
+    url.protocol = "ws:";
+    url.searchParams.set("token", token);
+    if (initial.state) onState(initial.state);
+    socket = new WebSocket(url.href);
+    let rejectOpen;
+    socket.onmessage = (event) => {
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (
+        data?.type === "state" &&
+        data.value &&
+        typeof data.value === "object"
+      )
+        onState(data.value);
+      else if (data?.type === "reply" && Number.isSafeInteger(data.id)) {
+        const item = pending.get(data.id);
+        if (!item) return;
+        pending.delete(data.id);
+        clearTimeout(item.timer);
+        if (data.ok === true) item.resolve(data.value);
+        else
+          item.reject(
+            new Error(
+              typeof data.error === "string"
+                ? data.error
+                : "本機服務拒絕操作。",
+            ),
+          );
+      }
+    };
+    socket.onclose = () => {
+      token = undefined;
+      rejectOpen?.(new Error("本機連線已中斷。"));
+      rejectPending("本機連線已中斷。");
+      onDisconnect?.();
+    };
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        socket.close();
+        reject(new Error("連線逾時。"));
+      }, 10000);
+      rejectOpen = (error) => {
+        clearTimeout(timer);
+        reject(error);
+      };
+      socket.onopen = () => {
+        clearTimeout(timer);
+        rejectOpen = undefined;
+        resolve();
+      };
+      socket.onerror = () => {
+        clearTimeout(timer);
+        rejectOpen = undefined;
+        reject(new Error("無法建立本機連線。"));
+      };
+    });
+  }
+  function request(type, value) {
+    if (!socket || socket.readyState !== WebSocket.OPEN)
+      return Promise.reject(new Error("本機服務尚未連線。"));
+    const id = ++serial;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error("本機服務回應逾時。"));
+      }, timeoutMs);
+      pending.set(id, { resolve, reject, timer });
+      try {
+        socket.send(
+          JSON.stringify(
+            value === undefined ? { id, type } : { id, type, value },
+          ),
+        );
+      } catch (error) {
+        clearTimeout(timer);
+        pending.delete(id);
+        reject(error);
+      }
+    });
+  }
+  async function recording() {
+    if (!token) throw new Error("本機服務尚未連線。");
+    const response = await fetch("/api/recording", {
+      headers: { "X-Flight-Token": token },
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error("無法取得 SITL 紀錄。");
+    return response.text();
+  }
+  return {
+    connect,
+    request,
+    recording,
+    close() {
+      socket?.close();
+      rejectPending("本機連線已關閉。");
+      token = undefined;
+    },
+  };
+}

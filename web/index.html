@@ -63,6 +63,7 @@
         ><button data-workspace="mission">任務規劃</button
         ><button data-workspace="training">訓練場</button
         ><button data-workspace="sensors">感測器</button
+        ><button data-workspace="hil">飛控介接</button
         ><button data-workspace="catalog">功能全覽</button>
       </nav>
       <section id="mission-workspace" class="panel workspace-extra" hidden>
@@ -230,6 +231,47 @@
           ><button id="sensor-fault-off">清除故障</button>
         </div>
       </section>
+      <section id="hil-workspace" class="panel workspace-extra" hidden>
+        <h2>飛控介接 <span>PX4 SITL</span></h2>
+        <p>
+          本機 PX4 軟體飛控與植物模型閉環；畫面呈現植物模型真值，不是實體硬體
+          HIL 或 PX4 估測值。
+        </p>
+        <p id="hil-remote-notice" hidden>
+          此頁不直接連接本機服務。請先建置後執行
+          <code>npm run companion</code>，再開啟
+          <a href="http://127.0.0.1:8787">本機 Flight Lab</a>。
+        </p>
+        <div id="hil-local-controls" hidden>
+          <label
+            >PX4 執行檔完整路徑
+            <input
+              id="hil-binary"
+              type="text"
+              autocomplete="off"
+              placeholder="請輸入 PX4 執行檔完整路徑"
+          /></label>
+          <div class="feature-actions">
+            <button id="hil-start">啟動或接回 PX4</button
+            ><button data-hil-command="arm">解鎖</button
+            ><button data-hil-command="takeoff">起飛</button
+            ><button data-hil-command="land">降落</button
+            ><button data-hil-command="disarm">上鎖</button
+            ><button data-hil-command="pause">暫停</button
+            ><button data-hil-command="resume">繼續</button
+            ><button data-hil-command="stop">停止</button
+            ><button id="hil-return">回到內建模擬</button
+            ><button id="hil-export">匯出 SITL JSON</button>
+          </div>
+          <p id="hil-status" role="status">本機服務尚未連線</p>
+          <p id="hil-controller"></p>
+          <p id="hil-stats"></p>
+          <p>
+            命令送出後請依解鎖狀態與高度回饋確認；外部估測值未提供時不會以真值冒充。
+          </p>
+          <pre id="hil-logs" class="hil-logs" aria-label="本機飛控訊息"></pre>
+        </div>
+      </section>
       <section id="catalog-workspace" class="panel workspace-extra" hidden>
         <h2>功能全覽 <span>CAPABILITY CATALOG</span></h2>
         <p>此清單整理部分公開資料與本專案狀態，並非完整市場盤點。</p>
@@ -319,7 +361,7 @@
                   <option value="4">4×</option>
                 </select></label
               ><span id="run-label" class="run-label">初始化數值模型…</span
-              ><span class="model-rate"
+              ><span id="model-rate" class="model-rate"
                 ><span class="dot"></span>200 Hz 模型</span
               >
             </div>
@@ -392,7 +434,7 @@
                 <span class="tag">模擬值</span>
               </div>
               <div id="motor-bars" class="motor-bars"></div>
-              <div class="motor-note">
+              <div id="motor-note" class="motor-note">
                 <span class="dot"></span>固定翼不使用升力旋翼；PWM
                 為模型換算值，未連接實體飛控
               </div>
@@ -562,11 +604,11 @@
                 <dd id="jitter-value">—</dd>
               </div>
               <div>
-                <dt>感測資料齡期</dt>
+                <dt id="age-label">感測資料齡期</dt>
                 <dd id="age-value">0 ms</dd>
               </div>
               <div>
-                <dt>模擬丟包</dt>
+                <dt id="drop-label">模擬丟包</dt>
                 <dd id="drop-value">0</dd>
               </div>
               <div>
