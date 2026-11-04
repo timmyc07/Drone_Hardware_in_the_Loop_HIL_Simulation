@@ -394,6 +394,7 @@ function populateConfig(values) {
   $("settings-error").textContent = "";
 }
 $("settings-open").onclick = () => {
+  if (!latest?.gimbal) return toast("模型正在初始化，請稍候再開啟參數。");
   populateConfig(config);
   populateSensorConfig(sensorConfig);
   populateCameraConfig(cameraConfig);
