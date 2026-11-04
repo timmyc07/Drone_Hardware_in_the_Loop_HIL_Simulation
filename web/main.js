@@ -61,7 +61,7 @@ try {
   /* Invalid or unavailable storage uses sensor defaults. */
 }
 try {
-  const savedCamera = localStorage.getItem("flight-lab-camera-v1");
+  const savedCamera = localStorage.getItem("flight-lab-camera-v2");
   if (savedCamera) cameraConfig = validateCameraConfig(JSON.parse(savedCamera));
 } catch {
   /* Invalid or unavailable storage uses camera defaults. */
@@ -379,6 +379,10 @@ $("settings-open").onclick = () => {
   populateConfig(config);
   populateSensorConfig(sensorConfig);
   populateCameraConfig(cameraConfig);
+  for (const axis of ["yaw", "pitch", "roll"])
+    $("gimbal-rate-" + axis).value = (
+      latest.gimbal.maxRate[axis] * DEG
+    ).toFixed(2);
   $("settings-dialog").showModal();
 };
 $("config-airframe").onchange = (event) => {
@@ -391,6 +395,8 @@ $("settings-default").onclick = () => {
   populateConfig({ ...DEFAULT_CONFIG, startOnGround });
   populateSensorConfig(DEFAULT_SENSOR_CONFIG);
   populateCameraConfig(DEFAULT_CAMERA_CONFIG);
+  for (const axis of ["yaw", "pitch", "roll"])
+    $("gimbal-rate-" + axis).value = 90;
 };
 $("settings-form").onsubmit = async (event) => {
   event.preventDefault();
@@ -412,8 +418,6 @@ $("settings-form").onsubmit = async (event) => {
       horizontalFovDeg: Number($("camera-fov").value),
       nearM: Number($("camera-near").value),
       farM: Number($("camera-far").value),
-      pitchDeg: Number($("camera-pitch").value),
-      yawDeg: Number($("camera-yaw").value),
     });
     const nextSensors = validateSensorConfig(
       Object.fromEntries(
@@ -422,6 +426,26 @@ $("settings-form").onsubmit = async (event) => {
           Number($(`sensor-config-${key}`).value),
         ]),
       ),
+    );
+    const maxRate = Object.fromEntries(
+      ["yaw", "pitch", "roll"].map((axis) => [
+        axis,
+        Number($("gimbal-rate-" + axis).value) / DEG,
+      ]),
+    );
+    if (
+      Object.values(maxRate).some(
+        (rate) => !Number.isFinite(rate) || rate < 1 / DEG || rate > 360 / DEG,
+      )
+    )
+      throw new Error("雲台角速度必須介於 1 到 360 °/s。");
+    const nextGimbal = {
+      mode: latest.gimbal.mode,
+      target: { ...latest.gimbal.target },
+      maxRate,
+    };
+    const gimbalChanged = ["yaw", "pitch", "roll"].some(
+      (axis) => Math.abs(maxRate[axis] - latest.gimbal.maxRate[axis]) > 1e-8,
     );
     const simulationChanged =
       JSON.stringify(validated) !== JSON.stringify(config) ||
@@ -433,6 +457,8 @@ $("settings-form").onsubmit = async (event) => {
     )
       return;
     if (!simulationChanged) {
+      if (gimbalChanged)
+        await requestApi({ type: "gimbal", value: nextGimbal });
       applyCameraConfig(nextCamera);
       $("settings-dialog").close();
       toast("相機設定已套用。");
@@ -453,6 +479,8 @@ $("settings-form").onsubmit = async (event) => {
     $("settings-dialog").close();
     newExperiment();
     worker.postMessage({ type: "sensorConfig", value: sensorConfig });
+    if (gimbalChanged)
+      worker.postMessage({ type: "gimbal", value: nextGimbal });
     toast("參數已套用，已建立新實驗。");
   } catch (error) {
     $("settings-error").textContent = `請檢查參數：${error.message}`;
@@ -783,6 +811,7 @@ worker.onerror = (event) => {
 };
 
 function updateTelemetry() {
+  renderGimbal();
   if (!latest) return;
   const s = latest;
   for (const t of targets) {
@@ -1080,7 +1109,7 @@ function animate(now) {
       if (history.length > 400) history.shift();
     }
     if (replayIndex === replay.samples.length - 1) setPlaying(false);
-    if (now - uiTime > 50) {
+    if (replayIndex === replay.samples.length - 1 || now - uiTime > 50) {
       updateTelemetry();
       uiTime = now;
     }
@@ -1741,6 +1770,7 @@ function updatePilot(now) {
   }
 }
 function setReplayControls(disabled) {
+  renderGimbal();
   document
     .querySelectorAll(
       "#mission-workspace button:not(#mission-export), #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #camera-capture, #camera-add, #camera-live, #flight-mode, [data-command], [data-mode], #position-apply, #fault-apply, #fault-link, #fault-clear, #abort-takeoff, #fault-pusher, #transition-hover, #transition-cruise, #pilot-enable",
@@ -2077,6 +2107,65 @@ for (const item of CAMERA_CLASSES) {
 }
 let cameraFrame;
 let cameraBusy = false;
+let displayedGimbalSettings = "";
+function renderGimbal() {
+  const g =
+    externalActive && latest?.controlSource !== "external"
+      ? undefined
+      : latest?.gimbal;
+  const disabled = !!replay || externalActive || !g;
+  document
+    .querySelectorAll(
+      "#gimbal-controls input, #gimbal-controls select, #gimbal-controls button",
+    )
+    .forEach((element) => (element.disabled = disabled));
+  if (!g) {
+    $("gimbal-status").textContent = "雲台：目前資料來源未提供姿態";
+    return;
+  }
+  const settings = JSON.stringify([g.mode, g.target]);
+  if (
+    settings !== displayedGimbalSettings &&
+    !$("gimbal-controls").contains(document.activeElement)
+  ) {
+    $("gimbal-mode").value = g.mode;
+    for (const axis of ["yaw", "pitch", "roll"])
+      $("gimbal-" + axis).value = (g.target[axis] * DEG).toFixed(2);
+    displayedGimbalSettings = settings;
+  }
+  const angles = ["yaw", "pitch", "roll"]
+    .map((axis) => (g.actual[axis] * DEG).toFixed(1))
+    .join(" / ");
+  const limited = ["yaw", "pitch", "roll"].filter((axis) => g.limited[axis]);
+  const rateLimited = ["yaw", "pitch", "roll"].filter(
+    (axis) => g.rateLimited[axis],
+  );
+  $("gimbal-status").textContent =
+    `實際偏航 / 俯仰 / 橫滾 ${angles}° · 追蹤誤差 ${(g.trackingErrorRad * DEG).toFixed(1)}° · 角度限位 ${limited.join("、") || "無"} · 速度限幅 ${rateLimited.join("、") || "無"}`;
+}
+$("gimbal-apply").onclick = async () => {
+  if (replay || externalActive || !latest?.gimbal) return;
+  try {
+    const target = Object.fromEntries(
+      ["yaw", "pitch", "roll"].map((axis) => [
+        axis,
+        Number($("gimbal-" + axis).value) / DEG,
+      ]),
+    );
+    await requestApi({
+      type: "gimbal",
+      value: {
+        mode: $("gimbal-mode").value,
+        target,
+        maxRate: { ...latest.gimbal.maxRate },
+      },
+    });
+    renderGimbal();
+    toast("雲台目標已套用。");
+  } catch (error) {
+    toast(`雲台設定失敗：${error.message}`);
+  }
+};
 let cameraEpoch = 0;
 let cameraLastLive = 0;
 let cameraDataset = [];
@@ -2096,8 +2185,6 @@ function populateCameraConfig(value) {
     ["camera-fov", "horizontalFovDeg"],
     ["camera-near", "nearM"],
     ["camera-far", "farM"],
-    ["camera-pitch", "pitchDeg"],
-    ["camera-yaw", "yawDeg"],
   ])
     $(id).value = value[key];
 }
@@ -2167,12 +2254,17 @@ function showCameraFrame(frame) {
   const pose = frame.pose,
     intrinsics = frame.intrinsics;
   $("camera-metadata").textContent =
-    `影格機型 ${{ quadrotor: "四旋翼", fixedwing: "固定翼", vtol: "VTOL" }[frame.airframe]} · 模擬時間 ${frame.time.toFixed(3)} s · NED 位置 ${pose.positionNed.map((v) => v.toFixed(2)).join(" / ")} m · 機體四元數 ${pose.bodyQuaternionWxyz.map((v) => v.toFixed(3)).join(" / ")} · 焦距 fx/fy ${intrinsics.fx.toFixed(1)} / ${intrinsics.fy.toFixed(1)} px · 主點 cx/cy ${intrinsics.cx.toFixed(1)} / ${intrinsics.cy.toFixed(1)} px · 水平視角 ${intrinsics.horizontalFovDeg.toFixed(1)}° · 景深範圍 ${frame.nearM.toFixed(2)}–${frame.farM.toFixed(1)} m`;
+    `影格機型 ${{ quadrotor: "四旋翼", fixedwing: "固定翼", vtol: "VTOL" }[frame.airframe]} · 模擬時間 ${frame.time.toFixed(3)} s · NED 位置 ${pose.positionNed.map((v) => v.toFixed(2)).join(" / ")} m · 機體四元數 ${pose.bodyQuaternionWxyz.map((v) => v.toFixed(3)).join(" / ")} · 拍攝時雲台偏航 / 俯仰 / 橫滾 ${["yaw", "pitch", "roll"].map((axis) => (frame.gimbal.actual[axis] * DEG).toFixed(1)).join(" / ")}° · 焦距 fx/fy ${intrinsics.fx.toFixed(1)} / ${intrinsics.fy.toFixed(1)} px · 主點 cx/cy ${intrinsics.cx.toFixed(1)} / ${intrinsics.cy.toFixed(1)} px · 水平視角 ${intrinsics.horizontalFovDeg.toFixed(1)}° · 景深範圍 ${frame.nearM.toFixed(2)}–${frame.farM.toFixed(1)} m`;
   updateCameraStatus();
 }
 async function captureCameraFrame() {
   if (replay) throw new Error("重播時無法拍攝新影像。");
-  if (!scene || !latest) throw new Error("相機尚未準備完成。");
+  if (
+    !scene ||
+    !latest ||
+    (externalActive && latest.controlSource !== "external")
+  )
+    throw new Error("相機尚未準備完成。");
   if (cameraBusy) throw new Error("相機正在拍攝，請稍候。");
   cameraBusy = true;
   const epoch = cameraEpoch;
@@ -2332,6 +2424,7 @@ let hilExportedPackets = 0;
 let hilPreviousGrounded;
 let hilFollowed = false;
 function setExternalControls(disabled) {
+  renderGimbal();
   $("hil-type").disabled = disabled;
   const selector =
     "#reset, #settings-open, #speed, #import-open, #target-controls input, #gust, [data-scenario], #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #flight-mode, [data-mode], #position-apply, #fault-apply, #fault-link, #fault-clear, #fault-pusher, #abort-takeoff, #transition-hover, #transition-cruise, #pilot-enable";
@@ -2390,12 +2483,11 @@ function presentHilState(state) {
     `${phases[state.phase] || "未知狀態"}${connected ? ` · ${hilControllerName()} SITL 閉環／植物模型真值` : " · 等待飛控資料"}`;
   const c = state.controller;
   const missing = hilFlightReadiness(state);
-  $("hil-readiness").textContent =
-    ["ardupilot", "px4"].includes(c?.kind)
-      ? missing.length
-        ? `準備未完成：等待${missing.join("、")}確認。`
-        : "身分、參數及心跳已確認；健康檢查可能仍需暖機，請留意飛控訊息。"
-      : "";
+  $("hil-readiness").textContent = ["ardupilot", "px4"].includes(c?.kind)
+    ? missing.length
+      ? `準備未完成：等待${missing.join("、")}確認。`
+      : "身分、參數及心跳已確認；健康檢查可能仍需暖機，請留意飛控訊息。"
+    : "";
   $("hil-controller").textContent = c
     ? `${c.kind === "ardupilot" ? "ArduPilot" : "PX4"} ${c.version || "—"} · 回報來源 ${c.sourceSha || c.reportedGitHash || "—"} · ${c.kind === "ardupilot" ? "Quad X" : `機型 ${c.sysAutostart ?? "—"}`} · ${c.armed ? "已解鎖" : "未解鎖"} · 飛行模式 ${c.flightMode || "—"} · 估測 ${c.estimated == null ? "未提供" : "已提供"}`
     : "飛控尚未就緒";

@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import * as THREE from "three";
 import { createCameraRenderer } from "../camera-renderer.js";
 import { validateCameraFrame } from "../camera.js";
+import { createSimulation } from "../sim.js";
+import { DEFAULT_GIMBAL_SETTINGS } from "../gimbal.js";
 
 function fixture({ defer = false, failPass = -1 } = {}) {
   let target = null,
@@ -149,13 +151,23 @@ const pose = {
   airframe: "quadrotor",
   position: [1, 2, -3],
   quaternion: [Math.SQRT1_2, 0, 0, Math.SQRT1_2],
+  gimbal: createSimulation(
+    {},
+    {
+      gimbal: {
+        ...DEFAULT_GIMBAL_SETTINGS,
+        target: { yaw: 0, pitch: 0, roll: 0 },
+      },
+    },
+  ).snapshot().gimbal,
 };
-const config = { width: 64, height: 48, pitchDeg: 0 };
+const config = { width: 64, height: 48 };
 
 test("capture uses physical camera pose, excludes annotations/ownship, restores state synchronously and flips GPU rows", async () => {
   const f = fixture({ defer: true }),
     capture = createCameraRenderer(f.renderer, f.scene);
   const pending = capture.captureCamera(pose, config);
+  pose.gimbal.target.yaw = 1;
   assert.equal(f.passes.length, 3);
   assert.deepEqual(f.passes[0].visible, ["ground", "obstacle", "gate", "rain"]);
   assert.deepEqual(f.passes[1].visible, ["ground", "obstacle", "gate"]);
@@ -190,6 +202,9 @@ test("capture uses physical camera pose, excludes annotations/ownship, restores 
   );
   f.resolvers.forEach((resolve) => resolve());
   const frame = await pending;
+  assert.equal(frame.gimbal.actual.yaw, 0);
+  assert.equal(frame.gimbal.target.yaw, 0);
+  pose.gimbal.target.yaw = 0;
   validateCameraFrame(frame);
   assert.deepEqual([...frame.rgbRgba.slice(0, 4)], [47, 0, 77, 255]);
   assert.equal(frame.depthM[0], 48);

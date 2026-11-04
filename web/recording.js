@@ -1,9 +1,14 @@
-import { createSimulation, validateConfig } from "./sim.js";
+import { createSimulation, validateConfig, bodyToNedAngles } from "./sim.js";
 import { DEFAULT_SENSOR_CONFIG, validateSensorConfig } from "./sensors.js";
 import { TRAINING_COURSES, resolveTrainingGates } from "./training.js";
 import { DEFAULT_SCENE, validateScene } from "./scene-data.js";
+import {
+  DEFAULT_GIMBAL_SETTINGS,
+  validateGimbalSettings,
+  validateGimbalState,
+} from "./gimbal.js";
 
-export const RECORDING_VERSION = 7;
+export const RECORDING_VERSION = 8;
 export const MODEL_VERSION = "0.5.0";
 const AIRFRAMES = ["quadrotor", "fixedwing", "vtol"];
 const MODES = ["attitude", "position", "mission", "rtl", "land", "takeoff"];
@@ -26,8 +31,10 @@ const ABORT_REASONS = [
   "safety",
 ];
 const COURSES = [...Object.keys(TRAINING_COURSES), "custom"];
+const GIMBAL_AXES = ["yaw", "pitch", "roll"];
 export const DEFAULT_SETUP = Object.freeze({
   sensors: DEFAULT_SENSOR_CONFIG,
+  gimbal: DEFAULT_GIMBAL_SETTINGS,
   mode: "attitude",
   mission: Object.freeze([]),
   scene: DEFAULT_SCENE,
@@ -69,12 +76,13 @@ export function validateSetup(value, config = {}) {
   const input = value === undefined ? DEFAULT_SETUP : object(value);
   if (
     Object.keys(input).some(
-      (key) => !["mode", "mission", "sensors", "scene"].includes(key),
+      (key) => !["mode", "mission", "sensors", "scene", "gimbal"].includes(key),
     )
   )
     throw new Error("Unknown setup field");
   const merged = { ...DEFAULT_SETUP, ...input };
-  const sim = createSimulation(validateConfig(object(config)));
+  const gimbal = validateGimbalSettings(merged.gimbal);
+  const sim = createSimulation(validateConfig(object(config)), { gimbal });
   if (!Array.isArray(merged.mission))
     throw new Error("Mission must be an array");
   const mission = Array.from(merged.mission, (point) => ({ ...object(point) }));
@@ -87,6 +95,7 @@ export function validateSetup(value, config = {}) {
     mission,
     scene,
     sensors: validateSensorConfig(merged.sensors),
+    gimbal,
   };
 }
 function targets(value, partial = false, automatic = false) {
@@ -160,13 +169,30 @@ function training(value, airframe, scene) {
     reason: choice(value.reason, ["", "crashed", "takeoff-aborted"]),
   };
 }
-function sample(value, route, routeText, routeCache, airframe, scene) {
+function sample(
+  value,
+  route,
+  routeText,
+  routeCache,
+  airframe,
+  scene,
+  gimbalSettings,
+) {
   object(value);
-  if (choice(value.airframe, AIRFRAMES) !== airframe)
+  if (
+    Object.hasOwn(value, "airframe") &&
+    choice(value.airframe, AIRFRAMES) !== airframe
+  )
     throw new Error("Snapshot airframe does not match configuration");
   const quaternion = vector(value.quaternion, 4, -1, 1);
   if (Math.abs(Math.hypot(...quaternion) - 1) > 0.01)
     throw new Error("Invalid quaternion");
+  const attitude = bodyToNedAngles(quaternion).map((v) => (v === 0 ? 0 : v));
+  if (
+    Object.hasOwn(value, "attitude") &&
+    vector(value.attitude, 3).some((v, i) => Math.abs(v - attitude[i]) > 1e-8)
+  )
+    throw new Error("Attitude does not match body quaternion");
   const imu = object(value.imu),
     metrics = object(value.metrics),
     nav = object(value.navigation),
@@ -207,13 +233,42 @@ function sample(value, route, routeText, routeCache, airframe, scene) {
     throw new Error("Mission mode requires waypoints");
   const home = vector(nav.home, 2, -500, 500);
   if (home.some((v) => v !== 0)) throw new Error("Invalid home position");
+  let rawGimbal = value.gimbal;
+  if (Array.isArray(rawGimbal)) {
+    if (rawGimbal.length !== 6) throw new Error("Invalid compact gimbal pose");
+    const [yaw, pitch, roll, limited, rateLimited, trackingErrorRad] =
+      Array.from(rawGimbal);
+    count(limited, 7);
+    count(rateLimited, 7);
+    const flags = (mask) =>
+      Object.fromEntries(
+        GIMBAL_AXES.map((axis, i) => [axis, Boolean(mask & (1 << i))]),
+      );
+    rawGimbal = {
+      ...gimbalSettings,
+      actual: { yaw, pitch, roll },
+      limited: flags(limited),
+      rateLimited: flags(rateLimited),
+      trackingErrorRad,
+    };
+  }
+  const gimbal = validateGimbalState(rawGimbal, quaternion);
+  if (
+    JSON.stringify({
+      mode: gimbal.mode,
+      target: gimbal.target,
+      maxRate: gimbal.maxRate,
+    }) !== JSON.stringify(gimbalSettings)
+  )
+    throw new Error("Gimbal settings do not match command history");
   return {
     airframe,
     time: number(value.time, 0, 1800.001),
     position: vector(value.position, 3),
     velocity: vector(value.velocity, 3),
     quaternion,
-    attitude: vector(value.attitude, 3),
+    gimbal,
+    attitude,
     rates: vector(value.rates, 3),
     motors: vector(value.motors, 4, 0, 1),
     pwm: vector(value.pwm, 4, 1000, 2000),
@@ -328,6 +383,9 @@ function event(input, sim) {
   object(input);
   const result = { time: number(input.time, 0, 1800.001), type: input.type };
   switch (input.type) {
+    case "gimbal":
+      result.value = validateGimbalSettings(input.value);
+      break;
     case "abortTakeoff":
       if (sim.snapshot().airframe !== "fixedwing")
         throw new Error("Runway takeoff abort requires a fixed-wing airframe");
@@ -394,8 +452,18 @@ function event(input, sim) {
 }
 export function compactSnapshot(snapshot) {
   const { waypoints, ...navigation } = object(snapshot.navigation);
+  const { airframe, attitude, gimbal, ...state } = snapshot;
+  const mask = (flags) =>
+    GIMBAL_AXES.reduce((bits, axis, i) => bits | (Number(flags[axis]) << i), 0);
   return {
-    ...snapshot,
+    ...state,
+    // Settings live in setup/events; retain every acquired angle and status without repeating them.
+    gimbal: [
+      ...GIMBAL_AXES.map((axis) => gimbal.actual[axis]),
+      mask(gimbal.limited),
+      mask(gimbal.rateLimited),
+      gimbal.trackingErrorRad,
+    ],
     navigation: {
       ...navigation,
       waypointCount: waypoints?.length ?? navigation.waypointCount ?? 0,
@@ -537,7 +605,7 @@ export function validateRecording(value) {
   object(value);
   if (value.version !== RECORDING_VERSION)
     throw new Error(
-      "Unsupported recording version: version 7 required; legacy recordings are not supported",
+      "Unsupported recording version: version 8 required; legacy recordings are not supported",
     );
   if (
     value.format !== "flight-lab" ||
@@ -548,6 +616,7 @@ export function validateRecording(value) {
     throw new Error("Invalid recording header");
   if (!["hover", "step", "gust"].includes(value.scenario) || value.dt !== 0.005)
     throw new Error("Invalid recording settings");
+  object(object(value.setup).gimbal);
   const config = validateConfig(object(value.config)),
     setup = validateSetup(object(value.setup), config),
     runtime = object(value.runtime);
@@ -583,6 +652,7 @@ export function validateRecording(value) {
   let lastTime = -1,
     eventIndex = 0,
     activeScene = setup.scene,
+    gimbalSettings = setup.gimbal,
     route = setup.mission,
     routeText = JSON.stringify(route);
   const routeCache = new WeakMap();
@@ -596,6 +666,8 @@ export function validateRecording(value) {
     ) {
       if (events[eventIndex].type === "scene")
         activeScene = events[eventIndex].value;
+      if (events[eventIndex].type === "gimbal")
+        gimbalSettings = events[eventIndex].value;
       if (events[eventIndex].type === "mission") {
         route = events[eventIndex].value;
         routeText = JSON.stringify(route);
@@ -609,6 +681,7 @@ export function validateRecording(value) {
       routeCache,
       config.airframe,
       activeScene,
+      gimbalSettings,
     );
     lastTime = time;
     return result;
@@ -656,13 +729,11 @@ export function validateRecording(value) {
   };
 }
 export function recordingToJson(record) {
-  return JSON.stringify(validateRecording(record), (key, value) =>
-    key === "waypoints"
-      ? undefined
-      : key === "navigation"
-        ? { ...value, waypointCount: value.waypoints.length }
-        : value,
-  );
+  const clean = validateRecording(record);
+  return JSON.stringify({
+    ...clean,
+    samples: clean.samples.map(compactSnapshot),
+  });
 }
 export function recordingToCsv(record) {
   const { samples, sensorFrames } = validateRecording(record);
@@ -777,6 +848,17 @@ export function recordingToCsv(record) {
     "takeoff_phase_code",
     "takeoff_abort_reason_code",
     "wheel_brake_fraction",
+    "gimbal_mode_code",
+    ...["target", "maxRate", "actual"].flatMap((field) =>
+      GIMBAL_AXES.map(
+        (axis) =>
+          `gimbal_${field}_${axis}_${field === "maxRate" ? "rad_s" : "rad"}`,
+      ),
+    ),
+    ...["limited", "rateLimited"].flatMap((field) =>
+      GIMBAL_AXES.map((axis) => `gimbal_${field}_${axis}_boolean`),
+    ),
+    "gimbal_tracking_error_rad",
   ];
   const rows = samples.map((s, index) =>
     [
@@ -858,6 +940,14 @@ export function recordingToCsv(record) {
       TAKEOFF_PHASES.indexOf(s.runway.takeoffPhase),
       ABORT_REASONS.indexOf(s.runway.abortReason),
       s.runway.brake,
+      ["body", "ned"].indexOf(s.gimbal.mode),
+      ...["target", "maxRate", "actual"].flatMap((field) =>
+        GIMBAL_AXES.map((axis) => s.gimbal[field][axis]),
+      ),
+      ...["limited", "rateLimited"].flatMap((field) =>
+        GIMBAL_AXES.map((axis) => Number(s.gimbal[field][axis])),
+      ),
+      s.gimbal.trackingErrorRad,
     ].join(","),
   );
   return [header.join(","), ...rows].join("\n");

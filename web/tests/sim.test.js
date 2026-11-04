@@ -1295,3 +1295,70 @@ test("external plant retains physical motor faults and empty-battery inhibition"
   assert.deepEqual(c.motors, [0, 0, 0, 0]);
   assert.deepEqual(c.position, [0, 0, 0]);
 });
+
+test("gimbal setup/reset is deterministic across airframes and runtime demand advances only on physical ticks", () => {
+  const initial = {
+    mode: "ned",
+    target: { yaw: 0.2, pitch: 0.3, roll: 0.1 },
+    maxRate: { yaw: 1, pitch: 1, roll: 1 },
+  };
+  for (const airframe of ["quadrotor", "fixedwing", "vtol"]) {
+    const sim = createSimulation({ airframe }, { gimbal: initial }),
+      first = sim.snapshot();
+    assert.ok(first.gimbal.trackingErrorRad < 1e-8);
+    const before = sim.snapshot().gimbal.actual;
+    sim.setGimbal({ ...initial, target: { yaw: 0.8, pitch: 0.1, roll: 0 } });
+    assert.deepEqual(sim.snapshot().gimbal.actual, before);
+    sim.step(0.005);
+    const after = sim.snapshot().gimbal.actual;
+    for (const axis of ["yaw", "pitch", "roll"])
+      assert.ok(Math.abs(after[axis] - before[axis]) <= 0.005 + 1e-12);
+    sim.reset();
+    assert.deepEqual(sim.snapshot(), first);
+  }
+});
+
+test("gimbal motion never changes physics or controller noise and external SITL keeps its fixed default mount", () => {
+  const config = { noise: 0.2, wind: 1, seed: 51 },
+    a = createSimulation(config),
+    b = createSimulation(config);
+  b.setGimbal({
+    mode: "ned",
+    target: { yaw: 1, pitch: 0.5, roll: 0.2 },
+    maxRate: { yaw: 1, pitch: 1, roll: 1 },
+  });
+  a.setTargets({ roll: 0.12 });
+  b.setTargets({ roll: 0.12 });
+  for (let i = 0; i < 1000; i++) {
+    a.step();
+    b.step();
+  }
+  const { gimbal: ga, ...pa } = a.snapshot(),
+    { gimbal: gb, ...pb } = b.snapshot();
+  assert.deepEqual(pa, pb);
+  assert.notDeepEqual(ga.actual, gb.actual);
+  const external = createSimulation(
+      { startOnGround: true },
+      { controlSource: "external" },
+    ),
+    before = external.snapshot().gimbal;
+  assert.throws(
+    () =>
+      external.setGimbal({
+        mode: "body",
+        target: { yaw: 1, pitch: 0, roll: 0 },
+        maxRate: { yaw: 1, pitch: 1, roll: 1 },
+      }),
+    /disabled/,
+  );
+  assert.throws(
+    () =>
+      createSimulation(
+        { startOnGround: true },
+        { controlSource: "external", gimbal: {} },
+      ),
+    /fixed camera mount/,
+  );
+  externalAdvance(external, 0.1, [0.7, 0.7, 0.7, 0.7]);
+  assert.deepEqual(external.snapshot().gimbal.actual, before.actual);
+});

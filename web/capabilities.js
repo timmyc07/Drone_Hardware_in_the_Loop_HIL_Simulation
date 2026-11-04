@@ -622,8 +622,9 @@ export const CAPABILITIES = [
     id: "gimbal",
     category: "感測與通訊",
     title: "雲台",
-    description: "模擬可操作雲台及狀態。",
-    status: "planned",
+    description:
+      "理想三軸雲台提供機體／世界方向目標、限速與實際姿態；瀏覽器影格與資料集往返已驗證，非實機校準或外部飛控雲台。",
+    status: "partial",
     sources: ["https://ardupilot.org/dev/docs/adding_simulated_devices.html"],
   },
   {
@@ -786,8 +787,7 @@ export const CAPABILITIES = [
     id: "replay-json",
     category: "資料與整合",
     title: "JSON 重播",
-    description:
-      "版本 7 JSON 保存完整場景與事件；拒絕版本 1 至 6，整合驗證中。",
+    description: "版本 8 JSON 保存完整場景、雲台狀態與事件；拒絕版本 1 至 7。",
     status: "partial",
     sources: [
       "https://www.liftoff-game.com/news/full-release-liftoff-micro-drones",
@@ -860,7 +860,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "程式控制 API",
     description:
-      "同頁 API 1.5 提供完整場景讀取與原子套用；PX4 使用獨立本機服務。",
+      "同頁 API 1.6 提供場景及雲台操作；外部 SITL 使用獨立本機服務。",
     status: "partial",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/apis.md"],
   },

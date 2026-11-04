@@ -12,7 +12,7 @@ test("API sends the documented commands and copies input and output", async () =
     },
     () => () => {},
   );
-  assert.equal(api.version, "1.5");
+  assert.equal(api.version, "1.6");
   assert.ok(Object.isFrozen(api));
   const targets = { roll: 1 };
   const pending = api.setTargets(targets);
@@ -26,8 +26,10 @@ test("API sends the documented commands and copies input and output", async () =
   await api.setScene({ name: "場景" });
   await api.exportLidarPointCloud();
   await api.exportLidarPointCloud("csv");
+  await api.getGimbal();
+  await api.setGimbal({ mode: "body" });
   await api.getCameraConfig();
-  await api.setCameraConfig({ pitchDeg: 90 });
+  await api.setCameraConfig({ horizontalFovDeg: 90 });
   await api.captureCamera();
   await api.setMode("mission");
   await api.takeoff();
@@ -50,8 +52,10 @@ test("API sends the documented commands and copies input and output", async () =
     { type: "scene", value: { name: "場景" } },
     { type: "pointCloudExport", value: "pcd" },
     { type: "pointCloudExport", value: "csv" },
+    { type: "inspectGimbal" },
+    { type: "gimbal", value: { mode: "body" } },
     { type: "getCameraConfig" },
-    { type: "setCameraConfig", value: { pitchDeg: 90 } },
+    { type: "setCameraConfig", value: { horizontalFovDeg: 90 } },
     { type: "captureCamera" },
     { type: "mode", value: "mission" },
     { type: "takeoff" },

@@ -1,3 +1,4 @@
+import { createGimbal, validateGimbalSettings } from "./gimbal.js";
 import {
   aerodynamicForces,
   wingTrim,
@@ -167,18 +168,29 @@ function angles(q) {
     Math.atan2(r[3], r[0]),
   ];
 }
+export { angles as bodyToNedAngles };
 export function createSimulation(configuration = {}, options = {}) {
   const config = validateConfig(configuration);
   if (
     !options ||
     Object.getPrototypeOf(options) !== Object.prototype ||
-    Object.keys(options).some((key) => key !== "controlSource")
+    Object.keys(options).some(
+      (key) => !["controlSource", "gimbal"].includes(key),
+    )
   )
-    throw new Error("Simulation options must be a plain controlSource object");
+    throw new Error(
+      "Simulation options must contain only controlSource and gimbal",
+    );
   const controlSource = options.controlSource ?? "internal";
   if (!["internal", "external"].includes(controlSource))
     throw new Error("controlSource must be internal or external");
   const external = controlSource === "external";
+  if (external && Object.hasOwn(options, "gimbal"))
+    throw new Error(
+      "External control supports only the default fixed camera mount",
+    );
+  const initialGimbal = validateGimbalSettings(options.gimbal);
+  let gimbal;
   if (external && (config.airframe !== "quadrotor" || !config.startOnGround))
     throw new Error(
       "External control requires quadrotor and startOnGround=true",
@@ -455,6 +467,7 @@ export function createSimulation(configuration = {}, options = {}) {
       positionTarget.altitude = 0;
     }
     observed.airspeed = aero().airspeedMps;
+    gimbal = createGimbal(initialGimbal, state.slice(6, 10));
     battery = batterySnapshot();
     return snapshot();
   }
@@ -1990,6 +2003,7 @@ export function createSimulation(configuration = {}, options = {}) {
     battery = batterySnapshot();
     if (battery.soc <= 0) disarm();
     time += dt;
+    gimbal.update(dt, state.slice(6, 10));
     if (external) {
       const sensors = readSensors();
       imu = { accel: sensors.specificForceFrd, gyro: sensors.ratesFrd };
@@ -2012,6 +2026,7 @@ export function createSimulation(configuration = {}, options = {}) {
   function snapshot() {
     return {
       time,
+      gimbal: gimbal.snapshot(),
       ...(external
         ? {
             controlSource,
@@ -2089,6 +2104,7 @@ export function createSimulation(configuration = {}, options = {}) {
     };
   reset();
   return {
+    setGimbal: internalCommand((settings) => gimbal.set(settings)),
     setTargets: internalCommand(setTargets),
     setScenario,
     gust,

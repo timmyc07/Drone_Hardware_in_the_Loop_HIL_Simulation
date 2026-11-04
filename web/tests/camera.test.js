@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createSimulation } from "../sim.js";
 import {
   DEFAULT_CAMERA_CONFIG,
   CAMERA_CLASSES,
@@ -20,10 +21,16 @@ const snapshot = {
   airframe: "quadrotor",
   position: [10, 20, -2],
   quaternion: [1, 0, 0, 0],
+  gimbal: createSimulation().snapshot().gimbal,
 };
 const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-10, `${a} != ${b}`);
-function frame(config = {}) {
-  const metadata = cameraMetadata(snapshot, {
+function withAngles(angles, body = snapshot) {
+  const gimbal = structuredClone(snapshot.gimbal);
+  const target = { ...gimbal.target, ...angles };
+  return { ...body, gimbal: { ...gimbal, target, actual: { ...target } } };
+}
+function frame(config = {}, angles = {}) {
+  const metadata = cameraMetadata(withAngles(angles), {
       width: 64,
       height: 48,
       ...config,
@@ -59,14 +66,14 @@ test("camera configuration validates strictly without mutating defaults", () => 
     assert.throws(() => validateCameraConfig(value));
   assert.deepEqual(DEFAULT_CAMERA_CONFIG, before);
   assert.deepEqual(validateCameraConfig(), before);
-  assert.equal(validateCameraConfig({ pitchDeg: 90 }).pitchDeg, 90);
+  assert.throws(() => validateCameraConfig({ pitchDeg: 90 }));
+  assert.throws(() => validateCameraConfig({ yawDeg: 0 }));
 });
 test("pinhole intrinsics use pixel centers and convert horizontal to vertical FOV", () => {
   const result = cameraMetadata(snapshot, {
     width: 320,
     height: 240,
     horizontalFovDeg: 90,
-    pitchDeg: 0,
   });
   close(result.intrinsics.fx, 160);
   close(result.intrinsics.fy, 160);
@@ -81,17 +88,20 @@ test("pinhole intrinsics use pixel centers and convert horizontal to vertical FO
   assert.equal(snapshot.position[0], 10);
 });
 test("optical axes, downward pitch and right yaw rotate consistently into NED", () => {
-  const base = cameraMetadata(snapshot, { pitchDeg: 0 }).pose.opticalToNed;
+  const base = cameraMetadata(withAngles({ pitch: 0 })).pose.opticalToNed;
   assert.deepEqual(base, [0, 0, 1, 1, 0, 0, 0, 1, 0]);
-  const down = cameraMetadata(snapshot, { pitchDeg: 90 }).pose.opticalToNed;
+  const down = cameraMetadata(withAngles({ pitch: Math.PI / 2 })).pose
+    .opticalToNed;
   [0, 0, 1].forEach((value, row) => close(down[row * 3 + 2], value));
   [-1, 0, 0].forEach((value, row) => close(down[row * 3 + 1], value));
-  const right = cameraMetadata(snapshot, { pitchDeg: 0, yawDeg: 90 }).pose
+  const right = cameraMetadata(withAngles({ pitch: 0, yaw: Math.PI / 2 })).pose
     .opticalToNed;
   [0, 1, 0].forEach((value, row) => close(right[row * 3 + 2], value));
   const yawed = cameraMetadata(
-    { ...snapshot, quaternion: [Math.SQRT1_2, 0, 0, Math.SQRT1_2] },
-    { pitchDeg: 0 },
+    withAngles(
+      { pitch: 0 },
+      { ...snapshot, quaternion: [Math.SQRT1_2, 0, 0, Math.SQRT1_2] },
+    ),
   ).pose.opticalToNed;
   right.forEach((value, i) => close(yawed[i], value));
   for (const change of [
@@ -99,6 +109,7 @@ test("optical axes, downward pitch and right yaw rotate consistently into NED", 
     { position: [0, Infinity, 0] },
     { time: -1 },
     { airframe: "unknown" },
+    { gimbal: undefined },
   ])
     assert.throws(() => cameraMetadata({ ...snapshot, ...change }));
 });
@@ -121,11 +132,28 @@ test("camera frame validation checks metadata, lengths, finite depth and exact c
     (f) => (f.depthM[0] = 0),
     (f) => (f.extra = "unknown"),
     (f) => (f.pose.extra = 1),
+    (f) => (f.gimbal.actual.pitch = 0),
+    (f) => (f.gimbal.extra = 1),
   ]) {
     const input = frame();
     mutate(input);
     assert.throws(() => validateCameraFrame(input));
   }
+});
+test("camera metadata uses the acquired joints while a commanded target is still moving", () => {
+  const acquired = withAngles({ yaw: 0, pitch: 0 });
+  acquired.gimbal.target.yaw = Math.PI / 2;
+  acquired.gimbal.trackingErrorRad = Math.PI / 2;
+  acquired.gimbal.rateLimited.yaw = true;
+  const metadata = cameraMetadata(acquired);
+  assert.equal(metadata.version, 2);
+  assert.equal(metadata.gimbal.target.yaw, Math.PI / 2);
+  assert.equal(metadata.gimbal.actual.yaw, 0);
+  [1, 0, 0].forEach((v, row) =>
+    close(metadata.pose.opticalToNed[row * 3 + 2], v),
+  );
+  acquired.gimbal.actual.yaw = Math.PI / 2;
+  assert.equal(metadata.gimbal.actual.yaw, 0);
 });
 test("depth and class previews preserve invalid pixels and exact class colors", () => {
   const input = frame();
@@ -141,7 +169,7 @@ test("depth and class previews preserve invalid pixels and exact class colors", 
   assert.throws(() => cameraPreview(input, "infrared"));
 });
 test("camera datasets round trip exact byte buffers and little-endian float32 depth", () => {
-  const input = [frame(), frame({ pitchDeg: 90 })];
+  const input = [frame(), frame({}, { pitch: Math.PI / 2 })];
   input[0].depthM[0] = Math.fround(2.345);
   const text = cameraDatasetToJson(input),
     encoded = JSON.parse(text);
@@ -167,7 +195,7 @@ test("camera datasets round trip exact byte buffers and little-endian float32 de
 test("camera dataset trust boundaries reject malformed buffers, schemas and limits", () => {
   const valid = JSON.parse(cameraDatasetToJson([frame()]));
   for (const mutate of [
-    (d) => (d.version = 2),
+    (d) => (d.version = 1),
     (d) => (d.format = "other"),
     (d) => (d.extra = 1),
     (d) => (d.classes[1].name = "wrong"),
@@ -176,6 +204,8 @@ test("camera dataset trust boundaries reject malformed buffers, schemas and limi
     (d) => (d.frames[0].classes = "A".repeat(d.frames[0].classes.length)),
     (d) => (d.frames[0].config.width = 640),
     (d) => (d.frames[0].intrinsics.cx = 0),
+    (d) => (d.frames[0].version = 1),
+    (d) => delete d.frames[0].gimbal,
     (d) => (d.frames = Array(CAMERA_DATASET_MAX_FRAMES + 1).fill(d.frames[0])),
   ]) {
     const input = structuredClone(valid);

@@ -1,11 +1,11 @@
+import { gimbalRotation, validateGimbalState } from "./gimbal.js";
+
 export const DEFAULT_CAMERA_CONFIG = Object.freeze({
   width: 320,
   height: 240,
   horizontalFovDeg: 90,
   nearM: 0.1,
   farM: 200,
-  pitchDeg: 15,
-  yawDeg: 0,
 });
 export const CAMERA_DATASET_MAX_FRAMES = 30;
 export const CAMERA_DATASET_MAX_BYTES = 24 * 1024 * 1024;
@@ -94,8 +94,6 @@ export function validateCameraConfig(value = {}) {
     ["horizontalFovDeg", 30, 140],
     ["nearM", 0.05, 5],
     ["farM", 10, 500],
-    ["pitchDeg", -90, 90],
-    ["yawDeg", -180, 180],
   ])
     finite(result[key], min, max);
   if (
@@ -119,7 +117,7 @@ const multiply = (a, b) =>
 export function cameraMetadata(snapshot, input = DEFAULT_CAMERA_CONFIG) {
   plain(snapshot);
   const config = validateCameraConfig(input),
-    { width, height, horizontalFovDeg, nearM, farM, pitchDeg, yawDeg } = config;
+    { width, height, horizontalFovDeg, nearM, farM } = config;
   const positionNed = vector(snapshot.position, 3),
     bodyQuaternionWxyz = vector(snapshot.quaternion, 4);
   if (Math.abs(Math.hypot(...bodyQuaternionWxyz) - 1) > 1e-5)
@@ -138,23 +136,19 @@ export function cameraMetadata(snapshot, input = DEFAULT_CAMERA_CONFIG) {
     2 * (y * z + w * x),
     1 - 2 * (x * x + y * y),
   ];
-  const pitch = (pitchDeg * Math.PI) / 180,
-    yaw = (yawDeg * Math.PI) / 180;
-  const cp = Math.cos(pitch),
-    sp = Math.sin(pitch),
-    cyaw = Math.cos(yaw),
-    syaw = Math.sin(yaw);
-  // Optical x-right/y-down/z-forward axes, with positive camera pitch looking down.
+  const gimbal = validateGimbalState(snapshot.gimbal, bodyQuaternionWxyz);
+  // One acquired joint pose drives all optical outputs; a requested target is not a pose.
   const mount = multiply(
-    [cyaw, -syaw, 0, syaw, cyaw, 0, 0, 0, 1],
-    multiply([cp, 0, -sp, 0, 1, 0, sp, 0, cp], [0, 0, 1, 1, 0, 0, 0, 1, 0]),
+    gimbalRotation(gimbal.actual),
+    [0, 0, 1, 1, 0, 0, 0, 1, 0],
   );
   const fx = width / (2 * Math.tan((horizontalFovDeg * Math.PI) / 360));
   return {
-    version: 1,
+    version: 2,
     time: finite(snapshot.time, 0, 1800.001),
     airframe: snapshot.airframe,
     config,
+    gimbal,
     width,
     height,
     nearM,
@@ -185,6 +179,7 @@ function checkFrame(value) {
       airframe: value.airframe,
       position: value.pose.positionNed,
       quaternion: value.pose.bodyQuaternionWxyz,
+      gimbal: value.gimbal,
     },
     value.config,
   );
@@ -194,7 +189,7 @@ function checkFrame(value) {
       !same(
         value[key],
         metadata[key],
-        ["intrinsics", "pose"].includes(key) ? 1e-12 : 0,
+        ["intrinsics", "pose", "gimbal"].includes(key) ? 1e-12 : 0,
       )
     )
       throw new Error(
@@ -317,7 +312,7 @@ export function cameraDatasetToJson(frames) {
   });
   return JSON.stringify({
     format: "flight-lab-camera-dataset",
-    version: 1,
+    version: 2,
     encoding,
     classes: classLegend,
     frames: encoded,
@@ -329,7 +324,7 @@ export function parseCameraDataset(text) {
   const data = plain(JSON.parse(text));
   if (
     data.format !== "flight-lab-camera-dataset" ||
-    data.version !== 1 ||
+    data.version !== 2 ||
     !same(data.encoding, encoding) ||
     !same(data.classes, classLegend) ||
     !Array.isArray(data.frames) ||

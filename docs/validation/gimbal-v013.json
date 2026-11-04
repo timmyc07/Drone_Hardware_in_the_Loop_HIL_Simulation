@@ -1,0 +1,40 @@
+{
+  "passed": true,
+  "automatedTests": 182,
+  "camera": {
+    "frames": 3,
+    "timesSeconds": [
+      0,
+      4.625,
+      15.115
+    ],
+    "finalTrackingErrorRad": 5.571828513921209e-17,
+    "roundTripBytesExact": true,
+    "datasetSha256": "0243efbf687ce85f9d598c8baa9b84b8a78afbb25083b28ebfcc12ec39a0541e"
+  },
+  "flight": {
+    "schema": 8,
+    "samples": 309,
+    "simulationSeconds": 15.395,
+    "gimbalEvents": 2,
+    "csvColumns": 144,
+    "recordingSha256": "d423f98663057456bf089f501063066cc214fcdb0b308b831f6ca6dfa9039b73",
+    "csvSha256": "794965c90ce8a4b6b8c0b2ee273b010115ceda16cd6f29a0be57e598e6ab2fe5",
+    "nodeRoundTripValidated": true,
+    "finalReplayTimeDisplay": "00:15.40",
+    "finalReplayControlsReadOnly": true,
+    "independentReplay": {
+      "passed": true,
+      "samples": 309,
+      "events": 3,
+      "errors": {
+        "position": 5.684341886080802e-14,
+        "quaternion": 2.220446049250313e-16,
+        "motors": 2.220446049250313e-16,
+        "gimbalAngles": 4.996003610813204e-16,
+        "gimbalTrackingError": 3.3306690738754696e-16
+      }
+    }
+  },
+  "limitations": "Software simulation only; no hardware calibration or external gimbal protocol."
+}

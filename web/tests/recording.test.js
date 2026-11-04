@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { createSimulation, validateConfig } from "../sim.js";
 import { createSensorSuite } from "../sensors.js";
 import { createTrainer } from "../training.js";
+import { DEFAULT_GIMBAL_SETTINGS } from "../gimbal.js";
 import {
   RECORDING_VERSION,
   validateSetup,
@@ -48,7 +49,7 @@ function record(airframe = "quadrotor", overrides = {}) {
     sensorFrames: [sensors.update(first), sensors.update(last)],
   };
 }
-test("v7 round trip preserves multi-layer scans and exports 127 telemetry CSV columns", () => {
+test("v8 round trip preserves multi-layer scans and exports 144 telemetry CSV columns", () => {
   const input = record(),
     result = validateRecording(JSON.parse(JSON.stringify(input)));
   assert.deepEqual(result, JSON.parse(JSON.stringify(input)));
@@ -57,7 +58,7 @@ test("v7 round trip preserves multi-layer scans and exports 127 telemetry CSV co
     .map((row) => row.split(","));
   assert.equal(rows.length, 3);
   assert.equal(rows[0].length, rows[1].length);
-  assert.equal(rows[0].length, 127);
+  assert.equal(rows[0].length, 144);
   assert.equal(rows[0][44], "steps_count");
   for (const name of [
     "north_m",
@@ -79,6 +80,51 @@ test("v7 round trip preserves multi-layer scans and exports 127 telemetry CSV co
     validateRecording(JSON.parse(json)),
     JSON.parse(JSON.stringify(result)),
   );
+});
+test("gimbal history restores exact acquired poses from compact recording samples and rejects forged settings", () => {
+  const input = record();
+  const sim = createSimulation(input.config, { gimbal: input.setup.gimbal });
+  const trainer = createTrainer("free"),
+    sensors = createSensorSuite();
+  const settings = {
+    ...DEFAULT_GIMBAL_SETTINGS,
+    target: { yaw: 1, pitch: 0, roll: 0 },
+  };
+  sim.setGimbal(settings);
+  const capture = () => {
+    const s = sim.snapshot();
+    return { ...s, training: trainer.update(s) };
+  };
+  const first = capture();
+  for (let i = 0; i < 10; i++) sim.step();
+  const last = capture();
+  input.events = [{ time: 0, type: "gimbal", value: settings }];
+  input.samples = [first, last];
+  input.sensorFrames = input.samples.map((s) => sensors.update(s));
+  const json = recordingToJson(input),
+    compact = JSON.parse(json);
+  assert.equal(compact.samples[1].gimbal.length, 6);
+  assert.ok(JSON.stringify(compact.samples[1].gimbal).length < 100);
+  const restored = validateRecording(compact);
+  assert.deepEqual(restored.samples[1].gimbal, last.gimbal);
+  assert.notEqual(last.gimbal.actual.yaw, settings.target.yaw);
+  for (const mutate of [
+    (r) => delete r.setup.gimbal,
+    (r) => delete r.samples[0].gimbal,
+    (r) => r.samples[0].gimbal.push(0),
+    (r) => (r.samples[0].gimbal[0] = NaN),
+    (r) => (r.samples[0].gimbal[3] = 8),
+    (r) => (r.samples[0].gimbal[4] = -1),
+    (r) => (r.samples[0].gimbal[5] = 0),
+    (r) => (r.events[0].value.maxRate.yaw = 0),
+  ]) {
+    const bad = structuredClone(compact);
+    mutate(bad);
+    assert.throws(() => validateRecording(bad));
+  }
+  const bad = structuredClone(input);
+  bad.samples[1].gimbal.target.yaw = 2;
+  assert.throws(() => validateRecording(bad));
 });
 test("compact snapshots preserve shared mission routes through mission history without per-frame copies", () => {
   const input = record();
@@ -301,7 +347,7 @@ test("sensor frames require exact parallel times and reject future/regressing ac
   for (const version of [1, 2, 3, 4, 5]) {
     const legacy = record();
     legacy.version = version;
-    assert.throws(() => validateRecording(legacy), /version 7 required/);
+    assert.throws(() => validateRecording(legacy), /version 8 required/);
   }
 });
 test("no-return and startup measurements retain explicit nulls and produce empty CSV sensor cells", () => {
@@ -383,7 +429,7 @@ test("sensor config/fault history validates different lidar dimensions and prese
   assert.throws(() => validateRecording(config));
 });
 
-test("all airframes preserve propulsion, surfaces and flight data in schema 7 JSON and CSV", () => {
+test("all airframes preserve propulsion, surfaces and flight data in schema 8 JSON and CSV", () => {
   for (const airframe of ["quadrotor", "fixedwing", "vtol"]) {
     const input = record(airframe);
     if (airframe !== "quadrotor")
@@ -411,7 +457,7 @@ test("all airframes preserve propulsion, surfaces and flight data in schema 7 JS
     const [header, row] = recordingToCsv(input)
       .split("\n")
       .map((line) => line.split(","));
-    assert.equal(header.length, 127);
+    assert.equal(header.length, 144);
     assert.equal(
       row[header.indexOf("airframe_code")],
       String(["quadrotor", "fixedwing", "vtol"].indexOf(airframe)),
@@ -428,7 +474,7 @@ test("all airframes preserve propulsion, surfaces and flight data in schema 7 JS
   }
 });
 
-test("schema 7 rejects mismatched airframes, malformed flight state and invalid transition or propulsion faults", () => {
+test("schema 8 rejects mismatched airframes, malformed flight state and invalid transition or propulsion faults", () => {
   const mutations = [
     (r) => (r.samples[0].airframe = "fixedwing"),
     (r) => delete r.samples[0].flight,
@@ -507,7 +553,7 @@ test("ground-start runway takeoff and abort history round trip with exact phase 
   const [header, ...rows] = recordingToCsv(input)
     .split("\n")
     .map((line) => line.split(","));
-  assert.equal(header.length, 127);
+  assert.equal(header.length, 144);
   const phase = header.indexOf("takeoff_phase_code"),
     brake = header.indexOf("wheel_brake_fraction");
   assert.ok(rows.some((row) => row[phase] === "6"));
@@ -576,6 +622,6 @@ test("scene epochs select immutable custom gate sources and reject forged totals
     mutate(bad);
     assert.throws(() => validateRecording(bad));
   }
-  for (const version of [1, 2, 3, 4, 5, 6])
-    assert.throws(() => validateRecording({ ...input, version }), /version 7/);
+  for (const version of [1, 2, 3, 4, 5, 6, 7])
+    assert.throws(() => validateRecording({ ...input, version }), /version 8/);
 });

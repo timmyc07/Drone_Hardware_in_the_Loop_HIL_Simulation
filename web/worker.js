@@ -1,5 +1,6 @@
+import { validateGimbalSettings } from "./gimbal.js";
 import { validateScene } from "./scene-data.js";
-import { createSimulation, validateConfig } from "./sim.js";
+import { createSimulation, validateConfig, bodyToNedAngles } from "./sim.js";
 import {
   createTrainer,
   isCourseSupported,
@@ -20,7 +21,7 @@ const DATA_LIMIT = 96 * 1024 * 1024;
 let config = validateConfig();
 let setup = validateSetup(undefined, config);
 let initialSetup = structuredClone(setup);
-let sim = createSimulation(config);
+let sim = createSimulation(config, { gimbal: setup.gimbal });
 let trainer = createTrainer(
   setup.scene.training,
   config.airframe,
@@ -78,7 +79,11 @@ function publish(message) {
     running,
     snapshot: state,
     sensors: sensorState,
-    samples: pending,
+    samples: pending.map((sample) => ({
+      ...sample,
+      airframe: config.airframe,
+      attitude: bodyToNedAngles(sample.quaternion),
+    })),
     sampleCount: samples.length,
     config,
     scenario,
@@ -117,7 +122,7 @@ function reset(nextConfig, nextScenario, nextSetup) {
       : nextSetup,
     validated,
   );
-  const next = createSimulation(validated);
+  const next = createSimulation(validated, { gimbal: validatedSetup.gimbal });
   next.setScenario(nextScenario);
   next.setObstacles(validatedSetup.scene.obstacles);
   if (validatedSetup.mission.length) next.setMission(validatedSetup.mission);
@@ -254,6 +259,7 @@ onmessage = ({ data }) => {
       "inspect",
       "inspectSensors",
       "inspectScene",
+      "inspectGimbal",
       "apiExport",
     ];
     if (storageLimited && !readCommands.includes(data.type))
@@ -300,6 +306,14 @@ onmessage = ({ data }) => {
         recordEvent(data);
         publish();
         break;
+      case "gimbal": {
+        const settings = validateGimbalSettings(data.value);
+        sim.setGimbal(settings);
+        setup.gimbal = settings;
+        recordEvent({ ...data, value: settings });
+        publish();
+        break;
+      }
       case "transition":
         sim.setTransition(data.value);
         recordEvent(data);
@@ -451,6 +465,7 @@ onmessage = ({ data }) => {
       case "inspect":
       case "inspectSensors":
       case "inspectScene":
+      case "inspectGimbal":
       case "apiExport":
         if (data.requestId === undefined)
           throw new Error("此操作需要程式介面請求編號");
@@ -463,9 +478,11 @@ onmessage = ({ data }) => {
               ? inspectedState()
               : data.type === "inspectScene"
                 ? setup.scene
-                : data.type === "inspectSensors"
-                  ? sensorState
-                  : recording(),
+                : data.type === "inspectGimbal"
+                  ? sim.snapshot().gimbal
+                  : data.type === "inspectSensors"
+                    ? sensorState
+                    : recording(),
         });
         return;
       case "export": {

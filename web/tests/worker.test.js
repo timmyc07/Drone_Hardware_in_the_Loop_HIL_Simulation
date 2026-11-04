@@ -108,6 +108,9 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   const active = await reply;
   assert.ok(active.running);
   assert.ok(active.samples.length > 0);
+  assert.equal(active.samples[0].airframe, active.config.airframe);
+  assert.equal(active.samples[0].attitude.length, 3);
+  assert.ok(active.samples[0].attitude.every(Number.isFinite));
   reply = next((d) => d.type === "state" && !d.running);
   worker.postMessage({ type: "pause" });
   const paused = await reply;
@@ -117,7 +120,7 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   const record = validateRecording(exported.recording);
   assert.equal(record.config.seed, 18);
   assert.equal(record.scenario, "step");
-  assert.equal(record.version, 7);
+  assert.equal(record.version, 8);
   assert.equal(record.sensorFrames.length, record.samples.length);
   assert.equal(record.sensorFrames[0].time, record.samples[0].time);
   assert.equal(record.setup.sensors.gpsNoiseM, 1.5);
@@ -183,6 +186,33 @@ test("worker runs, pauses, records simulation-time samples and exports validated
     worker.postMessage({ ...command, requestId });
     return response;
   };
+  const gimbal = (await call({ type: "inspectGimbal" })).value;
+  const settings = {
+    mode: "body",
+    target: { ...gimbal.target, yaw: 1 },
+    maxRate: { ...gimbal.maxRate },
+  };
+  const changedGimbal = await call({ type: "gimbal", value: settings });
+  assert.equal(changedGimbal.ok, true);
+  assert.equal(changedGimbal.value.snapshot.gimbal.target.yaw, 1);
+  assert.equal(
+    changedGimbal.value.snapshot.gimbal.actual.yaw,
+    gimbal.actual.yaw,
+  );
+  const badGimbal = await call({
+    type: "gimbal",
+    value: { ...settings, target: { ...settings.target, yaw: 4 } },
+  });
+  assert.equal(badGimbal.ok, false);
+  assert.equal((await call({ type: "inspectGimbal" })).value.target.yaw, 1);
+  const gimbalRecord = validateRecording(
+    (await call({ type: "apiExport" })).value,
+  );
+  assert.equal(gimbalRecord.events.at(-1).type, "gimbal");
+  assert.equal(gimbalRecord.events.at(-1).value.target.yaw, 1);
+  const resetGimbal = await call({ type: "reset" });
+  assert.equal(resetGimbal.value.snapshot.gimbal.target.yaw, 1);
+  assert.ok(Math.abs(resetGimbal.value.snapshot.gimbal.actual.yaw - 1) < 1e-8);
   for (const format of ["pcd", "csv"]) {
     const exported = await call({ type: "pointCloudExport", value: format });
     assert.equal(exported.ok, true);
@@ -595,7 +625,7 @@ test(
     const exported = await call({ type: "apiExport" });
     assert.equal(exported.ok, true);
     const recording = validateRecording(exported.value);
-    assert.equal(recording.version, 7);
+    assert.equal(recording.version, 8);
     assert.ok(
       recording.events.some(
         (event) =>

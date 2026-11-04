@@ -240,6 +240,43 @@
           <p>
             影像、深度與分類取自同一次拍攝；相機資料集需另行匯出，不包含在飛行紀錄中。
           </p>
+          <div class="feature-actions" id="gimbal-controls">
+            <label
+              >雲台模式<select id="gimbal-mode">
+                <option value="body">機體跟隨</option>
+                <option value="ned">NED 姿態穩定</option>
+              </select></label
+            >
+            <label
+              >偏航目標 (°)<input
+                id="gimbal-yaw"
+                type="number"
+                min="-180"
+                max="180"
+                step="1"
+                value="0"
+            /></label>
+            <label
+              >俯仰目標 (°，向下為正)<input
+                id="gimbal-pitch"
+                type="number"
+                min="-90"
+                max="90"
+                step="1"
+                value="15"
+            /></label>
+            <label
+              >橫滾目標 (°)<input
+                id="gimbal-roll"
+                type="number"
+                min="-45"
+                max="45"
+                step="1"
+                value="0"
+            /></label>
+            <button id="gimbal-apply">套用雲台目標</button>
+          </div>
+          <p id="gimbal-status">雲台：等待狀態</p>
           <div class="feature-actions">
             <button id="camera-capture">拍攝一張</button
             ><label
@@ -819,24 +856,40 @@
                 required
               />
             </div>
+          </div>
+        </section>
+        <section class="settings-group">
+          <h3>雲台最大角速度</h3>
+          <div class="settings-grid">
             <div class="settings-field">
-              <label for="camera-pitch">俯視角 (°，向下為正)</label
+              <label for="gimbal-rate-yaw">偏航 (°/s)</label
               ><input
-                id="camera-pitch"
+                id="gimbal-rate-yaw"
                 type="number"
-                min="-90"
-                max="90"
+                min="1"
+                max="360"
                 step="1"
                 required
               />
             </div>
             <div class="settings-field">
-              <label for="camera-yaw">偏航角 (°，向右為正)</label
+              <label for="gimbal-rate-pitch">俯仰 (°/s)</label
               ><input
-                id="camera-yaw"
+                id="gimbal-rate-pitch"
                 type="number"
-                min="-180"
-                max="180"
+                min="1"
+                max="360"
+                step="1"
+                required
+              />
+            </div>
+            <div class="settings-field">
+              <label for="gimbal-rate-roll">橫滾 (°/s)</label
+              ><input
+                id="gimbal-rate-roll"
+                type="number"
+                min="1"
+                max="360"
                 step="1"
                 required
               />
