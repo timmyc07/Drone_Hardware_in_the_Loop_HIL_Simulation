@@ -2,7 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createSimulation, validateConfig } from "../../web/sim.js";
 import { OUTPUT_MAP } from "../px4-protocol.js";
-import { replayPx4Recording } from "../replay.js";
+import { replayPx4Recording, replayArduPilotRecording } from "../replay.js";
+import {
+  ARDUPILOT_OUTPUT_MAP,
+  ARDUPILOT_SOURCE_SHA,
+  mapServoSpeeds,
+} from "../ardupilot-protocol.js";
 
 function fixture() {
   const config = validateConfig({ startOnGround: true }),
@@ -92,5 +97,106 @@ test("SITL replay rejects corrupted provenance, clocks, motor maps and trajector
     const record = fixture();
     change(record);
     assert.throws(() => replayPx4Recording(record));
+  }
+});
+
+function ardupilotFixture() {
+  const config = validateConfig({ startOnGround: true }),
+    sim = createSimulation(config, { controlSource: "external" });
+  const record = {
+    format: "flight-lab-ardupilot",
+    version: 1,
+    firmware: {
+      verified: true,
+      version: "4.7.2",
+      reportedGitHash: "fb773567",
+      expectedSourceSha: ARDUPILOT_SOURCE_SHA,
+      sourceSha: null,
+    },
+    config,
+    dt: 0.001,
+    clock: { stepUs: 1000 },
+    outputMap: ARDUPILOT_OUTPUT_MAP,
+    bootstrapIncludedInActuators: true,
+    bootstrapTicks: 12,
+    actuators: [],
+    samples: [sim.snapshot()],
+    events: [],
+  };
+  for (let i = 0; i < 800; i++) {
+    if (i === 200) {
+      sim.gust();
+      record.events.push({ time: sim.snapshot().time, action: "gust" });
+    }
+    const armedKnown = i >= record.bootstrapTicks,
+      heartbeatArmed = armedKnown && i < 650,
+      pwm = [1651, 1649, 1650, 1652, ...Array(12).fill(0)],
+      armed = armedKnown && heartbeatArmed,
+      input = {
+        sequence: i + 1,
+        timeUs: sim.readSensors().timeUs,
+        frameCount: i,
+        frameRate: i === 0 ? 1200 : 1000,
+        pwm,
+        armedKnown,
+        heartbeatArmed,
+        heartbeatAgeMs: armedKnown ? 10 : null,
+        armed,
+        rotorSpeedCommands: mapServoSpeeds({ pwm }, armed),
+      };
+    sim.applyExternalActuators({
+      sequence: input.sequence,
+      timeUs: input.timeUs,
+      armed: input.armed,
+      rotorSpeedCommands: input.rotorSpeedCommands,
+    });
+    sim.stepExternal(record.dt);
+    record.actuators.push(input);
+    if (i % 50 === 49) record.samples.push(sim.snapshot());
+  }
+  record.finalSnapshot = sim.snapshot();
+  return record;
+}
+
+test("ArduPilot replay integrates bootstrap once and checks raw asymmetric PWM through gust and disarm", () => {
+  const result = replayArduPilotRecording(
+    JSON.parse(JSON.stringify(ardupilotFixture())),
+  );
+  assert.equal(result.acceptedActuators, 800);
+  assert.equal(result.bootstrapTicks, 12);
+  assert.equal(Math.round(result.simSeconds * 1e6), 800000);
+  assert.equal(result.maxPositionErrorM, 0);
+  assert.equal(result.maxQuaternionError, 0);
+  assert.equal(result.maxMotorError, 0);
+});
+
+test("ArduPilot replay rejects invalid clocks, self-reports, frames, PWM, heartbeats and trajectory", () => {
+  const mutations = [
+    (r) => (r.firmware.reportedGitHash = "unknown"),
+    (r) => (r.firmware.sourceSha = ARDUPILOT_SOURCE_SHA),
+    (r) => (r.firmware.verified = false),
+    (r) => (r.clock.stepUs = 4000),
+    (r) => (r.dt = 0.004),
+    (r) => (r.bootstrapIncludedInActuators = false),
+    (r) => r.bootstrapTicks++,
+    (r) => (r.actuators[1].frameRate = 1200),
+    (r) => (r.actuators[0].frameRate = 400),
+    (r) => r.actuators[1].frameCount++,
+    (r) => r.actuators[1].sequence++,
+    (r) => r.actuators[1].timeUs++,
+    (r) => (r.actuators[20].pwm[0] = 999),
+    (r) => (r.actuators[20].pwm[5] = 500),
+    (r) => delete r.actuators[20].pwm[5],
+    (r) => r.actuators[20].rotorSpeedCommands.reverse(),
+    (r) => (r.actuators[20].heartbeatArmed = false),
+    (r) => (r.actuators[0].armed = true),
+    (r) => (r.actuators[20].heartbeatAgeMs = -1),
+    (r) => r.samples[1].position[0]++,
+    (r) => (r.finalSnapshot.quaternion[0] = 0.5),
+  ];
+  for (const mutate of mutations) {
+    const record = ardupilotFixture();
+    mutate(record);
+    assert.throws(() => replayArduPilotRecording(record));
   }
 });

@@ -1,0 +1,47 @@
+{
+  "passed": true,
+  "firmware": {
+    "version": "4.7.2",
+    "reportedGitHash": "fb773567",
+    "expectedSourceSha": "fb773567896014da007bca58358704d4a0d8516f",
+    "sourceSha": null,
+    "verification": "version and eight-character git-prefix self-report; not full-SHA or cryptographic attestation",
+    "patchSha256": "892be52e36b8e6bdbc7dd6f4208a99f250b1aae116abd2e8080b9b3b068c0e42",
+    "binarySha256": "a56f45f38e1fb78af5ae5cf5770d01a6a1d1a630308854a2867fe6ac9b67945c"
+  },
+  "stepUs": 1000,
+  "flightLoopHz": 400,
+  "simulationSeconds": 126.056,
+  "wallSeconds": 179.082,
+  "hoverSeconds": 60.026,
+  "altitudeRmseM": 0.0017893349365767123,
+  "maxHorizontalM": 0.30073527478242706,
+  "actuatorPackets": 126056,
+  "invalidActuatorPackets": 0,
+  "frameMismatches": 0,
+  "mavlinkCrcErrors": 0,
+  "landedAndDisarmed": true,
+  "replay": {
+    "acceptedInputs": 126056,
+    "bootstrapTicksIncluded": 1007,
+    "samples": 2523,
+    "maxPositionErrorM": 0,
+    "maxQuaternionError": 0,
+    "maxMotorError": 0
+  },
+  "limitations": "One software simulation test; no physical HIL or calibration claim.",
+  "browserValidation": {
+    "groundTakeoffVisible": true,
+    "observedAltitudeM": 2.46,
+    "readinessGatesVisible": true,
+    "earlyHealthRejectionVisible": true,
+    "pauseReconnectPreservedSimulationSeconds": 55.32,
+    "resumeLandAutomaticDisarm": true,
+    "returnedToInternalSimulation": true,
+    "exportedActuators": 83510,
+    "replaySamples": 1672,
+    "replayMaxPositionErrorM": 0,
+    "replayMaxQuaternionError": 0,
+    "replayMaxMotorError": 0
+  }
+}

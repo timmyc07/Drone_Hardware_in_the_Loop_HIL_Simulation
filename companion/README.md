@@ -1,4 +1,4 @@
-# Native PX4 SITL adapter
+# Native PX4 and ArduPilot SITL adapters
 
 This adapter connects a real, locally owned PX4 process to Flight Lab's JavaScript quadrotor rigid-body plant. It is software-in-the-loop, not a physical flight controller or hardware-in-the-loop implementation. Fixed-wing and VTOL external control are unsupported.
 
@@ -39,3 +39,20 @@ node companion/verify-px4.mjs /absolute/path/to/px4 /absolute/artifact/directory
 It requires real version verification, autonomous arming/takeoff, at least 60 simulated seconds of hover including a deterministic gust, landing and PX4 automatic disarming. It checks tracking limits, CRC and source timestamp consistency, then preserves accepted inputs, summary and native ULog files. It does not claim physical HIL validation.
 
 Implementation references: [PX4 v1.17.0 simulator](https://github.com/PX4/PX4-Autopilot/tree/v1.17.0/src/modules/simulation), [tagged Iris airframe](https://github.com/PX4/PX4-Autopilot/blob/v1.17.0/ROMFS/px4fmu_common/init.d-posix/airframes/10016_none_iris), and [MAVLink common messages](https://mavlink.io/en/messages/common.html). `node-mavlink` **2.3.0** API signatures were checked against its installed distribution; Context7's `/ardupilot/node-mavlink` index has no version-specific 2.3.0 documentation, so its general documentation was supplemented with the installed source.
+
+## ArduPilot JSON physics
+
+`ArduPilotSession` in `ardupilot-session.js` uses the same session methods, but commands return promises backed by MAVLink acknowledgements. The supported native build is **Copter-4.7.2**, expected tag SHA `fb773567896014da007bca58358704d4a0d8516f`, with the two local socket patches described in [patches/README.md](patches/README.md). Follow [the build and operating instructions](../docs/ArduPilot_SITL操作.md). Its MAVLink version and eight-character git prefix are self-reported, not full-source or patch attestation. The adapter also records the binary's actual SHA-256.
+
+JSON physics uses a 1ms simulated step while the controller runs at 400Hz. UDP `127.0.0.1:9002` receives raw 16-channel servo frames; MAVLink TCP `127.0.0.1:5760` carries heartbeats, parameter readbacks and flight commands. Startup preserves the internal GPS serial pipes. Arming requires confirmed identity, critical parameters and heartbeat, followed by ArduPilot's own unmodified health checks (`ARMING_SKIPCHK=0`). Estimator/GPS warmup may reject early takeoff attempts. A successful ACK confirms command acceptance; observe plant altitude and actual heartbeat arming to establish flight completion.
+
+The separate `flight-lab-ardupilot` version 1 recording includes every accepted frame, raw PWM, heartbeat arming metadata, 1ms plant timestamps, sampled truth and successful command/gust events. **Its bootstrap frames are already included in `actuators`**; `bootstrapTicks` is informational and must not be integrated separately. Frame zero may report the native 1200Hz bootstrap rate, while later frames must report 1000Hz. Each new frame advances exactly one 1ms step; duplicates resend the cached reply without stepping. Gaps, resets, invalid rates and watchdog failures freeze the plant instead of falling back to the browser controller.
+
+Run the real native proof or independently replay either controller's accepted inputs:
+
+```sh
+node companion/verify-ardupilot.mjs /absolute/path/to/build/sitl/bin/arducopter /absolute/artifact/directory
+node companion/replay.js /absolute/path/to/recording.json
+```
+
+`replayArduPilotRecording()` and `replayPx4Recording()` validate their own clock, raw motor mapping and firmware metadata before reconstructing the shared plant trajectory. Replay does not rerun either flight controller or attest to the source of an imported recording. The local WebSocket service accepts an explicit `controller: "px4"` or `"ardupilot"` in its start request; stop the current controller before switching. Both adapters remain software-only quadrotor simulation, with no physical HIL or external fixed-wing/VTOL support.

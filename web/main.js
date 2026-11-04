@@ -7,7 +7,12 @@ import {
 } from "./recording.js";
 import { readPilotInput, takeoffPlayAction } from "./input.js";
 import { exportLidarCsv, exportLidarPcd } from "./pointcloud.js";
-import { createHilClient, isCompanionOrigin } from "./hil-client.js";
+import {
+  createHilClient,
+  isCompanionOrigin,
+  hilFlightReadiness,
+  shouldFollowTakeoff,
+} from "./hil-client.js";
 import { createFlightApi } from "./api.js";
 import {
   DEFAULT_CAMERA_CONFIG,
@@ -96,6 +101,12 @@ let firstState = true;
 let externalActive = false;
 let hilClient;
 let hilState;
+function hilControllerName() {
+  const kind = externalActive
+    ? hilState?.controller?.kind
+    : $("hil-type").value;
+  return kind === "ardupilot" ? "ArduPilot" : "PX4";
+}
 let internalSaved;
 const worker = new Worker(new URL("./worker.js", import.meta.url), {
   type: "module",
@@ -170,10 +181,10 @@ function setPlaying(value) {
     hilState?.phase === "running" &&
     latest?.runway.weightOnWheels;
   $("play").innerHTML = externalTakeoff
-    ? '<span aria-hidden="true">▶</span> PX4 起飛'
+    ? `<span aria-hidden="true">▶</span> ${hilFlightReadiness(hilState).length ? "等待飛控準備" : `${hilControllerName()} 起飛`}`
     : value
       ? '<span aria-hidden="true">Ⅱ</span> 暫停模擬'
-      : `<span aria-hidden="true">▶</span> ${externalActive ? "繼續 PX4 模擬" : playLabel}`;
+      : `<span aria-hidden="true">▶</span> ${externalActive ? `繼續 ${hilControllerName()} 模擬` : playLabel}`;
   $("runtime-status").textContent = replay
     ? "紀錄重播"
     : value
@@ -201,7 +212,7 @@ function setPlaying(value) {
               ? "已暫停"
               : "準備就緒";
   $("view-status").innerHTML =
-    `<span class="dot"></span>${externalActive ? (hilState?.controller?.verified === true && hilState?.stats?.sensorPackets > 0 && hilState?.stats?.actuatorPackets > 0 ? "PX4 SITL 閉環 · 植物模型真值" : "PX4 介接中") : label}`;
+    `<span class="dot"></span>${externalActive ? (hilState?.controller?.verified === true && hilState?.stats?.sensorPackets > 0 && hilState?.stats?.actuatorPackets > 0 ? `${hilControllerName()} SITL 閉環 · 植物模型真值` : `${hilControllerName()} 介接中`) : label}`;
 }
 
 const targets = [
@@ -788,7 +799,7 @@ function updateTelemetry() {
   $("flight-mode").parentElement.hidden = externalActive;
   document.querySelector(".legend-target").hidden = externalActive;
   $("model-rate").innerHTML = externalActive
-    ? '<span class="dot"></span>4 ms 鎖步'
+    ? `<span class="dot"></span>${hilState?.clock?.stepUs == null ? "—" : hilState.clock.stepUs / 1000} ms 鎖步`
     : '<span class="dot"></span>200 Hz 模型';
   $("roll-value").textContent = (s.attitude[0] * DEG).toFixed(2);
   $("pitch-value").textContent = (s.attitude[1] * DEG).toFixed(2);
@@ -809,10 +820,10 @@ function updateTelemetry() {
     $(`motor-unit-${i + 1}`).textContent = externalActive ? "%" : "µs";
   }
   $("motor-note").textContent = externalActive
-    ? "PX4 馬達通道映射後的正規化轉速指令；模型假設 THR_MDL_FAC=1。"
+    ? `${hilControllerName()} 馬達通道映射後的正規化轉速指令；模型映射與參數見介接紀錄。`
     : "固定翼不使用升力旋翼；PWM 為模型換算值，未連接實體飛控。";
   $("age-label").textContent = externalActive ? "馬達資料齡期" : "感測資料齡期";
-  $("drop-label").textContent = externalActive ? "封包校驗錯誤" : "模擬丟包";
+  $("drop-label").textContent = externalActive ? "協定錯誤" : "模擬丟包";
   $("rtf-value").textContent = replay
     ? "重播"
     : timing.realTimeFactor
@@ -827,7 +838,12 @@ function updateTelemetry() {
       : `${hilState.stats.lastActuatorAgeMs.toFixed(0)} ms`
     : `${(s.metrics.sampleAge * 1000).toFixed(0)} ms`;
   $("drop-value").textContent = externalActive
-    ? String(hilState?.stats?.crcErrors ?? 0)
+    ? String(
+        hilState?.controller?.kind === "ardupilot"
+          ? (hilState.stats?.invalidActuatorPackets ?? 0) +
+              (hilState.stats?.frameMismatches ?? 0)
+          : (hilState?.stats?.crcErrors ?? 0),
+      )
     : s.metrics.dropped.toLocaleString();
   $("samples-value").textContent = externalActive
     ? "—"
@@ -945,7 +961,7 @@ function updateTelemetry() {
   };
   if (nav) $("flight-mode").value = nav.mode;
   $("flight-details").textContent = externalActive
-    ? "PX4 控制；植物模型真值。飛控估測及圍欄狀態未提供。"
+    ? `${hilControllerName()} 控制；植物模型真值。飛控估測及圍欄狀態未提供。`
     : nav
       ? `模式：${modeLabels[nav.mode] || "未知"} · 航點 ${Math.min(nav.index + 1, nav.waypoints?.length || 0)}/${nav.waypoints?.length || 0}${nav.completed && nav.mode === "mission" ? "（任務完成）" : ""} · ${nav.fenceBreached ? "超出圍欄" : "圍欄內"} ${reasons[nav.reason] || ""} · ${s.armed ? "已解鎖" : "已上鎖"} · ${stateLabels[s.status] || "未知"}`
       : `狀態：${stateLabels[s.status] || "未知"}`;
@@ -2124,7 +2140,10 @@ $("hil-remote-notice").hidden = isLocalCompanion;
 $("hil-local-controls").hidden = !isLocalCompanion;
 let hilOwned = false;
 let hilExportedPackets = 0;
+let hilPreviousGrounded;
+let hilFollowed = false;
 function setExternalControls(disabled) {
+  $("hil-type").disabled = disabled;
   const selector =
     "#reset, #settings-open, #speed, #import-open, #target-controls input, #gust, [data-scenario], #mission-workspace input, #mission-workspace button:not(#mission-export), #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #flight-mode, [data-mode], #position-apply, #fault-apply, #fault-link, #fault-clear, #fault-pusher, #abort-takeoff, #transition-hover, #transition-cruise, #pilot-enable";
   document.querySelectorAll(selector).forEach((element) => {
@@ -2134,13 +2153,21 @@ function setExternalControls(disabled) {
     $("pilot-enable").checked = false;
     releasePilot();
   }
+  const unready = hilFlightReadiness(hilState).length > 0;
   document.querySelectorAll("[data-command]").forEach((button) => {
-    button.disabled = disabled && hilState?.phase !== "running";
+    button.disabled =
+      disabled &&
+      (hilState?.phase !== "running" ||
+        (unready && ["arm", "takeoff"].includes(button.dataset.command)));
   });
   renderWaypoints();
   updateLidarExportButtons();
   $("play").disabled =
-    disabled && !["running", "paused"].includes(hilState?.phase);
+    disabled &&
+    (!["running", "paused"].includes(hilState?.phase) ||
+      (hilState?.phase === "running" &&
+        latest?.runway.weightOnWheels &&
+        unready));
 }
 function presentHilState(state) {
   hilState = state;
@@ -2148,6 +2175,8 @@ function presentHilState(state) {
     const action = button.dataset.hilCommand;
     button.disabled =
       !externalActive ||
+      (["arm", "takeoff"].includes(action) &&
+        hilFlightReadiness(state).length > 0) ||
       (action === "stop"
         ? !["starting", "running", "paused", "fault"].includes(state.phase)
         : action === "resume"
@@ -2169,14 +2198,21 @@ function presentHilState(state) {
     state.stats?.sensorPackets > 0 &&
     state.stats?.actuatorPackets > 0;
   $("hil-status").textContent =
-    `${phases[state.phase] || "未知狀態"}${connected ? " · PX4 SITL 閉環／植物模型真值" : " · 等待飛控資料"}`;
+    `${phases[state.phase] || "未知狀態"}${connected ? ` · ${hilControllerName()} SITL 閉環／植物模型真值` : " · 等待飛控資料"}`;
   const c = state.controller;
+  const missing = hilFlightReadiness(state);
+  $("hil-readiness").textContent =
+    c?.kind === "ardupilot"
+      ? missing.length
+        ? `準備未完成：等待${missing.join("、")}確認。`
+        : "身分、參數及心跳已確認；健康檢查可能仍需暖機，請留意飛控訊息。"
+      : "";
   $("hil-controller").textContent = c
-    ? `PX4 ${c.version || "—"} · 版本 ${c.sourceSha || "—"} · 機型 ${c.sysAutostart ?? "—"} · ${c.armed ? "已解鎖" : "未解鎖"} · 飛行模式 ${c.flightMode || "—"} · 估測 ${c.estimated == null ? "未提供" : "已提供"}`
+    ? `${c.kind === "ardupilot" ? "ArduPilot" : "PX4"} ${c.version || "—"} · 回報來源 ${c.sourceSha || c.reportedGitHash || "—"} · ${c.kind === "ardupilot" ? "Quad X" : `機型 ${c.sysAutostart ?? "—"}`} · ${c.armed ? "已解鎖" : "未解鎖"} · 飛行模式 ${c.flightMode || "—"} · 估測 ${c.estimated == null ? "未提供" : "已提供"}`
     : "飛控尚未就緒";
   const stats = state.stats;
   $("hil-stats").textContent = stats
-    ? `感測封包 ${stats.sensorPackets ?? 0} · 馬達封包 ${stats.actuatorPackets ?? 0} · 校驗錯誤 ${stats.crcErrors ?? 0} · 馬達資料齡期 ${stats.lastActuatorAgeMs == null ? "—" : `${Number(stats.lastActuatorAgeMs).toFixed(0)} ms`}`
+    ? `感測封包 ${stats.sensorPackets ?? 0} · 馬達封包 ${stats.actuatorPackets ?? 0} · ${c?.kind === "ardupilot" ? `JSON 格式錯誤 ${stats.invalidActuatorPackets ?? 0} · 序號錯配 ${stats.frameMismatches ?? 0}` : `CRC 錯誤 ${stats.crcErrors ?? 0}`} · 馬達資料齡期 ${stats.lastActuatorAgeMs == null ? "—" : `${Number(stats.lastActuatorAgeMs).toFixed(0)} ms`}`
     : "";
   $("hil-logs").textContent = Array.isArray(state.logs)
     ? state.logs
@@ -2186,6 +2222,13 @@ function presentHilState(state) {
     : "";
   if (!externalActive) return;
   if (state.snapshot?.controlSource === "external") {
+    const grounded = state.snapshot.runway.weightOnWheels;
+    if (shouldFollowTakeoff(hilPreviousGrounded, grounded, hilFollowed)) {
+      focusFlightView();
+      hilFollowed = true;
+    }
+    if (hilPreviousGrounded === false && grounded) hilFollowed = false;
+    hilPreviousGrounded = grounded;
     latest = state.snapshot;
     if (state.sensors) {
       sensors = state.sensors;
@@ -2219,21 +2262,33 @@ async function connectHil() {
   await client.connect();
   hilClient = client;
 }
+function focusFlightView() {
+  document.querySelector('[data-workspace="flight"]').click();
+  if (!rendering) $("render-toggle").click();
+  document.querySelector('[data-camera="follow"]').click();
+  $("viewport").scrollIntoView({ behavior: "smooth", block: "center" });
+}
 async function sendHilCommand(command) {
   if (!hilClient || !externalActive) return;
+  if (
+    ["arm", "takeoff"].includes(command) &&
+    hilFlightReadiness(hilState).length
+  ) {
+    toast(`飛控尚未準備：等待${hilFlightReadiness(hilState).join("、")}確認。`);
+    return;
+  }
   try {
     await hilClient.request("command", command);
-    if (command === "takeoff") {
-      document.querySelector('[data-workspace="flight"]').click();
-      if (!rendering) $("render-toggle").click();
-      document.querySelector('[data-camera="follow"]').click();
-      $("viewport").scrollIntoView({ behavior: "smooth", block: "center" });
+    if (command === "takeoff" && !hilFollowed) {
+      focusFlightView();
+      hilFollowed = true;
     }
     toast("命令已送出，請確認飛控狀態與高度回饋。");
   } catch (error) {
     toast(`飛控命令失敗：${error.message}`);
   }
 }
+
 $("hil-start").onclick = async () => {
   if (!isLocalCompanion || externalActive) return;
   if (replay) return toast("請先結束重播並返回內建模擬。");
@@ -2245,9 +2300,13 @@ $("hil-start").onclick = async () => {
       ["starting", "running", "paused", "fault"].includes(existing.phase) &&
       existing.snapshot;
     const binaryPath = $("hil-binary").value.trim();
+    const controller = reattach
+      ? existing.controller.kind
+      : $("hil-type").value;
+    $("hil-type").value = controller;
     if (!reattach) {
       if (!binaryPath) {
-        toast("請輸入 PX4 執行檔完整路徑。");
+        toast("請輸入所選飛控的執行檔完整路徑。");
         return;
       }
       if (config.airframe !== "quadrotor" || !config.startOnGround) {
@@ -2273,28 +2332,34 @@ $("hil-start").onclick = async () => {
     };
     clearCameraPreview();
     externalActive = true;
+    hilPreviousGrounded = undefined;
+    hilFollowed = false;
     sceneEditor?.setScene(sceneEditor.getApplied(), true);
     lastRenderedSceneKey = "";
     hilOwned = true;
     history = [];
     sensors = undefined;
     $("sensor-readings").textContent =
-      "PX4 外部模式未提供此工作區的感測器讀值。";
+      "外部飛控模式未提供此工作區的感測器讀值。";
     drawLidar(null);
     scene?.setSensorScan(null);
     scene?.setObstacles([]);
     scene?.setMission([]);
     scene?.setGates([]);
-    presentHilState(reattach ? existing : { phase: "starting" });
+    presentHilState(
+      reattach
+        ? existing
+        : { phase: "starting", controller: { kind: controller } },
+    );
     setExternalControls(true);
-    if (reattach) toast("已接回 PX4；模擬保持目前狀態，請自行選擇是否繼續。");
+    if (reattach) toast("已接回飛控；模擬保持目前狀態，請自行選擇是否繼續。");
     else {
-      await hilClient.request("start", { binaryPath, config });
+      await hilClient.request("start", { controller, binaryPath, config });
       hilExportedPackets = 0;
-      toast("PX4 啟動請求已送出，請等待飛控資料。");
+      toast("飛控啟動請求已送出，請等待飛控資料。");
     }
   } catch (error) {
-    toast(`無法啟動或接回 PX4：${error.message}`);
+    toast(`無法啟動或接回飛控：${error.message}`);
     if (externalActive) await returnInternal(false);
   } finally {
     $("hil-start").disabled = externalActive;
@@ -2313,7 +2378,7 @@ async function returnInternal(stop = true) {
       if (!hilClient) await connectHil();
       await hilClient.request("command", "stop");
     } catch (error) {
-      toast(`無法停止 PX4：${error.message}`);
+      toast(`無法停止飛控：${error.message}`);
       return;
     }
   }
@@ -2357,7 +2422,7 @@ $("hil-export").onclick = async () => {
       await hilClient.recording(),
       "json",
       "application/json",
-      "flight-lab-px4-sitl.json",
+      `flight-lab-${hilState?.controller?.kind === "ardupilot" ? "ardupilot" : "px4"}-sitl.json`,
     );
     hilExportedPackets = exportedPackets;
   } catch (error) {

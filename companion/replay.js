@@ -3,6 +3,13 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createSimulation, validateConfig } from "../web/sim.js";
 import { mapActuators, OUTPUT_MAP } from "./px4-protocol.js";
+import {
+  ARDUPILOT_DT,
+  ARDUPILOT_VERSION,
+  ARDUPILOT_SOURCE_SHA,
+  ARDUPILOT_OUTPUT_MAP,
+  mapServoSpeeds,
+} from "./ardupilot-protocol.js";
 
 const MAX_FILE_BYTES = 128 * 1024 * 1024;
 const object = (value) => {
@@ -34,7 +41,7 @@ function maximumError(actual, expected) {
   return Math.max(...actual.map((v, i) => Math.abs(v - expected[i])));
 }
 
-// Replays accepted actuator inputs through the plant; it does not run or replace PX4.
+// Replays accepted actuator inputs through the plant; it does not rerun a flight controller.
 export function replayPx4Recording(value) {
   const record = object(value),
     firmware = object(record.firmware);
@@ -47,18 +54,93 @@ export function replayPx4Recording(value) {
     firmware.sourceSha !== "d6f12ad1c4f70ad3230afd7d86e971421e02fef4" ||
     !Array.isArray(record.outputMap) ||
     record.outputMap.length !== 4 ||
-    record.outputMap.some((v, i) => v !== OUTPUT_MAP[i])
+    !Array.from(record.outputMap).every((v, i) => v === OUTPUT_MAP[i])
   )
     throw new Error("Unsupported SITL recording format or firmware");
+  const bootstrap = integer(record.bootstrapTicks ?? 0, 0, 450000);
+  return replayPlant(record, bootstrap, (input, timeUs) => {
+    if (
+      integer(input.rawTimeUs, 0, Number.MAX_SAFE_INTEGER) !==
+      timeUs + 1000000
+    )
+      throw new Error("SITL actuator timestamp mismatch");
+    integer(input.mode, 0, 255);
+    integer(input.flags, 0, Number.MAX_SAFE_INTEGER);
+    return mapActuators({
+      timeUsec: BigInt(input.rawTimeUs),
+      mode: input.mode,
+      flags: BigInt(input.flags),
+      controls: vector(input.rawControls, 16),
+    });
+  });
+}
+
+export function replayArduPilotRecording(value) {
+  const record = object(value),
+    firmware = object(record.firmware);
+  if (
+    record.format !== "flight-lab-ardupilot" ||
+    record.version !== 1 ||
+    record.dt !== ARDUPILOT_DT ||
+    object(record.clock).stepUs !== 1000 ||
+    firmware.verified !== true ||
+    firmware.version !== ARDUPILOT_VERSION ||
+    firmware.reportedGitHash !== ARDUPILOT_SOURCE_SHA.slice(0, 8) ||
+    firmware.expectedSourceSha !== ARDUPILOT_SOURCE_SHA ||
+    firmware.sourceSha !== null ||
+    record.bootstrapIncludedInActuators !== true ||
+    !Array.isArray(record.outputMap) ||
+    record.outputMap.length !== 4 ||
+    !Array.from(record.outputMap).every(
+      (value, i) => value === ARDUPILOT_OUTPUT_MAP[i],
+    )
+  )
+    throw new Error(
+      "Unsupported ArduPilot recording format or firmware self-report",
+    );
+  integer(record.bootstrapTicks, 0, 1800000);
+  let bootstrapTicks = 0;
+  const result = replayPlant(record, 0, (input) => {
+    if (
+      integer(input.frameCount, 0, 0xffffffff) !== input.sequence - 1 ||
+      !(
+        input.frameRate === 1000 ||
+        (input.sequence === 1 && input.frameRate === 1200)
+      ) ||
+      typeof input.armedKnown !== "boolean" ||
+      typeof input.heartbeatArmed !== "boolean" ||
+      (input.heartbeatAgeMs !== null &&
+        (!Number.isFinite(input.heartbeatAgeMs) || input.heartbeatAgeMs < 0))
+    )
+      throw new Error("Invalid ArduPilot frame or heartbeat metadata");
+    const pwm = vector(input.pwm, 16);
+    if (
+      !pwm.every(
+        (value) =>
+          Number.isInteger(value) &&
+          (value === 0 || (value >= 800 && value <= 2200)),
+      )
+    )
+      throw new Error("Invalid ArduPilot raw PWM");
+    if (!input.armedKnown) bootstrapTicks++;
+    const armed = input.armedKnown && input.heartbeatArmed;
+    return { armed, rotorSpeedCommands: mapServoSpeeds({ pwm }, armed) };
+  });
+  if (bootstrapTicks !== record.bootstrapTicks)
+    throw new Error("ArduPilot bootstrap count mismatch");
+  return { ...result, bootstrapTicks };
+}
+
+function replayPlant(record, bootstrap, mapInput) {
   const config = validateConfig(object(record.config));
   if (config.airframe !== "quadrotor" || config.startOnGround !== true)
     throw new Error("SITL replay requires the external ground-start quadrotor");
-  const bootstrap = integer(record.bootstrapTicks ?? 0, 0, 450000);
+  const maxTicks = Math.round(1800 / record.dt) + 1;
   if (
     !Array.isArray(record.actuators) ||
-    record.actuators.length + bootstrap > 450001 ||
+    record.actuators.length + bootstrap > maxTicks ||
     !Array.isArray(record.samples) ||
-    record.samples.length > 450002 ||
+    record.samples.length > maxTicks + 1 ||
     !Array.isArray(record.events) ||
     record.events.length > 100000
   )
@@ -157,19 +239,11 @@ export function replayPx4Recording(value) {
     applyEvents();
     const timeUs = sim.readSensors().timeUs;
     if (
-      integer(input.sequence, 1, 450001) !== ++sequence ||
-      integer(input.timeUs, 0, 1800010000) !== timeUs ||
-      integer(input.rawTimeUs, 0, Number.MAX_SAFE_INTEGER) !== timeUs + 1000000
+      integer(input.sequence, 1, maxTicks) !== ++sequence ||
+      integer(input.timeUs, 0, 1800010000) !== timeUs
     )
       throw new Error("SITL actuator sequence or timestamp mismatch");
-    integer(input.mode, 0, 255);
-    integer(input.flags, 0, Number.MAX_SAFE_INTEGER);
-    const mapped = mapActuators({
-      timeUsec: BigInt(input.rawTimeUs),
-      mode: input.mode,
-      flags: BigInt(input.flags),
-      controls: vector(input.rawControls, 16),
-    });
+    const mapped = mapInput(input, timeUs);
     if (
       input.armed !== mapped.armed ||
       maximumError(
@@ -229,14 +303,14 @@ if (
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   const filename = process.argv[2];
-  if (!filename) throw new Error("Pass a PX4 SITL recording JSON path");
+  if (!filename)
+    throw new Error("Pass a PX4 or ArduPilot SITL recording JSON path");
   if ((await stat(filename)).size > MAX_FILE_BYTES)
     throw new Error("SITL import exceeds 128 MiB");
-  console.log(
-    JSON.stringify(
-      replayPx4Recording(JSON.parse(await readFile(filename, "utf8"))),
-      null,
-      2,
-    ),
-  );
+  const record = JSON.parse(await readFile(filename, "utf8"));
+  const replay =
+    record?.format === "flight-lab-ardupilot"
+      ? replayArduPilotRecording
+      : replayPx4Recording;
+  console.log(JSON.stringify(replay(record), null, 2));
 }

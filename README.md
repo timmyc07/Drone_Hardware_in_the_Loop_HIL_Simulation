@@ -4,11 +4,11 @@
 
 0.6 版提供機載相機與固定翼跑道起飛；各機型均為未經實機校準的教育近似。
 
-目前有瀏覽器內建軟體模擬與本機 PX4 SITL 閉環；兩者都不是實體飛控或硬體在迴路，也未經實機校準。原研究計畫的 Unity 方案是歷史提案；瀏覽器模擬器是目前實作的另一種方案。
+目前有瀏覽器內建軟體模擬，以及本機 PX4／ArduPilot SITL 閉環；皆未經實機校準。原研究計畫的 Unity 方案是歷史提案；瀏覽器模擬器是目前實作的另一種方案。
 
 ## 本機啟動
 
-需要 Node.js 22.12 以上及 npm。使用 Three.js 0.187.0 與 Vite 8.3.5，內建模擬不需要後端或 `.env`；本機 PX4 SITL 則需本機 companion 與受支援的 PX4 執行檔。
+需要 Node.js 22.12 以上及 npm。使用 Three.js 0.187.0 與 Vite 8.3.5，內建模擬不需要後端或 `.env`；外部 SITL 則需本機 companion 與受支援的飛控執行檔。
 
 ```sh
 npm ci
@@ -23,7 +23,7 @@ npm run build     # 建立正式版本
 npm run preview   # 預覽已建立的版本
 ```
 
-本機 PX4 軟體飛控閉環的準備與操作請見 [PX4 SITL 操作](docs/PX4_SITL操作.md)；公開網站本身不連接本機飛控服務。
+0.10 版 ArduCopter SITL 已完成原生飛行閉環與離線重播驗證，詳見 [ArduPilot SITL 操作](docs/ArduPilot_SITL操作.md)。本機 PX4 軟體飛控閉環的準備與操作請見 [PX4 SITL 操作](docs/PX4_SITL操作.md)；公開網站本身不連接本機飛控服務。
 
 ## 使用方式
 
@@ -38,7 +38,7 @@ npm run preview   # 預覽已建立的版本
 
 0.6 版提供機載 RGB、平面深度與語意分類資料；相機資料集獨立於飛行紀錄，格式與限制見[相機資料說明](docs/相機資料說明.md)。已驗證三張影格的瀏覽器匯出、匯入、選取及再次匯出。
 
-0.8 版提供多層光達與 CSV／ASCII PCD 匯出；參見[光達資料說明](docs/光達資料說明.md)。內建紀錄使用 schema 7，PX4 SITL 紀錄維持獨立版本 1。
+0.8 版提供多層光達與 CSV／ASCII PCD 匯出；參見[光達資料說明](docs/光達資料說明.md)。內建紀錄使用 schema 7；PX4 與 ArduPilot SITL 各有獨立版本 1 紀錄。
 
 0.9 版提供場景與賽道編輯：可編輯障礙盒及有序航門，資料格式與限制見[場景與賽道](docs/場景與賽道.md)。
 
@@ -50,7 +50,7 @@ npm run preview   # 預覽已建立的版本
 
 固定場景障礙使用 0.25 m 包絡與掃掠軸對齊包圍盒判定碰撞，並非逐網格碰撞。FPV 畫面及雨霧是視覺效果；內建模擬感測器均為幾何或數學近似，沒有實體相機、地磁模型或校準保證；PX4 SITL 磁場另使用 PX4 WMM-2020 查表。0.8 版多層光達僅模擬平地及訓練障礙包圍盒，不涵蓋完整場景或實機校準。實際飛行不應依賴此模擬器的精度或得分。
 
-146 項自動測試全部通過，涵蓋物理、飛行、資料邊界、Worker 與本機橋接；這不代表實機校準、實體手把或硬體在迴路已驗證。
+156 項自動測試全部通過，涵蓋物理、飛行、資料邊界、Worker 與本機橋接；這不代表實機校準、實體手把或硬體在迴路已驗證。
 
 ## 功能盤點與後續工作
 
@@ -68,7 +68,7 @@ npm run preview   # 預覽已建立的版本
 - `web/sim.js`、`web/aerodynamics.js`：剛體、翼面、控制、航行、故障與感測模型。
 - `web/training.js`、`web/input.js`：練習評分與操控輸入。
 - `web/sensors.js`、`web/api.js`：虛擬感測器與同頁程式介面。
-- `companion/`：本機 PX4 SITL 橋接、驗證及離線重播。
+- `companion/`：本機 PX4／ArduPilot SITL 橋接、驗證及離線重播。
 - `web/worker.js`：模擬排程與記錄；回放由 `web/main.js` 讀取已記錄狀態。
 - `web/scene.js`、`web/main.js`、`web/style.css`：3D 場景及操作介面。
 - `web/capabilities.js`、`web/recording.js`、`web/tests/`：功能目錄、記錄格式與測試。

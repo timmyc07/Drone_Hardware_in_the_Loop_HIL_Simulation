@@ -28,11 +28,17 @@ const keys = (v, expected) =>
   expected.every((k) => Object.hasOwn(v, k));
 
 export async function startCompanion({ port = 8787, sessionFactory } = {}) {
-  const factory = sessionFactory ?? (() => new Session());
-  const Session = sessionFactory
-    ? null
-    : (await import("./px4-session.js")).Px4Session;
-  let session = factory();
+  const factory =
+    sessionFactory ??
+    (async (controller) => {
+      const Session =
+        controller === "ardupilot"
+          ? (await import("./ardupilot-session.js")).ArduPilotSession
+          : (await import("./px4-session.js")).Px4Session;
+      return new Session();
+    });
+  let controller = "px4";
+  let session = await factory(controller);
   const token = randomBytes(32).toString("base64url");
   let client,
     closing = false;
@@ -195,15 +201,21 @@ export async function startCompanion({ port = 8787, sessionFactory } = {}) {
             else if (
               command.type === "start" &&
               keys(command, ["id", "type", "value"]) &&
-              keys(command.value, ["binaryPath", "config"]) &&
+              keys(command.value, ["controller", "binaryPath", "config"]) &&
+              ["px4", "ardupilot"].includes(command.value.controller) &&
               typeof command.value.binaryPath === "string" &&
               plain(command.value.config)
             ) {
-              if (session.state().phase !== "stopped")
+              if (
+                session.state().phase !== "stopped" &&
+                command.value.controller === controller
+              )
                 value = await session.start(command.value);
               else {
+                if (!["idle", "stopped"].includes(session.state().phase))
+                  throw Error("Stop the current controller before switching");
                 await session.close();
-                const candidate = factory();
+                const candidate = await factory(command.value.controller);
                 try {
                   value = await candidate.start(command.value);
                   if (closing) throw Error("Companion is closing");
@@ -213,6 +225,7 @@ export async function startCompanion({ port = 8787, sessionFactory } = {}) {
                 }
                 session.off("state", forwardState);
                 session = candidate;
+                controller = command.value.controller;
                 session.on("state", forwardState);
                 forwardState(session.state());
               }

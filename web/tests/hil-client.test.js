@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createHilClient, isCompanionOrigin } from "../hil-client.js";
+import {
+  createHilClient,
+  isCompanionOrigin,
+  hilFlightReadiness,
+  shouldFollowTakeoff,
+} from "../hil-client.js";
 
 class Socket {
   static OPEN = 1;
@@ -41,7 +46,6 @@ function makeClient(extra = {}) {
     }),
     WebSocket: Socket,
     onState: (value) => seen.push(value.phase),
-    timeoutMs: 20,
     ...extra,
   });
   return { client, seen };
@@ -73,7 +77,20 @@ test("errors, malformed messages and socket close reject requests", async () => 
 test("request timeouts and invalid bootstrap are rejected", async () => {
   const { client } = makeClient();
   await client.connect();
-  await assert.rejects(client.request("inspect"), /逾時/);
+  const original = globalThis.setTimeout;
+  let expire;
+  try {
+    globalThis.setTimeout = (fn, delay) => {
+      assert.equal(delay, 20000);
+      expire = fn;
+      return 0;
+    };
+    const request = client.request("inspect");
+    expire();
+    await assert.rejects(request, /逾時/);
+  } finally {
+    globalThis.setTimeout = original;
+  }
   client.close();
   const bad = makeClient({
     fetch: async () => ({
@@ -91,4 +108,31 @@ test("reconnecting only reads state and never starts or resumes a session", asyn
   await second.connect();
   assert.equal(Socket.current.sent, undefined);
   second.close();
+});
+
+test("ArduPilot readiness requires identity, parameters and heartbeat without changing PX4", () => {
+  assert.deepEqual(hilFlightReadiness({ controller: { kind: "ardupilot" } }), [
+    "飛控身分",
+    "參數",
+    "心跳",
+  ]);
+  assert.deepEqual(
+    hilFlightReadiness({
+      controller: {
+        kind: "ardupilot",
+        verified: true,
+        parametersVerified: true,
+        armedKnown: true,
+      },
+    }),
+    [],
+  );
+  assert.deepEqual(hilFlightReadiness({ controller: { kind: "px4" } }), []);
+});
+
+test("follow view switches only on an unfollowed ground-to-air transition", () => {
+  assert.equal(shouldFollowTakeoff(true, false, false), true);
+  assert.equal(shouldFollowTakeoff(true, false, true), false);
+  assert.equal(shouldFollowTakeoff(false, false, false), false);
+  assert.equal(shouldFollowTakeoff(undefined, false, false), false);
 });

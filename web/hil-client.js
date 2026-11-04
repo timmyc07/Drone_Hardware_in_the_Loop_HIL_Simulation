@@ -11,7 +11,6 @@ export function createHilClient({
   WebSocket,
   onState,
   onDisconnect,
-  timeoutMs = 15000,
 }) {
   if (!isCompanionOrigin(location))
     throw new Error("請使用本機 companion 網址。");
@@ -107,7 +106,7 @@ export function createHilClient({
       const timer = setTimeout(() => {
         pending.delete(id);
         reject(new Error("本機服務回應逾時。"));
-      }, timeoutMs);
+      }, 20000);
       pending.set(id, { resolve, reject, timer });
       try {
         socket.send(
@@ -141,4 +140,22 @@ export function createHilClient({
       token = undefined;
     },
   };
+}
+
+export function hilFlightReadiness(state) {
+  if (state?.controller?.kind !== "ardupilot") return [];
+  const controller = state.controller;
+  return [
+    ...(!controller.verified ? ["飛控身分"] : []),
+    ...(!controller.parametersVerified ? ["參數"] : []),
+    ...(!controller.armedKnown ? ["心跳"] : []),
+  ];
+}
+
+export function shouldFollowTakeoff(
+  previousGrounded,
+  grounded,
+  alreadyFollowed,
+) {
+  return previousGrounded === true && grounded === false && !alreadyFollowed;
 }

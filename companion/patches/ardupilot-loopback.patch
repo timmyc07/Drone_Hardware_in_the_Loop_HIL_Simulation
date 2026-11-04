@@ -1,0 +1,30 @@
+diff --git a/libraries/AP_RCProtocol/AP_RCProtocol_UDP.cpp b/libraries/AP_RCProtocol/AP_RCProtocol_UDP.cpp
+index ac589d4..ca3dfac 100644
+--- a/libraries/AP_RCProtocol/AP_RCProtocol_UDP.cpp
++++ b/libraries/AP_RCProtocol/AP_RCProtocol_UDP.cpp
+@@ -46,7 +46,8 @@ bool AP_RCProtocol_UDP::init()
+     if (!rc_in.reuseaddress()) {
+         return false;
+     }
+-    if (!rc_in.bind("0.0.0.0", sitl->rcin_port)) {
++    const char *bind_address = sitl->rcin_port == 0 ? "127.0.0.1" : "0.0.0.0";
++    if (!rc_in.bind(bind_address, sitl->rcin_port)) {
+         return false;
+     }
+     if (!rc_in.set_blocking(false)) {
+diff --git a/libraries/SITL/SIM_JSON.cpp b/libraries/SITL/SIM_JSON.cpp
+index dfa9223..33600ca 100644
+--- a/libraries/SITL/SIM_JSON.cpp
++++ b/libraries/SITL/SIM_JSON.cpp
+@@ -96,6 +96,11 @@ void JSON::set_interface_ports(const char* address, const int port_in, const int
+     }
+     control_port = port_out;
+ 
++    if (strcmp(target_ip, "127.0.0.1") == 0 && !sock.bind("127.0.0.1", 0)) {
++        fprintf(stderr, "SITL: JSON loopback bind failed: %s\n", strerror(errno));
++        exit(1);
++    }
++
+     printf("JSON control interface set to %s:%u\n", target_ip, control_port);
+ }
+ 

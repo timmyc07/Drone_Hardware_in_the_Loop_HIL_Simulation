@@ -2,6 +2,7 @@ import { magneticFieldNed } from "./px4-wmm.js";
 import {
   common,
   minimal,
+  standard,
   MavLinkPacketSplitter,
   MavLinkPacketParser,
   MavLinkProtocolV2,
@@ -9,7 +10,11 @@ import {
 import { bodyToNedMatrix } from "../web/sim.js";
 // Pinned PX4 v1.17.0 10016_none_iris: outputs FR, RL, FL, RR; positive KM gives positive body yaw.
 export const OUTPUT_MAP = [0, 3, 1, 2];
-export const REGISTRY = { ...minimal.REGISTRY, ...common.REGISTRY };
+export const REGISTRY = {
+  ...minimal.REGISTRY,
+  ...standard.REGISTRY,
+  ...common.REGISTRY,
+};
 export function packetReader(socket, onPacket, onCrcError) {
   const magicNumbers = Object.fromEntries(
     Object.values(REGISTRY).map((Type) => [Type.MSG_ID, Type.MAGIC_NUMBER]),

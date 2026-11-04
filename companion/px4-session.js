@@ -37,6 +37,7 @@ export class Px4Session extends EventEmitter {
       lastActuatorAgeMs: null,
     };
     this.controller = {
+      kind: "px4",
       version: null,
       sourceSha: null,
       expectedVersion: "1.17.0",
@@ -52,6 +53,7 @@ export class Px4Session extends EventEmitter {
   state() {
     return {
       phase: this.phase,
+      clock: { stepUs: Math.round(DT * 1e6) },
       snapshot: this.sim?.snapshot() ?? null,
       controller: { ...this.controller },
       stats: {

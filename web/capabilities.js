@@ -816,8 +816,9 @@ export const CAPABILITIES = [
     id: "sitl-ardupilot",
     category: "資料與整合",
     title: "ArduPilot SITL",
-    description: "連接實際 ArduPilot 軟體飛行堆疊。",
-    status: "external",
+    description:
+      "本機連接指定 ArduCopter 4.7.2 四旋翼閉環，已驗證起飛、懸停及降落；其他機型與實體 HIL 尚未支援。",
+    status: "partial",
     sources: [
       "https://ardupilot.org/dev/docs/sitl-simulator-software-in-the-loop.html",
       "https://www.simnet.aero/post/autonomous-sitl-flight-simulation-tutorial",

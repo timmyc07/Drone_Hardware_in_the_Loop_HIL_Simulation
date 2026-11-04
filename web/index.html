@@ -283,7 +283,7 @@
         <h3>LiDAR 多層掃描（俯視投影）</h3>
         <p>
           顏色表示掃描層：低仰角偏藍、高仰角偏橙；射線僅偵測地面與訓練障礙盒，不含建物裝飾、天氣、材質、強度或多重回波。資料不驅動內建飛控，也不輸入
-          PX4。
+          外部飛控。
         </p>
         <canvas
           id="lidar-map"
@@ -313,10 +313,10 @@
         </div>
       </section>
       <section id="hil-workspace" class="panel workspace-extra" hidden>
-        <h2>飛控介接 <span>PX4 SITL</span></h2>
+        <h2>飛控介接 <span>PX4 / ARDUPILOT SITL</span></h2>
         <p>
-          本機 PX4 軟體飛控與植物模型閉環；畫面呈現植物模型真值，不是實體硬體
-          HIL 或 PX4 估測值。
+          本機軟體飛控與植物模型閉環；畫面呈現植物模型真值，不是實體硬體 HIL
+          或飛控估測值。
         </p>
         <p id="hil-remote-notice" hidden>
           此頁不直接連接本機服務。請先建置後執行
@@ -325,15 +325,22 @@
         </p>
         <div id="hil-local-controls" hidden>
           <label
-            >PX4 執行檔完整路徑
+            >飛控
+            <select id="hil-type">
+              <option value="px4">PX4 v1.17.0</option>
+              <option value="ardupilot">ArduCopter v4.7.2</option>
+            </select>
+          </label>
+          <label
+            >飛控執行檔完整路徑
             <input
               id="hil-binary"
               type="text"
               autocomplete="off"
-              placeholder="請輸入 PX4 執行檔完整路徑"
+              placeholder="請輸入所選飛控的執行檔完整路徑"
           /></label>
           <div class="feature-actions">
-            <button id="hil-start">啟動或接回 PX4</button
+            <button id="hil-start">啟動或接回飛控</button
             ><button data-hil-command="arm">解鎖</button
             ><button data-hil-command="takeoff">起飛</button
             ><button data-hil-command="land">降落</button
@@ -346,6 +353,7 @@
           </div>
           <p id="hil-status" role="status">本機服務尚未連線</p>
           <p id="hil-controller"></p>
+          <p id="hil-readiness"></p>
           <p id="hil-stats"></p>
           <p>
             命令送出後請依解鎖狀態與高度回饋確認；外部估測值未提供時不會以真值冒充。
