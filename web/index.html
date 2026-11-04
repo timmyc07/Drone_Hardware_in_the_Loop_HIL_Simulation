@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0a121e" />
+    <meta
+      name="description"
+      content="在瀏覽器探索四旋翼動力學、姿態控制與擾動響應。獨立數值模擬、3D 視覺化與可匯出的實驗紀錄。"
+    />
+    <title>Flight Lab｜四旋翼網頁模擬器</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%23101c2d'/%3E%3Cpath d='M10 10L30 30M10 30L30 10' stroke='%2369e2cd' stroke-width='4'/%3E%3Ccircle cx='20' cy='20' r='5' fill='%2369e2cd'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="Flight Lab 首頁"
+        ><span class="brand-mark" aria-hidden="true">✣</span
+        ><span
+          >FLIGHT<span class="brand-light">LAB</span
+          ><small>DRONE SIMULATION WORKSPACE</small></span
+        ></a
+      >
+      <div class="top-context">
+        <span class="dot"></span>瀏覽器軟體模擬 <span class="divider">/</span>
+        <span class="muted">SIL 環境</span>
+      </div>
+      <button id="help" class="icon-button" aria-label="使用說明">?</button>
+    </header>
+
+    <main>
+      <div class="page-heading">
+        <div>
+          <div class="eyebrow">
+            EXPERIMENT / 001 <span class="eyebrow-line"></span> QUADROTOR
+          </div>
+          <h1>四旋翼模擬工作台<span class="heading-dot">.</span></h1>
+          <p>從控制指令到飛行響應，每一個變化都看得見。</p>
+        </div>
+        <div class="heading-actions">
+          <button id="settings-open" class="button secondary">
+            <span aria-hidden="true">⚙</span> 管理參數
+          </button>
+          <details class="export-menu">
+            <summary class="button secondary">
+              <span aria-hidden="true">↗</span> 實驗紀錄
+            </summary>
+            <div class="menu-panel">
+              <button id="export-csv">匯出遙測 CSV</button
+              ><button id="export-json">匯出完整紀錄 JSON</button
+              ><button id="import-open">匯入紀錄重播</button>
+            </div>
+          </details>
+        </div>
+      </div>
+
+      <div class="workspace">
+        <section class="flight-column" aria-label="飛行視覺化與遙測">
+          <div class="viewport-panel">
+            <div class="viewport-toolbar">
+              <div class="panel-label">
+                <span class="mini-cross" aria-hidden="true">⌖</span> 飛行空間
+                <span class="tag">3D</span>
+              </div>
+              <div class="camera-buttons" role="group" aria-label="視角">
+                <button class="active" data-camera="orbit" aria-pressed="true">
+                  自由視角</button
+                ><button data-camera="top" aria-pressed="false">俯視</button
+                ><button data-camera="follow" aria-pressed="false">跟隨</button>
+              </div>
+              <button
+                id="render-toggle"
+                class="text-button"
+                aria-pressed="true"
+              >
+                關閉渲染
+              </button>
+            </div>
+            <div id="viewport" class="viewport">
+              <div class="viewport-grid" aria-hidden="true"></div>
+              <div class="viewport-top">
+                <span id="view-status" class="view-badge"
+                  ><span class="dot"></span>準備就緒</span
+                >
+                <div class="clock-label">
+                  SIMULATION TIME <strong id="sim-time">00:00.00</strong>
+                </div>
+              </div>
+              <div id="render-message" class="render-message" hidden>
+                3D 渲染已關閉<small>數值模擬與實驗紀錄持續運行</small>
+              </div>
+              <div class="viewport-bottom">
+                <span
+                  ><i class="axis-dot"></i> NED / FRD
+                  <span class="muted">・單位 m</span></span
+                ><span>拖曳旋轉 · 滾輪縮放</span>
+              </div>
+              <div id="scene-error" class="scene-error" hidden></div>
+            </div>
+            <div class="transport">
+              <button id="play" class="button primary" disabled>
+                <span aria-hidden="true">▶</span> 開始模擬</button
+              ><button
+                id="reset"
+                class="icon-button"
+                aria-label="重設實驗"
+                title="重設實驗"
+              >
+                ↺</button
+              ><span class="transport-divider"></span
+              ><label class="speed-label" for="speed"
+                >速度
+                <select id="speed">
+                  <option value="0.5">0.5×</option>
+                  <option value="1" selected>1×</option>
+                  <option value="2">2×</option>
+                  <option value="4">4×</option>
+                </select></label
+              ><span id="run-label" class="run-label">初始化數值模型…</span
+              ><span class="model-rate"
+                ><span class="dot"></span>200 Hz 模型</span
+              >
+            </div>
+          </div>
+
+          <div class="metric-grid" aria-label="即時狀態">
+            <article class="metric-card">
+              <div class="metric-label">相對高度 <span>ALTITUDE</span></div>
+              <div class="metric-value">
+                <strong id="altitude-value">2.00</strong><span>m</span>
+              </div>
+              <div class="metric-note">
+                目標 <span id="altitude-target">2.0</span> m
+              </div>
+            </article>
+            <article class="metric-card">
+              <div class="metric-label">滾轉姿態 <span>ROLL</span></div>
+              <div class="metric-value">
+                <strong id="roll-value">0.00</strong><span>°</span>
+              </div>
+              <div class="metric-note">
+                俯仰 <span id="pitch-value">0.00</span>°
+              </div>
+            </article>
+            <article class="metric-card">
+              <div class="metric-label">飛行速度 <span>VELOCITY</span></div>
+              <div class="metric-value">
+                <strong id="velocity-value">0.00</strong><span>m/s</span>
+              </div>
+              <div class="metric-note">
+                水平位移 <span id="distance-value">0.00</span> m
+              </div>
+            </article>
+            <article class="metric-card">
+              <div class="metric-label">姿態追蹤誤差 <span>RMSE</span></div>
+              <div class="metric-value">
+                <strong id="rmse-value">0.00</strong><span>°</span>
+              </div>
+              <div class="metric-note">本次運行的累積誤差</div>
+            </article>
+          </div>
+
+          <div class="telemetry-grid">
+            <section class="panel chart-panel">
+              <div class="panel-heading">
+                <h2>姿態響應 <span>ATTITUDE RESPONSE</span></h2>
+                <span class="live-label"
+                  ><span class="dot"></span>最近 15 秒</span
+                >
+              </div>
+              <div class="chart-legend">
+                <span class="legend-roll">Roll</span
+                ><span class="legend-pitch">Pitch</span
+                ><span class="legend-target">Roll 目標</span
+                ><span class="chart-unit">deg</span>
+              </div>
+              <canvas
+                id="attitude-chart"
+                aria-label="最近十五秒的滾轉、俯仰與滾轉目標曲線"
+                role="img"
+              ></canvas>
+              <div class="chart-footer">
+                <span id="chart-start">0 s</span><span>模擬時間</span
+                ><span id="chart-end">15 s</span>
+              </div>
+            </section>
+            <section class="panel motor-panel">
+              <div class="panel-heading">
+                <h2>馬達輸出 <span>ACTUATORS</span></h2>
+                <span class="tag">模擬值</span>
+              </div>
+              <div id="motor-bars" class="motor-bars"></div>
+              <div class="motor-note">
+                <span class="dot"></span>PWM 為模型換算值，未連接實體飛控
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <aside class="control-column" aria-label="模擬控制">
+          <section class="panel control-panel">
+            <div class="panel-heading">
+              <h2>實驗情境 <span>SCENARIOS</span></h2>
+              <span class="section-index">01</span>
+            </div>
+            <p class="panel-description">選擇一個起點，觀察控制器的反應。</p>
+            <div class="scenario-list">
+              <button
+                class="scenario active"
+                data-scenario="hover"
+                aria-pressed="true"
+              >
+                <span class="scenario-icon" aria-hidden="true">◎</span
+                ><span
+                  ><strong>穩定懸停</strong
+                  ><small>維持高度與水平姿態</small></span
+                ><span class="scenario-check" aria-hidden="true"
+                  >●</span
+                ></button
+              ><button
+                class="scenario"
+                data-scenario="step"
+                aria-pressed="false"
+              >
+                <span class="scenario-icon" aria-hidden="true">⌁</span
+                ><span
+                  ><strong>姿態階躍</strong
+                  ><small>2–6 秒施加 10° 滾轉指令</small></span
+                ><span class="scenario-check" aria-hidden="true"
+                  >●</span
+                ></button
+              ><button
+                class="scenario"
+                data-scenario="gust"
+                aria-pressed="false"
+              >
+                <span class="scenario-icon" aria-hidden="true">≋</span
+                ><span
+                  ><strong>陣風擾動</strong
+                  ><small>觀察週期側風下的飛行響應</small></span
+                ><span class="scenario-check" aria-hidden="true">●</span>
+              </button>
+            </div>
+          </section>
+          <section class="panel control-panel target-panel">
+            <div class="panel-heading">
+              <h2>飛行指令 <span>SETPOINTS</span></h2>
+              <span class="section-index">02</span>
+            </div>
+            <div id="target-controls"></div>
+            <button id="gust" class="button gust-button">
+              <span aria-hidden="true">≋</span> 施加一次陣風
+              <span class="button-tail">↗</span>
+            </button>
+            <p class="control-hint">指令即時生效；更換情境會建立新實驗。</p>
+          </section>
+          <section class="panel timing-panel">
+            <div class="panel-heading">
+              <h2>運行狀態 <span>RUNTIME</span></h2>
+              <span id="runtime-status" class="status-small">待命</span>
+            </div>
+            <dl>
+              <div>
+                <dt>實時倍率</dt>
+                <dd id="rtf-value">—</dd>
+              </div>
+              <div>
+                <dt>排程延後 p95</dt>
+                <dd id="jitter-value">—</dd>
+              </div>
+              <div>
+                <dt>感測資料齡期</dt>
+                <dd id="age-value">0 ms</dd>
+              </div>
+              <div>
+                <dt>模擬丟包</dt>
+                <dd id="drop-value">0</dd>
+              </div>
+              <div>
+                <dt>已記錄樣本</dt>
+                <dd id="samples-value">0</dd>
+              </div>
+            </dl>
+            <div class="runtime-note">
+              瀏覽器排程可能延後，數據不代表硬即時 HIL 性能。
+            </div>
+          </section>
+        </aside>
+      </div>
+      <footer>
+        <span
+          ><span class="footer-mark">✣</span> FLIGHT LAB
+          <span class="muted">／ 可重現的飛行探索</span></span
+        ><span>6-DOF · 固定步階 · 獨立模擬執行緒</span
+        ><a
+          href="https://github.com/timmyc07/Drone_Hardware_in_the_Loop_HIL_Simulation"
+          target="_blank"
+          rel="noopener noreferrer"
+          >專案與研究文件 ↗</a
+        >
+      </footer>
+    </main>
+
+    <dialog id="settings-dialog" class="settings-dialog">
+      <form id="settings-form">
+        <div class="dialog-heading">
+          <div>
+            <div class="eyebrow">MODEL CONFIGURATION</div>
+            <h2>管理模擬參數</h2>
+          </div>
+          <button
+            type="button"
+            class="icon-button"
+            data-close="settings-dialog"
+            aria-label="關閉參數管理"
+          >
+            ×
+          </button>
+        </div>
+        <p>
+          參數儲存在此瀏覽器。套用後重設實驗；模型數值為研究假設，尚未經實體校準。
+        </p>
+        <div id="settings-fields"></div>
+        <p id="settings-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button type="button" id="settings-default" class="button secondary">
+            載入預設值</button
+          ><button type="submit" class="button primary">套用並重設</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="help-dialog">
+      <div class="dialog-heading">
+        <div>
+          <div class="eyebrow">QUICK START</div>
+          <h2>開始你的第一個實驗</h2>
+        </div>
+        <button
+          class="icon-button"
+          data-close="help-dialog"
+          aria-label="關閉使用說明"
+        >
+          ×
+        </button>
+      </div>
+      <ol class="help-steps">
+        <li>選擇「穩定懸停」，按「開始模擬」。</li>
+        <li>調整高度、滾轉或俯仰，觀察 3D 與姿態曲線。</li>
+        <li>切換階躍或陣風情境，比較控制響應。</li>
+        <li>在管理參數調整模型、控制器與感測故障；使用相同種子重現結果。</li>
+        <li>從「實驗紀錄」匯出 CSV 分析，或匯出 JSON 後再次匯入重播。</li>
+      </ol>
+      <p>
+        姿態指令會造成水平移動，此版沒有水平位置保持。控制器使用理想化姿態觀測；虛擬
+        IMU
+        的雜訊是每次取樣的標準差倍率，尚未對應真實感測器。切到背景分頁會自動暫停，避免隱藏節流被誤認為實時結果。
+      </p>
+      <p>
+        關閉 3D 渲染仍可持續模擬。數值模型為 200 Hz；實驗資料每模擬秒記錄 20
+        筆，最長 30 分鐘後自動暫停。
+      </p>
+    </dialog>
+    <input
+      type="file"
+      id="import-file"
+      accept=".json,application/json"
+      hidden
+    />
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <noscript>請啟用 JavaScript 使用四旋翼模擬器。</noscript>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

@@ -11,3 +11,9 @@ obj/
 bin/
 Builds/
 Logs/
+Saved/
+node_modules/
+dist/
+.sites-runtime/
+.sites-checkout/
+*.tar.gz
