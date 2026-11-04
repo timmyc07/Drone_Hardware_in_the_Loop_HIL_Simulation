@@ -112,7 +112,8 @@ test("long disturbed flight preserves a unit quaternion, finite state and bounde
   assert.ok([...s.position, ...s.velocity, ...s.rates].every(Number.isFinite));
   assert.ok(s.motors.every((v) => v >= 0 && v <= 1));
   assert.ok(s.pwm.every((v) => v >= 1000 && v <= 2000));
-  assert.ok(s.metrics.peakError < 0.2);
+  assert.ok(s.metrics.peakError < 0.5);
+  assert.equal(s.navigation.fenceBreached, true);
 });
 
 test("RK4 step refinement agrees for a mixed attitude maneuver", () => {
@@ -235,4 +236,269 @@ test("divergent integration throws before replacing the last finite physical sta
     caught,
     "aggressive small-airframe configuration must exercise divergence guard",
   );
+});
+
+test("position hold rejects steady wind and follows a position/altitude command", () => {
+  const sim = createSimulation({ wind: 4, windDirection: 90, noise: 0.2 });
+  sim.setMode("position");
+  let s = advance(sim, 20);
+  assert.ok(Math.hypot(...s.position.slice(0, 2)) < 0.3);
+  sim.setPositionTarget({ north: 6, east: -4, altitude: 3 });
+  s = advance(sim, 25);
+  assert.ok(Math.hypot(s.position[0] - 6, s.position[1] + 4) < 0.4);
+  near(s.position[2], -3, 0.05);
+  assert.equal(s.navigation.mode, "position");
+  assert.deepEqual(s.navigation.targetPosition, [6, -4]);
+});
+
+test("position mode captures current location and rotates control through current yaw", () => {
+  const sim = createSimulation();
+  sim.setTargets({ yawRate: 0.4 });
+  advance(sim, 4);
+  sim.setMode("position");
+  sim.setPositionTarget({ north: 4, east: 0, altitude: 2 });
+  let s = advance(sim, 20);
+  near(s.position[0], 4, 0.3);
+  near(s.position[1], 0, 0.3);
+  const captured = s.position.slice(0, 2);
+  sim.setMode("attitude");
+  assert.equal(sim.snapshot().target.roll, 0);
+  assert.equal(sim.snapshot().target.pitch, 0);
+  sim.setMode("position");
+  assert.deepEqual(sim.snapshot().navigation.targetPosition, captured);
+  sim.setMode("attitude");
+  sim.setPositionTarget({ north: 1, east: 2, altitude: 3 });
+  sim.setMode("position");
+  assert.deepEqual(sim.snapshot().navigation.targetPosition, [1, 2]);
+});
+
+test("mission reaches waypoints, respects hold time, and holds final location", () => {
+  const sim = createSimulation();
+  sim.setMission([
+    { north: 0, east: 0, altitude: 2, hold: 1 },
+    { north: 3, east: 3, altitude: 3, hold: 1 },
+  ]);
+  sim.setMode("mission");
+  assert.equal(advance(sim, 0.5).navigation.index, 0);
+  assert.equal(advance(sim, 1).navigation.index, 1);
+  const s = advance(sim, 28.5);
+  assert.equal(s.navigation.completed, true);
+  assert.equal(s.navigation.index, 1);
+  assert.ok(Math.hypot(s.position[0] - 3, s.position[1] - 3) < 0.3);
+  near(s.position[2], -3, 0.05);
+});
+
+test("RTL climbs first, returns home, then descends smoothly and disarms", () => {
+  const sim = createSimulation({ wind: 2 });
+  sim.setPositionTarget({ north: 8, east: 5, altitude: 2 });
+  sim.setMode("position");
+  advance(sim, 20);
+  sim.setMode("rtl");
+  let s = sim.step();
+  assert.ok(s.target.altitude >= 2.9);
+  assert.ok(
+    Math.hypot(...s.navigation.targetPosition) > 5,
+    "climb holds current horizontal location",
+  );
+  let sawLanding = false;
+  for (let i = 0; i < 10000 && s.armed; i++) {
+    const before = s;
+    s = sim.step();
+    if (s.navigation.mode === "land" && !sawLanding) {
+      sawLanding = true;
+      assert.ok(Math.hypot(...s.position.slice(0, 2)) < 1);
+      assert.ok(
+        Math.abs(s.target.altitude + before.position[2]) < 0.02,
+        "landing starts at current height",
+      );
+    }
+  }
+  assert.ok(sawLanding);
+  assert.equal(s.status, "landed");
+  assert.equal(s.armed, false);
+  assert.equal(s.navigation.completed, true);
+  assert.ok(Math.hypot(...s.position.slice(0, 2)) < 1);
+  assert.ok(s.motors.every((v) => v === 0));
+  const location = [...s.position];
+  assert.deepEqual(advance(sim, 2).position, location);
+});
+
+test("takeoff after disarm/ground starts position hold and returns to two meters", () => {
+  const sim = createSimulation();
+  sim.disarm();
+  assert.equal(advance(sim, 2).status, "landed");
+  sim.takeoff();
+  const s = advance(sim, 15);
+  assert.equal(s.armed, true);
+  assert.equal(s.navigation.mode, "position");
+  near(s.position[2], -2, 0.02);
+});
+
+test("geofence breach latches a return and rejects outside mission points", () => {
+  const sim = createSimulation({ geofenceRadius: 3, geofenceHeight: 3 });
+  assert.throws(
+    () => sim.setMission([{ north: 4, east: 0, altitude: 2, hold: 0 }]),
+    /geofence/,
+  );
+  assert.throws(
+    () => sim.setPositionTarget({ north: 0, east: 0, altitude: 4 }),
+    /geofence/,
+  );
+  sim.setTargets({ roll: 0.15 });
+  let s = advance(sim, 6);
+  assert.equal(s.navigation.fenceBreached, true);
+  assert.equal(s.navigation.reason, "geofence");
+  assert.throws(() => sim.setMode("attitude"), /Safety/);
+  s = advance(sim, 40);
+  assert.equal(s.navigation.reason, "geofence");
+  assert.equal(s.armed, false);
+  assert.ok(Math.hypot(...s.position.slice(0, 2)) < 1);
+});
+
+test("battery integrates energy and its voltage/current obey simplified pack sag", () => {
+  const sim = createSimulation();
+  const initial = sim.snapshot();
+  const s = advance(sim, 20);
+  assert.ok(s.battery.soc < initial.battery.soc);
+  near(s.battery.usedWh, (initial.battery.power * 20) / 3600, 1e-8);
+  near(s.battery.power, s.battery.voltage * s.battery.current, 1e-8);
+  near(
+    s.battery.voltage +
+      s.battery.current * DEFAULT_CONFIG.batteryInternalResistance,
+    DEFAULT_CONFIG.batteryCells * (3.3 + 0.9 * s.battery.soc),
+  );
+  assert.ok(s.battery.remainingSeconds > 0);
+});
+
+test("low battery returns; critical battery lands without a target jump and prevents rearming", () => {
+  const low = createSimulation({ batteryInitialSoc: 0.19 });
+  assert.equal(low.step().navigation.reason, "low-battery");
+  const sim = createSimulation({ batteryInitialSoc: 0.069 });
+  let s = sim.step();
+  assert.equal(s.navigation.reason, "critical-battery");
+  assert.equal(s.navigation.mode, "land");
+  near(s.target.altitude, 1.9975);
+  assert.throws(() => sim.setMode("rtl"), /Critical/);
+  s = advance(sim, 15);
+  assert.equal(s.armed, false);
+  assert.equal(s.status, "landed");
+  assert.throws(() => sim.arm(), /critical battery/);
+  assert.throws(() => sim.takeoff());
+});
+
+test("motor efficiency fault changes physical forces; link loss returns and clear does not erase stale failsafe", () => {
+  const baseline = createSimulation(),
+    sim = createSimulation();
+  sim.injectFault("motor", { index: 0, efficiency: 0.5 });
+  const a = advance(baseline, 0.1),
+    b = advance(sim, 0.1);
+  assert.ok(b.position[2] > a.position[2] + 0.001);
+  assert.ok(Math.hypot(...b.rates) > 0.1);
+  assert.equal(b.faults.motorEfficiency[0], 0.5);
+  sim.clearFaults();
+  assert.deepEqual(sim.snapshot().faults.motorEfficiency, [1, 1, 1, 1]);
+  sim.injectFault("link", { lost: true });
+  assert.equal(sim.step().navigation.reason, "link-loss");
+  sim.clearFaults();
+  sim.setMode("position");
+  assert.equal(sim.snapshot().faults.linkLost, false);
+  const stale = createSimulation({ dropout: 1 });
+  advance(stale, 1);
+  stale.clearFaults();
+  assert.equal(stale.snapshot().status, "failsafe");
+  assert.throws(() => stale.arm(), /failsafe/);
+});
+
+test("static box collision crashes and disarms; only reset releases crash latch", () => {
+  const sim = createSimulation();
+  sim.setObstacles([{ north: 2, east: 0, width: 1, depth: 2, height: 5 }]);
+  sim.setPositionTarget({ north: 5, east: 0, altitude: 2 });
+  sim.setMode("position");
+  const s = advance(sim, 10);
+  assert.equal(s.status, "crashed");
+  assert.equal(s.navigation.reason, "obstacle-collision");
+  assert.equal(s.armed, false);
+  assert.ok(s.motors.every((v) => v === 0));
+  let frozen = s;
+  for (let i = 0; i < 100; i++) frozen = sim.step();
+  for (const key of [
+    "position",
+    "velocity",
+    "quaternion",
+    "attitude",
+    "rates",
+    "motors",
+  ])
+    assert.deepEqual(frozen[key], s[key]);
+  assert.ok(frozen.time > s.time);
+  assert.ok(frozen.battery.usedWh >= s.battery.usedWh);
+  assert.throws(() => sim.arm(), /crash/);
+  assert.throws(() => sim.takeoff(), /crash/);
+  assert.equal(sim.reset().status, "ready");
+  assert.equal(sim.step().status, "flying");
+});
+
+test("wind direction and bandlimited turbulence are deterministic and seed dependent", () => {
+  const directed = createSimulation({ wind: 3, windDirection: 90 });
+  near(directed.snapshot().wind[0], 0);
+  near(directed.snapshot().wind[1], 3);
+  const config = { turbulence: 2, seed: 7 };
+  const a = createSimulation(config),
+    b = createSimulation(config);
+  const first = a.step().wind;
+  assert.ok(
+    Math.hypot(...first) < 0.1,
+    "turbulence is filtered rather than instant white noise",
+  );
+  b.step();
+  assert.deepEqual(advance(a, 10), advance(b, 10));
+  assert.notDeepEqual(
+    a.snapshot().wind,
+    advance(createSimulation({ ...config, seed: 8 }), 10.005).wind,
+  );
+  a.reset();
+  near(Math.hypot(...a.snapshot().wind), 0);
+});
+
+test("new navigation/fault/obstacle/config inputs validate atomically, including sparse arrays", () => {
+  for (const value of [
+    { batteryCells: 2.5 },
+    { batteryInitialSoc: 2 },
+    { lowBatteryThreshold: 0.1, criticalBatteryThreshold: 0.2 },
+    { turbulence: NaN },
+    { windDirection: 400 },
+    { geofenceRadius: -1 },
+  ])
+    assert.throws(() => validateConfig(value));
+  const sim = createSimulation(),
+    initial = sim.snapshot();
+  for (const value of [
+    null,
+    { north: 1, east: 0 },
+    { north: Infinity, east: 0, altitude: 2 },
+    { north: 501, east: 0, altitude: 2 },
+  ])
+    assert.throws(() => sim.setPositionTarget(value));
+  for (const value of [
+    [],
+    Array(2),
+    Array(51).fill({ north: 0, east: 0, altitude: 2, hold: 0 }),
+    [{ north: 0, east: 0, altitude: 2, hold: -1 }],
+  ])
+    assert.throws(() => sim.setMission(value));
+  for (const value of [
+    Array(1),
+    [{ north: 0, east: 0, width: 0, depth: 1, height: 1 }],
+  ])
+    assert.throws(() => sim.setObstacles(value));
+  assert.throws(() => sim.setMode("mission"));
+  assert.throws(() => sim.setMode("unknown"));
+  for (const value of [
+    { index: 0.5, efficiency: 0.5 },
+    { index: 4, efficiency: 0.5 },
+    { index: 0, efficiency: NaN },
+  ])
+    assert.throws(() => sim.injectFault("motor", value));
+  assert.throws(() => sim.injectFault("link", { lost: 1 }));
+  assert.deepEqual(sim.snapshot(), initial);
 });

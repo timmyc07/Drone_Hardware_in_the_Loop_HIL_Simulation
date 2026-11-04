@@ -1269,3 +1269,132 @@ body.replay .view-badge .dot {
     scroll-behavior: auto !important;
   }
 }
+
+.workspace-tabs,
+.feature-actions,
+.catalog-filters,
+.position-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: center;
+}
+.workspace-tabs {
+  margin: 0 0 1rem;
+  border-bottom: 1px solid #30475a;
+}
+.workspace-tabs button,
+.feature-actions button,
+.waypoint-row button,
+.position-fields button {
+  background: #1a3041;
+  color: #dcebea;
+  border: 1px solid #385367;
+  border-radius: 6px;
+  padding: 0.65rem 0.85rem;
+  cursor: pointer;
+}
+.workspace-tabs button.active {
+  color: #81ebd5;
+  border-color: #65d8c1;
+}
+.workspace-extra {
+  padding: 1.3rem;
+  margin-bottom: 1rem;
+}
+.workspace-extra[hidden] {
+  display: none;
+}
+.workspace-extra h2 {
+  margin: 0 0 0.6rem;
+}
+.workspace-extra p,
+.control-panel > p {
+  color: #a4b9c7;
+  line-height: 1.5;
+}
+.workspace-extra label,
+.control-panel > label,
+.position-fields label,
+.feature-actions label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.3rem 0.5rem 0.3rem 0;
+}
+.workspace-extra input,
+.workspace-extra select,
+.control-panel input[type="number"],
+.control-panel select,
+#model-preset {
+  background: #102332;
+  color: #eef8f6;
+  border: 1px solid #496175;
+  border-radius: 5px;
+  padding: 0.5rem;
+  max-width: 100%;
+}
+#mission-map {
+  display: block;
+  width: min(100%, 500px);
+  height: auto;
+  margin: 1rem 0;
+  border: 1px solid #496175;
+  cursor: crosshair;
+}
+.waypoint-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+.waypoint-row label {
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+  gap: 0.2rem;
+}
+.waypoint-row input,
+.position-fields input,
+#fault-efficiency,
+#environment-time {
+  width: 6rem;
+}
+.catalog-filters {
+  margin: 1rem 0;
+}
+.catalog-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+  gap: 0.75rem;
+  max-height: 38rem;
+  overflow: auto;
+}
+.catalog-item {
+  padding: 1rem;
+  background: #152a39;
+  border: 1px solid #30475a;
+  border-radius: 7px;
+}
+.catalog-item strong,
+.catalog-item span {
+  display: block;
+}
+.catalog-item span {
+  color: #83d8c8;
+  margin-top: 0.4rem;
+}
+.catalog-item a {
+  color: #8ce4d5;
+}
+button:disabled,
+input:disabled,
+select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.workspace[hidden] {
+  display: none;
+}

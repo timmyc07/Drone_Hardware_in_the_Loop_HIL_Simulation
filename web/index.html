@@ -57,6 +57,107 @@
         </div>
       </div>
 
+      <nav class="workspace-tabs" aria-label="工作區">
+        <button class="active" data-workspace="flight">飛行實驗</button
+        ><button data-workspace="mission">任務規劃</button
+        ><button data-workspace="training">訓練場</button
+        ><button data-workspace="catalog">功能全覽</button>
+      </nav>
+      <section id="mission-workspace" class="panel workspace-extra" hidden>
+        <h2>任務規劃 <span>MISSION PLANNER</span></h2>
+        <p>點選地圖新增航點；北方朝上，東方朝右。座標範圍 ±50 m。</p>
+        <canvas
+          id="mission-map"
+          width="500"
+          height="360"
+          role="img"
+          aria-label="任務地圖，點選新增航點"
+        ></canvas>
+        <div id="waypoint-list"></div>
+        <div class="feature-actions">
+          <button id="waypoint-add">新增航點</button
+          ><button id="waypoint-square">載入方形路線</button
+          ><button id="mission-export">匯出路線 JSON</button
+          ><button id="mission-apply" class="primary">套用任務</button
+          ><button id="mission-start" class="primary">開始任務</button>
+        </div>
+        <p>套用任務會切換至任務模式；開始任務會同時啟動模擬。</p>
+      </section>
+      <section id="training-workspace" class="panel workspace-extra" hidden>
+        <h2>訓練場 <span>PRACTICE</span></h2>
+        <p>獨立練習與模擬評分，不代表正式認證。</p>
+        <label
+          >練習項目
+          <select id="training-select">
+            <option value="free">自由飛行</option>
+            <option value="hover">懸停</option>
+            <option value="gates">穿越訓練門</option>
+            <option value="landing">降落</option>
+          </select></label
+        >
+        <p id="training-status">尚未開始</p>
+        <label
+          >環境
+          <select id="environment-preset">
+            <option value="lab">實驗室</option>
+            <option value="field">戶外場地</option>
+            <option value="warehouse">倉庫</option>
+          </select></label
+        >
+        <label
+          >時間
+          <input
+            id="environment-time"
+            type="number"
+            min="0"
+            max="24"
+            step="0.5"
+            value="12"
+          />
+          時</label
+        >
+        <label
+          >霧
+          <input
+            id="environment-fog"
+            type="range"
+            min="0"
+            max="1"
+            step="0.1"
+            value="0"
+        /></label>
+        <label
+          >雨
+          <input
+            id="environment-rain"
+            type="range"
+            min="0"
+            max="1"
+            step="0.1"
+            value="0"
+        /></label>
+        <p>雨與霧僅影響畫面；風向與亂流可在管理參數中設定。</p>
+      </section>
+      <section id="catalog-workspace" class="panel workspace-extra" hidden>
+        <h2>功能全覽 <span>CAPABILITY CATALOG</span></h2>
+        <p>此清單整理部分公開資料與本專案狀態，並非完整市場盤點。</p>
+        <div class="catalog-filters">
+          <label>搜尋 <input id="catalog-search" type="search" /></label
+          ><label
+            >類別
+            <select id="catalog-category">
+              <option value="">全部類別</option>
+            </select></label
+          ><label
+            >狀態
+            <select id="catalog-status">
+              <option value="">全部狀態</option>
+            </select></label
+          >
+        </div>
+        <p id="catalog-counts"></p>
+        <div id="catalog-list" class="catalog-list"></div>
+      </section>
       <div class="workspace">
         <section class="flight-column" aria-label="飛行視覺化與遙測">
           <div class="viewport-panel">
@@ -69,7 +170,10 @@
                 <button class="active" data-camera="orbit" aria-pressed="true">
                   自由視角</button
                 ><button data-camera="top" aria-pressed="false">俯視</button
-                ><button data-camera="follow" aria-pressed="false">跟隨</button>
+                ><button data-camera="follow" aria-pressed="false">跟隨</button
+                ><button data-camera="fpv" aria-pressed="false">
+                  第一人稱
+                </button>
               </div>
               <button
                 id="render-toggle"
@@ -203,6 +307,83 @@
         <aside class="control-column" aria-label="模擬控制">
           <section class="panel control-panel">
             <div class="panel-heading">
+              <h2>飛行管理 <span>FLIGHT</span></h2>
+            </div>
+            <label
+              >飛行模式
+              <select id="flight-mode">
+                <option value="attitude">姿態</option>
+                <option value="position">位置</option>
+                <option value="mission">任務</option>
+                <option value="rtl">返航</option>
+                <option value="land">降落</option>
+              </select></label
+            >
+            <div class="feature-actions">
+              <button data-command="arm">解鎖</button
+              ><button data-command="disarm">上鎖</button
+              ><button data-command="takeoff">起飛</button
+              ><button data-mode="rtl">返航</button
+              ><button data-mode="land">降落</button>
+            </div>
+            <div class="position-fields">
+              <label
+                >北 m
+                <input
+                  id="position-north"
+                  type="number"
+                  value="0"
+                  step="1" /></label
+              ><label
+                >東 m
+                <input
+                  id="position-east"
+                  type="number"
+                  value="0"
+                  step="1" /></label
+              ><label
+                >高 m
+                <input
+                  id="position-altitude"
+                  type="number"
+                  min="0"
+                  max="100"
+                  value="3"
+                  step="0.5" /></label
+              ><button id="position-apply">設定位置</button>
+            </div>
+            <p id="flight-details">等待狀態</p>
+            <p id="battery-details">電池：—</p>
+            <p id="fault-details">故障：—</p>
+            <label
+              ><input type="checkbox" id="pilot-enable" /> 鍵盤／手把操控</label
+            >
+            <p>WASD 姿態、方向鍵偏航與升降；手把實體尚未驗證。</p>
+            <div class="feature-actions">
+              <label
+                >馬達
+                <select id="fault-motor">
+                  <option value="0">M1</option>
+                  <option value="1">M2</option>
+                  <option value="2">M3</option>
+                  <option value="3">M4</option>
+                </select></label
+              ><label
+                >效率
+                <input
+                  id="fault-efficiency"
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.1"
+                  value="0.5" /></label
+              ><button id="fault-apply">設定馬達故障</button
+              ><button id="fault-link">模擬斷訊</button
+              ><button id="fault-clear">清除故障</button>
+            </div>
+          </section>
+          <section class="panel control-panel">
+            <div class="panel-heading">
               <h2>實驗情境 <span>SCENARIOS</span></h2>
               <span class="section-index">01</span>
             </div>
@@ -323,6 +504,16 @@
         <p>
           參數儲存在此瀏覽器。套用後重設實驗；模型數值為研究假設，尚未經實體校準。
         </p>
+        <label
+          >機體預設
+          <select id="model-preset">
+            <option value="">自訂</option>
+            <option value="micro">微型四軸</option>
+            <option value="research">研究四軸</option>
+            <option value="heavy">重載四軸</option>
+          </select></label
+        >
+        <p>預設值為通用假設，並非品牌實機校準。</p>
         <div id="settings-fields"></div>
         <p id="settings-error" class="form-error" role="alert"></p>
         <div class="dialog-actions">
@@ -354,7 +545,7 @@
         <li>從「實驗紀錄」匯出 CSV 分析，或匯出 JSON 後再次匯入重播。</li>
       </ol>
       <p>
-        姿態指令會造成水平移動，此版沒有水平位置保持。控制器使用理想化姿態觀測；虛擬
+        姿態指令會造成水平移動；位置與任務模式使用簡化控制。控制器使用理想化姿態觀測；虛擬
         IMU
         的雜訊是每次取樣的標準差倍率，尚未對應真實感測器。切到背景分頁會自動暫停，避免隱藏節流被誤認為實時結果。
       </p>

@@ -1,6 +1,13 @@
 import { DEFAULT_CONFIG, validateConfig } from "./sim.js";
 import { createScene } from "./scene.js";
-import { validateRecording, recordingToCsv } from "./recording.js";
+import {
+  validateRecording,
+  recordingToCsv,
+  recordingToJson,
+} from "./recording.js";
+import { readPilotInput } from "./input.js";
+import { TRAINING_COURSES } from "./training.js";
+import { CAPABILITIES, SOURCES } from "./capabilities.js";
 
 const $ = (id) => document.getElementById(id);
 const DEG = 180 / Math.PI;
@@ -19,6 +26,7 @@ let history = [];
 let replay;
 let replayClock = 0;
 let replayIndex = 0;
+let replayEventIndex = 0;
 let rendering = true;
 let scene;
 let toastTimer;
@@ -58,15 +66,17 @@ function setPlaying(value) {
         ? "實驗暫停，資料已保留"
         : "準備就緒，開始你的實驗";
   const label =
-    latest?.status === "failsafe"
-      ? "斷訊保護"
-      : replay
-        ? "紀錄重播"
-        : value
-          ? "模擬運行中"
-          : latest?.time > 0
-            ? "已暫停"
-            : "準備就緒";
+    latest?.status === "crashed"
+      ? "碰撞停機"
+      : latest?.status === "failsafe"
+        ? "斷訊保護"
+        : replay
+          ? "紀錄重播"
+          : value
+            ? "模擬運行中"
+            : latest?.time > 0
+              ? "已暫停"
+              : "準備就緒";
   $("view-status").innerHTML = `<span class="dot"></span>${label}`;
 }
 
@@ -174,6 +184,23 @@ const groups = [
     ],
   ],
 ];
+groups.push([
+  "導航、環境與電池",
+  [
+    ["windDirection", "風向 (°)", 0, 360, 1, 1],
+    ["turbulence", "亂流 (m/s)", 0, 15, 0.1, 1],
+    ["geofenceRadius", "圍欄半徑 (m)", 1, 500, 1, 1],
+    ["geofenceHeight", "圍欄高度 (m)", 2, 500, 1, 1],
+    ["batteryCapacityWh", "電池容量 (Wh)", 0.1, 1000, 1, 1],
+    ["batteryInitialSoc", "初始電量 (0–1)", 0, 1, 0.01, 1],
+    ["batteryBasePower", "基礎功率 (W)", 0, 200, 1, 1],
+    ["batteryMotorPower", "馬達功率 (W)", 1, 1000, 1, 1],
+    ["batteryInternalResistance", "內阻 (Ω)", 0, 2, 0.01, 1],
+    ["batteryCells", "電池串數", 1, 12, 1, 1],
+    ["lowBatteryThreshold", "低電量門檻", 0.01, 0.5, 0.01, 1],
+    ["criticalBatteryThreshold", "危急電量門檻", 0, 0.3, 0.01, 1],
+  ],
+]);
 const fields = groups.flatMap(([, list]) => list);
 $("settings-fields").innerHTML = groups
   .map(
@@ -194,7 +221,7 @@ $("settings-default").onclick = () => populateConfig(DEFAULT_CONFIG);
 $("settings-form").onsubmit = (event) => {
   event.preventDefault();
   try {
-    const next = {};
+    const next = { ...config };
     for (const [key, , , , , factor] of fields)
       next[key] = Number($(`config-${key}`).value) / factor;
     config = validateConfig(next);
@@ -218,6 +245,7 @@ document.querySelectorAll("[data-close]").forEach((button) => {
 function newExperiment() {
   replay = undefined;
   document.body.classList.remove("replay");
+  setReplayControls(false);
   history = [];
   sampleCount = 0;
   resetTargets();
@@ -265,7 +293,10 @@ $("play").onclick = () => {
     if (replayIndex >= replay.samples.length - 1) {
       replayClock = replay.samples[0].time;
       replayIndex = 0;
-      history = [];
+      latest = replay.samples[0];
+      history = [latest];
+      restoreReplayPresentation();
+      applyReplayEvents(replayClock);
     }
     setPlaying(!running);
   } else worker.postMessage({ type: running ? "pause" : "play" });
@@ -289,6 +320,7 @@ document.querySelectorAll("[data-camera]").forEach((button) => {
 $("render-toggle").onclick = () => {
   rendering = !rendering;
   scene?.setVisible(rendering);
+  worker.postMessage({ type: "render", value: rendering });
   $("render-message").hidden = rendering;
   $("render-toggle").textContent = rendering ? "關閉渲染" : "開啟渲染";
   $("render-toggle").setAttribute("aria-pressed", String(rendering));
@@ -309,7 +341,7 @@ function exportRecording(kind, recording) {
       "csv",
       "text/csv;charset=utf-8",
     );
-  else download(JSON.stringify(recording), "json", "application/json");
+  else download(recordingToJson(recording), "json", "application/json");
   toast("實驗紀錄已匯出。");
 }
 for (const kind of ["csv", "json"])
@@ -348,11 +380,14 @@ $("import-file").onchange = async (event) => {
     });
     replayClock = record.samples[0].time;
     replayIndex = 0;
+    restoreReplayPresentation();
+    applyReplayEvents(replayClock);
     history = [record.samples[0]];
     latest = record.samples[0];
     sampleCount = record.samples.length;
     timing = {};
     document.body.classList.add("replay");
+    setReplayControls(true);
     document
       .querySelectorAll("#target-controls input, #gust")
       .forEach((element) => {
@@ -384,7 +419,14 @@ worker.onmessage = ({ data }) => {
   latest = data.snapshot;
   timing = data.timing;
   sampleCount = data.sampleCount;
-  if (data.message === "reset") history = [];
+  if (data.message === "reset") {
+    history = [];
+    if (data.setup)
+      for (const key of ["environment", "obstacles", "mission", "training"])
+        showReplayEvent(key, data.setup[key]);
+    scene?.update(latest, 0);
+    scene?.resetView();
+  }
   history.push(...data.samples);
   while (history.length > 400) history.shift();
   $("play").disabled = false;
@@ -439,6 +481,50 @@ function updateTelemetry() {
   $("age-value").textContent = `${(s.metrics.sampleAge * 1000).toFixed(0)} ms`;
   $("drop-value").textContent = s.metrics.dropped.toLocaleString();
   $("samples-value").textContent = sampleCount.toLocaleString();
+  const nav = s.navigation;
+  const modeLabels = {
+    attitude: "姿態",
+    position: "位置",
+    mission: "任務",
+    rtl: "返航",
+    land: "降落",
+  };
+  const stateLabels = {
+    ready: "待命",
+    flying: "飛行中",
+    landed: "已降落",
+    failsafe: "保護模式",
+    crashed: "碰撞停機",
+  };
+  const reasons = {
+    geofence: "超出圍欄",
+    "low-battery": "電量偏低",
+    "critical-battery": "電量危急",
+    "link-loss": "連線中斷",
+    "stale-sensor": "感測資料逾時",
+    "obstacle-collision": "撞上障礙物",
+    rtl: "返航降落",
+    crashed: "碰撞",
+  };
+  if (nav) $("flight-mode").value = nav.mode;
+  $("flight-details").textContent = nav
+    ? `模式：${modeLabels[nav.mode] || "未知"} · 航點 ${Math.min(nav.index + 1, nav.waypoints?.length || 0)}/${nav.waypoints?.length || 0} · ${nav.fenceBreached ? "超出圍欄" : "圍欄內"} ${reasons[nav.reason] || ""} · ${s.armed ? "已解鎖" : "已上鎖"} · ${stateLabels[s.status] || "未知"}`
+    : `狀態：${stateLabels[s.status] || "未知"}`;
+  if (s.status === "crashed") {
+    $("runtime-status").textContent = "碰撞停機";
+    $("view-status").innerHTML = '<span class="dot"></span>碰撞停機';
+  }
+  const battery = s.battery;
+  $("battery-details").textContent = battery
+    ? `電池 ${(battery.soc * 100).toFixed(0)}% · ${battery.voltage.toFixed(1)} V · ${battery.current.toFixed(1)} A`
+    : "電池：—";
+  $("fault-details").textContent = s.faults
+    ? `故障：${s.faults.linkLost ? "連線中斷" : "連線正常"} · 馬達效率 ${s.faults.motorEfficiency.map((v) => `${Math.round(v * 100)}%`).join(" / ")}`
+    : "故障：—";
+  const training = s.training;
+  $("training-status").textContent = training
+    ? `${TRAINING_COURSES[training.course]?.title || training.course} · ${training.elapsed.toFixed(1)} 秒 · 通過 ${training.passed}/${training.total} · 分數 ${training.score} ${training.complete ? "· 完成" : ""} ${reasons[training.reason] || ""}`
+    : "尚未開始";
   if (s.status === "failsafe") {
     $("runtime-status").textContent = "斷訊保護";
     $("view-status").innerHTML =
@@ -523,6 +609,7 @@ function animate(now) {
       replay.samples[replayIndex + 1].time <= replayClock
     ) {
       latest = replay.samples[++replayIndex];
+      applyReplayEvents(latest.time);
       history.push(latest);
       if (history.length > 400) history.shift();
     }
@@ -532,12 +619,14 @@ function animate(now) {
       uiTime = now;
     }
   }
+  updatePilot(now);
   if (latest && rendering)
     scene?.update(latest, running ? elapsed * Number($("speed").value) : 0);
   requestAnimationFrame(animate);
 }
 requestAnimationFrame(animate);
 document.addEventListener("visibilitychange", () => {
+  if (document.hidden) releasePilot();
   if (document.hidden && running) {
     if (replay) setPlaying(false);
     else worker.postMessage({ type: "pause" });
@@ -550,3 +639,451 @@ window.addEventListener("beforeunload", (event) => {
     event.returnValue = "";
   }
 });
+
+const squareMission = () =>
+  [
+    [8, 0],
+    [8, 8],
+    [0, 8],
+    [0, 0],
+  ].map(([north, east]) => ({ north, east, altitude: 3, hold: 1 }));
+let waypoints = squareMission();
+const map = $("mission-map");
+function drawMission() {
+  const ctx = map.getContext("2d"),
+    w = map.width,
+    h = map.height;
+  ctx.fillStyle = "#101c2d";
+  ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = "#35566b";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 10; i++) {
+    ctx.beginPath();
+    ctx.moveTo((i * w) / 10, 0);
+    ctx.lineTo((i * w) / 10, h);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, (i * h) / 10);
+    ctx.lineTo(w, (i * h) / 10);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = "#ffbf78";
+  ctx.fillStyle = "#ffbf78";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  waypoints.forEach((p, i) => {
+    const x = ((p.east + 50) / 100) * w,
+      y = ((50 - p.north) / 100) * h;
+    if (i) ctx.lineTo(x, y);
+    else ctx.moveTo(x, y);
+  });
+  ctx.stroke();
+  waypoints.forEach((p, i) => {
+    const x = ((p.east + 50) / 100) * w,
+      y = ((50 - p.north) / 100) * h;
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillText(String(i + 1), x + 7, y - 5);
+  });
+  scene?.setMission(waypoints);
+}
+function renderWaypoints() {
+  const list = $("waypoint-list");
+  list.replaceChildren();
+  waypoints.forEach((point, index) => {
+    const row = document.createElement("div");
+    row.className = "waypoint-row";
+    const title = document.createElement("strong");
+    title.textContent = `${index + 1}`;
+    row.append(title);
+    for (const [key, label, min, max] of [
+      ["north", "北", -50, 50],
+      ["east", "東", -50, 50],
+      ["altitude", "高度", 0, 100],
+      ["hold", "停留秒", 0, 60],
+    ]) {
+      const wrapper = document.createElement("label");
+      wrapper.textContent = label;
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = min;
+      input.max = max;
+      input.step = "0.1";
+      input.value = point[key];
+      input.disabled = !!replay;
+      input.onchange = () => {
+        const value = Number(input.value);
+        if (Number.isFinite(value) && value >= min && value <= max) {
+          point[key] = value;
+          drawMission();
+        } else {
+          input.value = point[key];
+          toast(`${label}超出範圍`);
+        }
+      };
+      wrapper.append(input);
+      row.append(wrapper);
+    }
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "移除";
+    remove.disabled = !!replay;
+    remove.onclick = () => {
+      waypoints.splice(index, 1);
+      renderWaypoints();
+    };
+    row.append(remove);
+    list.append(row);
+  });
+  drawMission();
+}
+map.onclick = (event) => {
+  if (replay || waypoints.length >= 50) return;
+  const rect = map.getBoundingClientRect();
+  waypoints.push({
+    north:
+      Math.round((0.5 - (event.clientY - rect.top) / rect.height) * 1000) / 10,
+    east:
+      Math.round(((event.clientX - rect.left) / rect.width - 0.5) * 1000) / 10,
+    altitude: Number($("position-altitude").value),
+    hold: 1,
+  });
+  renderWaypoints();
+};
+$("waypoint-add").onclick = () => {
+  if (waypoints.length < 50) {
+    waypoints.push({
+      north: 0,
+      east: 0,
+      altitude: Number($("position-altitude").value),
+      hold: 1,
+    });
+    renderWaypoints();
+  } else toast("最多 50 個航點。");
+};
+$("waypoint-square").onclick = () => {
+  waypoints = squareMission();
+  renderWaypoints();
+};
+$("mission-export").onclick = () =>
+  download(JSON.stringify(waypoints, null, 2), "json", "application/json");
+function applyMission(start) {
+  if (!waypoints.length) return toast("請先新增航點。");
+  worker.postMessage({ type: "mission", value: waypoints });
+  worker.postMessage({ type: "mode", value: "mission" });
+  $("flight-mode").value = "mission";
+  if (start) worker.postMessage({ type: "play" });
+}
+$("mission-apply").onclick = () => applyMission(false);
+$("mission-start").onclick = () => applyMission(true);
+const warehouseBoxes = [
+  { north: 12, east: 3, width: 2, depth: 3, height: 3 },
+  { north: 12, east: -5, width: 3, depth: 2, height: 2 },
+  { north: -8, east: 7, width: 3, depth: 2, height: 2.5 },
+  { north: -8, east: -7, width: 2, depth: 3, height: 3 },
+];
+function applyEnvironment() {
+  const value = {
+    preset: $("environment-preset").value,
+    timeOfDay: Number($("environment-time").value),
+    fog: Number($("environment-fog").value),
+    rain: Number($("environment-rain").value),
+  };
+  if (
+    !Number.isFinite(value.timeOfDay) ||
+    value.timeOfDay < 0 ||
+    value.timeOfDay > 24
+  )
+    return toast("時間須介於 0 至 24 時。");
+  const boxes = value.preset === "warehouse" ? warehouseBoxes : [];
+  scene?.setEnvironment(value);
+  scene?.setObstacles(boxes);
+  worker.postMessage({ type: "environment", value });
+  worker.postMessage({ type: "obstacles", value: boxes });
+}
+for (const id of [
+  "environment-preset",
+  "environment-time",
+  "environment-fog",
+  "environment-rain",
+])
+  $(id).onchange = applyEnvironment;
+$("training-select").onchange = () => {
+  const value = $("training-select").value;
+  scene?.setGates(TRAINING_COURSES[value].gates);
+  worker.postMessage({ type: "training", value });
+};
+$("flight-mode").onchange = (event) =>
+  worker.postMessage({ type: "mode", value: event.target.value });
+document
+  .querySelectorAll("[data-command]")
+  .forEach(
+    (button) =>
+      (button.onclick = () =>
+        worker.postMessage({ type: button.dataset.command })),
+  );
+document.querySelectorAll("[data-mode]").forEach(
+  (button) =>
+    (button.onclick = () => {
+      $("flight-mode").value = button.dataset.mode;
+      worker.postMessage({ type: "mode", value: button.dataset.mode });
+    }),
+);
+$("position-apply").onclick = () => {
+  const value = {
+    north: Number($("position-north").value),
+    east: Number($("position-east").value),
+    altitude: Number($("position-altitude").value),
+  };
+  worker.postMessage({ type: "mode", value: "position" });
+  worker.postMessage({ type: "position", value });
+  $("flight-mode").value = "position";
+};
+$("fault-apply").onclick = () =>
+  worker.postMessage({
+    type: "fault",
+    fault: "motor",
+    value: {
+      index: Number($("fault-motor").value),
+      efficiency: Number($("fault-efficiency").value),
+    },
+  });
+$("fault-link").onclick = () =>
+  worker.postMessage({ type: "fault", fault: "link", value: { lost: true } });
+$("fault-clear").onclick = () => worker.postMessage({ type: "clearFaults" });
+$("model-preset").onchange = (event) => {
+  const presets = {
+    micro: {
+      mass: 0.3,
+      arm: 0.1,
+      maxMotorThrust: 3,
+      motorTau: 0.03,
+      batteryCapacityWh: 15,
+    },
+    research: {
+      mass: 1.2,
+      arm: 0.23,
+      maxMotorThrust: 8,
+      motorTau: 0.04,
+      batteryCapacityWh: 60,
+    },
+    heavy: {
+      mass: 5,
+      arm: 0.5,
+      maxMotorThrust: 30,
+      motorTau: 0.08,
+      batteryCapacityWh: 250,
+    },
+  };
+  const values = presets[event.target.value];
+  if (!values) return;
+  for (const [key, value] of Object.entries(values)) {
+    const field = fields.find((item) => item[0] === key);
+    $(`config-${key}`).value = value * field[5];
+  }
+};
+for (const button of document.querySelectorAll("[data-workspace]"))
+  button.onclick = () => {
+    for (const item of document.querySelectorAll("[data-workspace]")) {
+      item.classList.toggle("active", item === button);
+      item.setAttribute("aria-pressed", String(item === button));
+    }
+    for (const name of ["mission", "training", "catalog"])
+      $(`${name}-workspace`).hidden = button.dataset.workspace !== name;
+    document.querySelector(".workspace").hidden =
+      button.dataset.workspace === "catalog";
+  };
+const category = $("catalog-category"),
+  status = $("catalog-status");
+for (const value of [...new Set(CAPABILITIES.map((item) => item.category))])
+  category.add(new Option(value, value));
+const statusNames = {
+  implemented: "已實作",
+  partial: "部分實作",
+  planned: "規劃中",
+  external: "需外部整合",
+};
+for (const value of [...new Set(CAPABILITIES.map((item) => item.status))])
+  status.add(new Option(statusNames[value] || value, value));
+function renderCatalog() {
+  const search = $("catalog-search").value.trim().toLowerCase();
+  const selected = CAPABILITIES.filter(
+    (item) =>
+      (!category.value || item.category === category.value) &&
+      (!status.value || item.status === status.value) &&
+      `${item.title} ${item.description} ${item.category}`
+        .toLowerCase()
+        .includes(search),
+  );
+  $("catalog-counts").textContent =
+    `顯示 ${selected.length} / ${CAPABILITIES.length} 項 · ` +
+    Object.entries(statusNames)
+      .map(
+        ([key, label]) =>
+          `${label} ${CAPABILITIES.filter((item) => item.status === key).length}`,
+      )
+      .join(" · ");
+  const list = $("catalog-list");
+  list.replaceChildren();
+  for (const item of selected) {
+    const article = document.createElement("article");
+    article.className = "catalog-item";
+    const title = document.createElement("strong");
+    title.textContent = item.title;
+    const badge = document.createElement("span");
+    badge.textContent = `${item.category} · ${statusNames[item.status] || item.status}`;
+    const description = document.createElement("p");
+    description.textContent = item.description;
+    article.append(title, badge, description);
+    for (const url of item.sources) {
+      const source = SOURCES.find((entry) => entry.url === url);
+      const link = document.createElement("a");
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = `${source?.name || "來源"} ↗`;
+      article.append(link, " ");
+    }
+    list.append(article);
+  }
+}
+for (const id of ["catalog-search", "catalog-category", "catalog-status"])
+  $(id).addEventListener("input", renderCatalog);
+const keys = new Set();
+let pilotTime = 0;
+let pilotWasActive = false;
+function releasePilot() {
+  keys.clear();
+  if (pilotWasActive && !replay)
+    worker.postMessage({
+      type: "targets",
+      value: { roll: 0, pitch: 0, yawRate: 0 },
+    });
+  pilotWasActive = false;
+}
+$("pilot-enable").onchange = (event) => {
+  if (event.target.checked && !replay) {
+    event.target.blur();
+    $("flight-mode").value = "attitude";
+    worker.postMessage({ type: "mode", value: "attitude" });
+  } else releasePilot();
+};
+window.addEventListener("keydown", (event) => {
+  if (
+    !$("pilot-enable").checked ||
+    replay ||
+    event.target.closest("input,select,textarea,button,dialog")
+  )
+    return;
+  if (
+    [
+      "KeyW",
+      "KeyA",
+      "KeyS",
+      "KeyD",
+      "ArrowUp",
+      "ArrowDown",
+      "ArrowLeft",
+      "ArrowRight",
+    ].includes(event.code)
+  ) {
+    keys.add(event.code);
+    event.preventDefault();
+  }
+});
+window.addEventListener("keyup", (event) => keys.delete(event.code));
+document.addEventListener("focusin", (event) => {
+  if (
+    event.target.matches("input,select,textarea,button") ||
+    event.target.closest("dialog")
+  )
+    releasePilot();
+});
+window.addEventListener("blur", releasePilot);
+function updatePilot(now) {
+  if (
+    !$("pilot-enable").checked ||
+    !running ||
+    replay ||
+    !latest ||
+    document.hidden ||
+    now - pilotTime < 50
+  )
+    return;
+  const dt = pilotTime ? Math.min((now - pilotTime) / 1000, 0.1) : 0.05;
+  pilotTime = now;
+  let pad;
+  try {
+    pad = navigator.getGamepads?.()?.find((item) => item?.connected);
+  } catch {
+    $("pilot-enable").checked = false;
+    releasePilot();
+    toast("瀏覽器禁止讀取手把，已停用手動操控。");
+    return;
+  }
+  const input = readPilotInput(keys, pad);
+  const value = {
+    roll: (input.roll * 20) / DEG,
+    pitch: (input.pitch * 20) / DEG,
+    yawRate: (input.yaw * 60) / DEG,
+    altitude: Math.max(
+      0,
+      Math.min(100, latest.target.altitude + input.climb * 2 * dt),
+    ),
+  };
+  worker.postMessage({ type: "targets", value });
+  pilotWasActive = true;
+  for (const t of targets) {
+    const display = value[t.key] * t.factor;
+    $(`target-${t.key}`).value = display;
+    $(`output-${t.key}`).textContent = `${display.toFixed(1)} ${t.unit}`;
+  }
+}
+function setReplayControls(disabled) {
+  document
+    .querySelectorAll(
+      "#mission-workspace button:not(#mission-export), #training-workspace input, #training-workspace select, #flight-mode, [data-command], [data-mode], #position-apply, #fault-apply, #fault-link, #fault-clear, #pilot-enable",
+    )
+    .forEach((element) => {
+      element.disabled = disabled;
+    });
+  if (disabled) {
+    $("pilot-enable").checked = false;
+    releasePilot();
+  }
+  if (typeof waypoints !== "undefined") renderWaypoints();
+}
+renderWaypoints();
+renderCatalog();
+
+function showReplayEvent(type, value) {
+  if (type === "environment") {
+    scene?.setEnvironment(value);
+    $("environment-preset").value = value.preset;
+    $("environment-time").value = value.timeOfDay;
+    $("environment-fog").value = value.fog;
+    $("environment-rain").value = value.rain;
+  } else if (type === "obstacles") scene?.setObstacles(value);
+  else if (type === "mission") {
+    waypoints = structuredClone(value);
+    renderWaypoints();
+  } else if (type === "training") {
+    $("training-select").value = value;
+    scene?.setGates(TRAINING_COURSES[value].gates);
+  }
+}
+function restoreReplayPresentation() {
+  replayEventIndex = 0;
+  for (const key of ["environment", "obstacles", "mission", "training"])
+    showReplayEvent(key, replay.setup[key]);
+}
+function applyReplayEvents(time) {
+  while (
+    replayEventIndex < replay.events.length &&
+    replay.events[replayEventIndex].time <= time + 1e-8
+  ) {
+    const event = replay.events[replayEventIndex++];
+    showReplayEvent(event.type, event.value);
+  }
+}

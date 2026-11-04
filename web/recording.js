@@ -1,11 +1,16 @@
-import { validateConfig } from "./sim.js";
+import { createSimulation, validateConfig } from "./sim.js";
+import { TRAINING_COURSES } from "./training.js";
 
-const targetLimits = {
-  altitude: [0, 100],
-  roll: [-Math.PI / 6, Math.PI / 6],
-  pitch: [-Math.PI / 6, Math.PI / 6],
-  yawRate: [-2, 2],
-};
+export const RECORDING_VERSION = 2;
+const MODES = ["attitude", "position", "mission", "rtl", "land"];
+const COURSES = Object.keys(TRAINING_COURSES);
+export const DEFAULT_SETUP = Object.freeze({
+  mode: "attitude",
+  mission: Object.freeze([]),
+  obstacles: Object.freeze([]),
+  training: "free",
+  environment: Object.freeze({ preset: "lab", timeOfDay: 12, fog: 0, rain: 0 }),
+});
 const object = (value) => {
   if (
     !value ||
@@ -21,41 +26,153 @@ const number = (value, min = -1e9, max = 1e9) => {
     throw new Error("Invalid number");
   return value;
 };
+const count = (value, max = 1e9) => {
+  number(value, 0, max);
+  if (!Number.isInteger(value)) throw new Error("Invalid count");
+  return value;
+};
+const boolean = (value) => {
+  if (typeof value !== "boolean") throw new Error("Expected boolean");
+  return value;
+};
+const choice = (value, values) => {
+  if (!values.includes(value)) throw new Error("Invalid enum value");
+  return value;
+};
 const vector = (value, length, min = -1e9, max = 1e9) => {
   if (!Array.isArray(value) || value.length !== length)
     throw new Error("Invalid vector");
-  return Array.from(value, (v) => number(v, min, max));
+  return Array.from(value, (item) => number(item, min, max));
 };
-function targets(value, partial = false) {
+function environment(value) {
   object(value);
-  for (const key of Object.keys(value))
-    if (!Object.hasOwn(targetLimits, key)) throw new Error("Unknown target");
+  return {
+    preset: choice(value.preset, ["lab", "field", "warehouse"]),
+    timeOfDay: number(value.timeOfDay, 0, 24),
+    fog: number(value.fog, 0, 1),
+    rain: number(value.rain, 0, 1),
+  };
+}
+export function validateSetup(value, config = {}) {
+  const input = value === undefined ? DEFAULT_SETUP : object(value);
+  const merged = { ...DEFAULT_SETUP, ...input };
+  const sim = createSimulation(validateConfig(object(config)));
+  if (!Array.isArray(merged.mission))
+    throw new Error("Mission must be an array");
+  const mission = Array.from(merged.mission, (point) => ({ ...object(point) }));
+  if (mission.length) sim.setMission(mission);
+  sim.setObstacles(merged.obstacles);
+  const obstacles = Array.from(merged.obstacles, (box) => ({ ...object(box) }));
+  const mode = choice(merged.mode, MODES);
+  sim.setMode(mode);
+  return {
+    mode,
+    mission,
+    obstacles,
+    training: choice(merged.training, COURSES),
+    environment: environment(merged.environment),
+  };
+}
+function targets(value, partial = false, automatic = false) {
+  object(value);
+  const limits = {
+    altitude: [0, 500],
+    roll: [-Math.PI / 6, Math.PI / 6],
+    pitch: [-Math.PI / 6, Math.PI / 6],
+    yawRate: [-2, 2],
+  };
+  if (Object.keys(value).some((key) => !Object.hasOwn(limits, key)))
+    throw new Error("Unknown target");
   const result = {};
-  for (const [key, [min, max]] of Object.entries(targetLimits)) {
+  for (const [key, [min, max]] of Object.entries(limits))
     if (!partial || Object.hasOwn(value, key))
-      result[key] = number(value[key], min, max);
-  }
+      result[key] = number(
+        value[key],
+        automatic && key === "altitude" ? 0 : min,
+        automatic && key === "altitude" ? 1e9 : max,
+      );
   return result;
 }
-function sample(value) {
+function training(value) {
+  object(value);
+  const course = choice(value.course, COURSES),
+    total = TRAINING_COURSES[course].gates.length;
+  if (count(value.total, 50) !== total)
+    throw new Error("Invalid training gate total");
+  const passed = count(value.passed, total);
+  const expectedGate = TRAINING_COURSES[course].gates[passed] ?? null;
+  let nextGate = null;
+  if (expectedGate) {
+    const gate = object(value.nextGate);
+    nextGate = {
+      north: number(gate.north, -500, 500),
+      east: number(gate.east, -500, 500),
+      altitude: number(gate.altitude, 0, 500),
+      yaw: number(gate.yaw, -Math.PI, Math.PI),
+      radius: number(gate.radius, 0.01, 100),
+    };
+    if (JSON.stringify(nextGate) !== JSON.stringify(expectedGate))
+      throw new Error("Invalid next training gate");
+  } else if (value.nextGate !== null)
+    throw new Error("Invalid next training gate");
+  return {
+    course,
+    elapsed: number(value.elapsed, 0),
+    passed,
+    total,
+    misses: count(value.misses),
+    complete: boolean(value.complete),
+    score: number(value.score, 0, 1000),
+    nextGate,
+    holdSeconds: number(value.holdSeconds, 0),
+    reason: choice(value.reason, ["", "crashed"]),
+  };
+}
+function sample(value, route, routeText, routeCache) {
   object(value);
   const quaternion = vector(value.quaternion, 4, -1, 1);
   if (Math.abs(Math.hypot(...quaternion) - 1) > 0.01)
     throw new Error("Invalid quaternion");
   const imu = object(value.imu),
-    metrics = object(value.metrics);
-  if (!["ready", "flying", "landed", "failsafe"].includes(value.status))
-    throw new Error("Invalid status");
+    metrics = object(value.metrics),
+    nav = object(value.navigation),
+    battery = object(value.battery),
+    faults = object(value.faults);
+  if (Object.hasOwn(nav, "waypoints")) {
+    if (!Array.isArray(nav.waypoints))
+      throw new Error("Invalid navigation waypoints");
+    let text = routeCache.get(nav.waypoints);
+    if (text === undefined) {
+      text = JSON.stringify(nav.waypoints);
+      routeCache.set(nav.waypoints, text);
+    }
+    if (text !== routeText)
+      throw new Error("Navigation waypoints do not match mission history");
+  } else if (!Object.hasOwn(nav, "waypointCount"))
+    throw new Error("Missing navigation waypoint count");
+  if (
+    Object.hasOwn(nav, "waypointCount") &&
+    count(nav.waypointCount, 50) !== route.length
+  )
+    throw new Error("Invalid waypoint count");
   const resultMetrics = {};
-  for (const key of ["rmse", "peakError", "sampleAge", "dropped", "steps"])
+  for (const key of [
+    "rmse",
+    "peakError",
+    "altitudeRmse",
+    "altitudePeakError",
+    "sampleAge",
+  ])
     resultMetrics[key] = number(metrics[key], 0);
   for (const key of ["dropped", "steps"])
-    if (!Number.isInteger(resultMetrics[key])) throw new Error("Invalid count");
-  for (const key of ["altitudeRmse", "altitudePeakError"])
-    if (Object.hasOwn(metrics, key))
-      resultMetrics[key] = number(metrics[key], 0);
+    resultMetrics[key] = count(metrics[key]);
+  const mode = choice(nav.mode, MODES);
+  if (mode === "mission" && !route.length)
+    throw new Error("Mission mode requires waypoints");
+  const home = vector(nav.home, 2, -500, 500);
+  if (home.some((v) => v !== 0)) throw new Error("Invalid home position");
   return {
-    time: number(value.time, 0),
+    time: number(value.time, 0, 1800.001),
     position: vector(value.position, 3),
     velocity: vector(value.velocity, 3),
     quaternion,
@@ -63,61 +180,206 @@ function sample(value) {
     rates: vector(value.rates, 3),
     motors: vector(value.motors, 4, 0, 1),
     pwm: vector(value.pwm, 4, 1000, 2000),
-    target: targets(value.target),
+    target: targets(value.target, false, true),
     imu: { accel: vector(imu.accel, 3), gyro: vector(imu.gyro, 3) },
     metrics: resultMetrics,
-    status: value.status,
+    status: choice(value.status, [
+      "ready",
+      "flying",
+      "landed",
+      "failsafe",
+      "crashed",
+    ]),
     wind: vector(value.wind, 3),
+    armed: boolean(value.armed),
+    navigation: {
+      mode,
+      waypoints: route,
+      index: count(nav.index, Math.max(0, route.length - 1)),
+      completed: boolean(nav.completed),
+      home,
+      targetPosition: vector(nav.targetPosition, 2),
+      fenceBreached: boolean(nav.fenceBreached),
+      reason: choice(nav.reason, [
+        "",
+        "rtl",
+        "stale-sensor",
+        "critical-battery",
+        "low-battery",
+        "geofence",
+        "link-loss",
+        "obstacle-collision",
+      ]),
+    },
+    battery: {
+      soc: number(battery.soc, 0, 1),
+      voltage: number(battery.voltage, 0, 100),
+      current: number(battery.current, 0, 1e6),
+      power: number(battery.power, 0, 1e6),
+      usedWh: number(battery.usedWh, 0, 1000),
+      remainingSeconds: number(battery.remainingSeconds, 0, 1e9),
+      low: boolean(battery.low),
+      critical: boolean(battery.critical),
+    },
+    faults: {
+      motorEfficiency: vector(faults.motorEfficiency, 4, 0, 1),
+      linkLost: boolean(faults.linkLost),
+    },
+    training: training(value.training),
+  };
+}
+function event(input, sim) {
+  object(input);
+  const result = { time: number(input.time, 0, 1800.001), type: input.type };
+  switch (input.type) {
+    case "targets":
+      result.value = targets(input.value, true);
+      sim.setTargets(result.value);
+      break;
+    case "mode":
+      result.value = choice(input.value, MODES);
+      break;
+    case "position":
+      sim.setMode("attitude");
+      sim.setPositionTarget(object(input.value));
+      result.value = { ...input.value };
+      break;
+    case "mission":
+      if (!Array.isArray(input.value)) throw new Error("Invalid mission event");
+      result.value = Array.from(input.value, (point) => ({ ...object(point) }));
+      sim.setMission(result.value);
+      break;
+    case "obstacles":
+      if (!Array.isArray(input.value))
+        throw new Error("Invalid obstacle event");
+      result.value = Array.from(input.value, (box) => ({ ...object(box) }));
+      sim.setObstacles(result.value);
+      break;
+    case "fault":
+      result.fault = choice(input.fault, ["motor", "link"]);
+      sim.injectFault(result.fault, object(input.value));
+      result.value = { ...input.value };
+      sim.clearFaults();
+      break;
+    case "training":
+      result.value = choice(input.value, COURSES);
+      break;
+    case "environment":
+      result.value = environment(input.value);
+      break;
+    case "render":
+      result.value = boolean(input.value);
+      break;
+    case "gust":
+    case "clearFaults":
+    case "takeoff":
+    case "arm":
+    case "disarm":
+      break;
+    default:
+      throw new Error("Invalid recording event");
+  }
+  return result;
+}
+export function compactSnapshot(snapshot) {
+  const { waypoints, ...navigation } = object(snapshot.navigation);
+  return {
+    ...snapshot,
+    navigation: {
+      ...navigation,
+      waypointCount: waypoints?.length ?? navigation.waypointCount ?? 0,
+    },
   };
 }
 export function validateRecording(value) {
   object(value);
+  if (value.version !== RECORDING_VERSION)
+    throw new Error(
+      "Unsupported recording version: version 2 required; legacy recordings are not supported",
+    );
   if (
     value.format !== "flight-lab" ||
-    value.version !== 1 ||
+    value.modelVersion !== "0.2.0" ||
     typeof value.createdAt !== "string" ||
     !Number.isFinite(Date.parse(value.createdAt))
   )
     throw new Error("Invalid recording header");
   if (!["hover", "step", "gust"].includes(value.scenario) || value.dt !== 0.005)
     throw new Error("Invalid recording settings");
-  object(value.config);
-  const config = validateConfig(value.config);
+  const config = validateConfig(object(value.config)),
+    setup = validateSetup(object(value.setup), config),
+    runtime = object(value.runtime);
+  const cleanRuntime = {
+    speed: choice(runtime.speed, [0.5, 1, 2, 4]),
+    wallSeconds: number(runtime.wallSeconds, 0),
+    p95LateMs: number(runtime.p95LateMs, 0),
+    lateTicks: count(runtime.lateTicks),
+    skippedWallSeconds: number(runtime.skippedWallSeconds, 0),
+    renderEnabled: boolean(runtime.renderEnabled),
+  };
   if (
     !Array.isArray(value.events) ||
+    value.events.length > 100000 ||
     !Array.isArray(value.samples) ||
     !value.samples.length ||
-    value.samples.length > 36001
+    value.samples.length > 36002
   )
     throw new Error("Invalid recording length");
+  const sim = createSimulation(config);
   let lastEvent = -1;
-  const events = value.events.map((event) => {
-    object(event);
-    const time = number(event.time, 0);
-    if (time < lastEvent) throw new Error("Events out of order");
-    lastEvent = time;
-    if (event.type === "targets")
-      return { time, type: "targets", value: targets(event.value, true) };
-    if (event.type === "gust") return { time, type: "gust" };
-    throw new Error("Invalid event");
-  });
-  let lastTime = -1;
-  const samples = value.samples.map((value) => {
-    const result = sample(value);
-    if (result.time <= lastTime) throw new Error("Samples out of order");
-    lastTime = result.time;
+  const events = Array.from(value.events, (input) => {
+    const result = event(input, sim);
+    if (result.time < lastEvent) throw new Error("Events out of order");
+    lastEvent = result.time;
     return result;
   });
+  let lastTime = -1,
+    eventIndex = 0,
+    route = setup.mission,
+    routeText = JSON.stringify(route);
+  const routeCache = new WeakMap();
+  const samples = Array.from(value.samples, (input) => {
+    object(input);
+    const time = number(input.time, 0, 1800.001);
+    if (time <= lastTime) throw new Error("Samples out of order");
+    while (
+      eventIndex < events.length &&
+      events[eventIndex].time <= time + 1e-8
+    ) {
+      if (events[eventIndex].type === "mission") {
+        route = events[eventIndex].value;
+        routeText = JSON.stringify(route);
+      }
+      eventIndex++;
+    }
+    const result = sample(input, route, routeText, routeCache);
+    lastTime = time;
+    return result;
+  });
+  if (lastEvent > lastTime + 1e-8)
+    throw new Error("Event occurs after the last sample");
   return {
     format: "flight-lab",
-    version: 1,
+    version: RECORDING_VERSION,
+    modelVersion: "0.2.0",
     createdAt: value.createdAt,
     config,
     scenario: value.scenario,
     dt: 0.005,
+    setup,
+    runtime: cleanRuntime,
     events,
     samples,
   };
+}
+export function recordingToJson(record) {
+  return JSON.stringify(validateRecording(record), (key, value) =>
+    key === "waypoints"
+      ? undefined
+      : key === "navigation"
+        ? { ...value, waypointCount: value.waypoints.length }
+        : value,
+  );
 }
 export function recordingToCsv(record) {
   const { samples } = validateRecording(record);
@@ -161,6 +423,26 @@ export function recordingToCsv(record) {
     "sample_age_s",
     "dropped_count",
     "steps_count",
+    "navigation_mode_code",
+    "battery_soc_fraction",
+    "battery_voltage_V",
+    "battery_current_A",
+    "battery_power_W",
+    "battery_used_Wh",
+    "battery_remaining_s",
+    "armed_boolean",
+    ...[1, 2, 3, 4].map((i) => `motor_${i}_efficiency_fraction`),
+    "link_lost_boolean",
+    "navigation_waypoint_index",
+    "fence_breached_boolean",
+    "training_course_code",
+    "training_elapsed_s",
+    "training_passed_count",
+    "training_total_count",
+    "training_misses_count",
+    "training_complete_boolean",
+    "training_score_points",
+    "training_hold_s",
   ];
   const rows = samples.map((s) =>
     [
@@ -186,6 +468,26 @@ export function recordingToCsv(record) {
       s.metrics.sampleAge,
       s.metrics.dropped,
       s.metrics.steps,
+      MODES.indexOf(s.navigation.mode),
+      s.battery.soc,
+      s.battery.voltage,
+      s.battery.current,
+      s.battery.power,
+      s.battery.usedWh,
+      s.battery.remainingSeconds,
+      Number(s.armed),
+      ...s.faults.motorEfficiency,
+      Number(s.faults.linkLost),
+      s.navigation.index,
+      Number(s.navigation.fenceBreached),
+      COURSES.indexOf(s.training.course),
+      s.training.elapsed,
+      s.training.passed,
+      s.training.total,
+      s.training.misses,
+      Number(s.training.complete),
+      s.training.score,
+      s.training.holdSeconds,
     ].join(","),
   );
   return [header.join(","), ...rows].join("\n");

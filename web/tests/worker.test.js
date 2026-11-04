@@ -35,6 +35,33 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   let reply = next((d) => d.type === "state" && d.message === "reset");
   worker.postMessage({ type: "reset", config: { seed: 18 }, scenario: "step" });
   await reply;
+  reply = next(
+    (d) => d.type === "state" && d.snapshot.navigation.waypoints.length === 1,
+  );
+  worker.postMessage({
+    type: "mission",
+    value: [{ north: 2, east: 0, altitude: 2, hold: 1 }],
+  });
+  await reply;
+  reply = next(
+    (d) => d.type === "state" && d.snapshot.navigation.mode === "mission",
+  );
+  worker.postMessage({ type: "mode", value: "mission" });
+  await reply;
+  reply = next(
+    (d) => d.type === "state" && d.snapshot.training.course === "hover",
+  );
+  worker.postMessage({ type: "training", value: "hover" });
+  await reply;
+  reply = next(
+    (d) => d.type === "state" && d.setup.environment.preset === "field",
+  );
+  worker.postMessage({
+    type: "environment",
+    value: { preset: "field", timeOfDay: 18, fog: 0.2, rain: 0.1 },
+  });
+  await reply;
+  worker.postMessage({ type: "render", value: false });
   reply = next((d) => d.type === "state" && d.snapshot.time >= 0.15);
   worker.postMessage({ type: "play" });
   const active = await reply;
@@ -49,6 +76,17 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   const record = validateRecording(exported.recording);
   assert.equal(record.config.seed, 18);
   assert.equal(record.scenario, "step");
+  assert.equal(record.version, 2);
+  assert.equal(record.samples[0].navigation.waypoints.length, 1);
+  assert.equal(record.samples[0].navigation.mode, "mission");
+  assert.equal(record.samples[0].training.course, "hover");
+  assert.equal(record.runtime.renderEnabled, false);
+  assert.ok(record.samples.at(-1).battery.usedWh > 0);
+  assert.ok(
+    record.events.some(
+      (e) => e.type === "environment" && e.value.preset === "field",
+    ),
+  );
   assert.equal(record.samples[0].time, 0);
   assert.ok(record.samples.at(-1).time <= paused.snapshot.time);
   assert.equal(record.samples.at(-1).time, paused.snapshot.time);
@@ -60,6 +98,16 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   reply = next((d) => d.type === "error");
   worker.postMessage({ type: "targets", value: { roll: Infinity } });
   assert.match((await reply).message, /roll/);
+  reply = next((d) => d.type === "state" && d.message === "reset");
+  worker.postMessage({
+    type: "reset",
+    config: { geofenceRadius: 1 },
+    scenario: "hover",
+  });
+  const reset = await reply;
+  assert.equal(reset.snapshot.navigation.mode, "attitude");
+  assert.equal(reset.snapshot.navigation.waypoints.length, 0);
+  assert.equal(reset.setup.environment.preset, "field");
 });
 
 test(

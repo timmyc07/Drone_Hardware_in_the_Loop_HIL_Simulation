@@ -162,6 +162,152 @@ export function createScene(container) {
   );
   trail.frustumCulled = false;
   scene.add(trail);
+  const environment = new THREE.Group();
+  const obstacles = new THREE.Group();
+  const mission = new THREE.Group();
+  const gates = new THREE.Group();
+  scene.add(environment, obstacles, mission, gates);
+  const clear = (group) => {
+    while (group.children.length) {
+      const child = group.children[0];
+      group.remove(child);
+      child.traverse((item) => {
+        item.geometry?.dispose();
+        const materials = Array.isArray(item.material)
+          ? item.material
+          : [item.material];
+        materials.forEach((mat) => {
+          mat?.map?.dispose();
+          mat?.dispose();
+        });
+      });
+    }
+  };
+  let rain = null;
+  function setEnvironment({
+    preset = "lab",
+    timeOfDay = 12,
+    fog = 0,
+    rain: rainAmount = 0,
+  }) {
+    clear(environment);
+    const daylight = Math.max(0.12, Math.sin(((timeOfDay - 6) * Math.PI) / 12));
+    const sky = new THREE.Color(
+      preset === "field" ? 0x799cab : 0x253c50,
+    ).multiplyScalar(0.28 + daylight * 0.72);
+    scene.background = sky;
+    scene.fog = new THREE.Fog(sky, 20 - fog * 17, 65 - fog * 48);
+    key.intensity = 0.5 + daylight * 2.3;
+    fill.intensity = 0.7 + (1 - daylight) * 0.9;
+    if (preset === "field") {
+      const ground = new THREE.Mesh(
+        new THREE.PlaneGeometry(100, 100),
+        material(0x364e43, 0, 1),
+      );
+      ground.rotation.x = -Math.PI / 2;
+      ground.position.y = -0.03;
+      environment.add(ground);
+      for (let i = 0; i < 20; i++) {
+        const tree = new THREE.Mesh(
+          new THREE.ConeGeometry(0.7 + (i % 3) * 0.2, 3, 7),
+          material(0x28483d, 0, 1),
+        );
+        const angle = (i * Math.PI * 2) / 20;
+        tree.position.set(Math.cos(angle) * 18, 1.5, Math.sin(angle) * 18);
+        environment.add(tree);
+      }
+    } else if (preset === "warehouse") {
+      for (let i = -2; i <= 2; i++) {
+        for (const x of [-10, 10])
+          box(
+            environment,
+            [0.3, 7, 0.3],
+            [x, 3.5, i * 8],
+            material(0x526273, 0.5),
+          );
+        box(
+          environment,
+          [20, 0.25, 0.25],
+          [0, 7, i * 8],
+          material(0x526273, 0.5),
+        );
+      }
+    }
+    rain = null;
+    if (rainAmount > 0) {
+      const positions = new Float32Array(
+        Math.ceil(400 * Math.min(1, rainAmount)) * 3,
+      );
+      for (let i = 0; i < positions.length; i += 3) {
+        positions[i] = Math.random() * 30 - 15;
+        positions[i + 1] = Math.random() * 14;
+        positions[i + 2] = Math.random() * 30 - 15;
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute(
+        "position",
+        new THREE.BufferAttribute(positions, 3),
+      );
+      rain = new THREE.Points(
+        geometry,
+        new THREE.PointsMaterial({
+          color: 0xa9d9e9,
+          size: 0.055,
+          transparent: true,
+          opacity: 0.65,
+        }),
+      );
+      environment.add(rain);
+    }
+  }
+  function setObstacles(items) {
+    clear(obstacles);
+    for (const item of items.slice(0, 100)) {
+      box(
+        obstacles,
+        [item.depth, item.height, item.width],
+        [item.east, item.height / 2, -item.north],
+        material(0x9b765b, 0.2, 0.75),
+      );
+    }
+  }
+  function setMission(waypoints) {
+    clear(mission);
+    const points = waypoints
+      .slice(0, 200)
+      .map(
+        (point) => new THREE.Vector3(point.east, point.altitude, -point.north),
+      );
+    if (points.length > 1)
+      mission.add(
+        new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints(points),
+          new THREE.LineBasicMaterial({ color: 0xffbf78 }),
+        ),
+      );
+    for (const point of points) {
+      const marker = new THREE.Mesh(
+        new THREE.SphereGeometry(0.12, 12, 8),
+        new THREE.MeshBasicMaterial({ color: 0xffbf78 }),
+      );
+      marker.position.copy(point);
+      marker.userData.waypoint = true;
+      mission.add(marker);
+    }
+  }
+  function setGates(items) {
+    clear(gates);
+    for (const item of items.slice(0, 100)) {
+      const gate = new THREE.Mesh(
+        new THREE.TorusGeometry(item.radius, 0.045, 8, 64),
+        new THREE.MeshBasicMaterial({ color: 0x5edbd5 }),
+      );
+      gate.position.set(item.east, item.altitude, -item.north);
+      gate.rotation.y = -item.yaw;
+      gates.add(gate);
+    }
+  }
+  setEnvironment({});
   let count = 0;
   let lastTime = -Infinity;
   let mode = "orbit";
@@ -169,6 +315,7 @@ export function createScene(container) {
   const target = new THREE.Vector3(0, 2, 0);
   const previousTarget = target.clone();
   function resetView() {
+    if (mode === "fpv") return;
     controls.target.copy(target);
     camera.position
       .copy(target)
@@ -224,9 +371,33 @@ export function createScene(container) {
         camera.position.add(delta);
         controls.target.add(delta);
       }
+      if (mode === "fpv") {
+        camera.position.copy(target);
+        camera.quaternion.copy(drone.quaternion);
+      }
+      const markers = mission.children.filter((item) => item.userData.waypoint);
+      markers.forEach((item, i) =>
+        item.material.color.setHex(
+          i === snapshot.navigation?.index ? 0xffffff : 0xffbf78,
+        ),
+      );
+      gates.children.forEach((item, i) =>
+        item.material.color.setHex(
+          snapshot.training?.nextGate && i === snapshot.training.passed
+            ? 0xffb46c
+            : 0x5edbd5,
+        ),
+      );
+      if (rain && wallDt > 0) {
+        const positions = rain.geometry.attributes.position;
+        for (let i = 1; i < positions.array.length; i += 3)
+          positions.array[i] = (positions.array[i] - wallDt * 8 + 14) % 14;
+        positions.needsUpdate = true;
+        rain.position.set(target.x, 0, target.z);
+      }
       previousTarget.copy(target);
       if (visible) {
-        controls.update();
+        if (mode !== "fpv") controls.update();
         renderer.render(scene, camera);
       }
     },
@@ -237,9 +408,17 @@ export function createScene(container) {
     },
     setCamera(value) {
       mode = value;
+      controls.enabled = value !== "fpv";
+      drone.visible = value !== "fpv";
+      camera.fov = value === "fpv" ? 90 : 42;
+      camera.updateProjectionMatrix();
       resetView();
     },
     resetView,
+    setEnvironment,
+    setObstacles,
+    setMission,
+    setGates,
     dispose() {
       observer.disconnect();
       controls.dispose();
