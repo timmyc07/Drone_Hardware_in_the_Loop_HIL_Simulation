@@ -1,3 +1,4 @@
+import { AIRFRAMES, rotorCount } from "../rotor-geometry.js";
 import { DEFAULT_SCENE } from "../scene-data.js";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -7,6 +8,7 @@ import { createTrainer } from "../training.js";
 import { DEFAULT_GIMBAL_SETTINGS } from "../gimbal.js";
 import {
   RECORDING_VERSION,
+  MODEL_VERSION,
   validateSetup,
   validateRecording,
   recordingToCsv,
@@ -30,7 +32,7 @@ function record(airframe = "quadrotor", overrides = {}) {
   return {
     format: "flight-lab",
     version: RECORDING_VERSION,
-    modelVersion: "0.5.0",
+    modelVersion: MODEL_VERSION,
     createdAt: "2026-11-04T00:00:00.000Z",
     config,
     scenario: "hover",
@@ -49,7 +51,7 @@ function record(airframe = "quadrotor", overrides = {}) {
     sensorFrames: [sensors.update(first), sensors.update(last)],
   };
 }
-test("v8 round trip preserves multi-layer scans and exports 144 telemetry CSV columns", () => {
+test("v9 round trip preserves multi-layer scans and exports 157 telemetry CSV columns", () => {
   const input = record(),
     result = validateRecording(JSON.parse(JSON.stringify(input)));
   assert.deepEqual(result, JSON.parse(JSON.stringify(input)));
@@ -58,7 +60,7 @@ test("v8 round trip preserves multi-layer scans and exports 144 telemetry CSV co
     .map((row) => row.split(","));
   assert.equal(rows.length, 3);
   assert.equal(rows[0].length, rows[1].length);
-  assert.equal(rows[0].length, 144);
+  assert.equal(rows[0].length, 157);
   assert.equal(rows[0][44], "steps_count");
   for (const name of [
     "north_m",
@@ -347,7 +349,7 @@ test("sensor frames require exact parallel times and reject future/regressing ac
   for (const version of [1, 2, 3, 4, 5]) {
     const legacy = record();
     legacy.version = version;
-    assert.throws(() => validateRecording(legacy), /version 8 required/);
+    assert.throws(() => validateRecording(legacy), /version 9 required/);
   }
 });
 test("no-return and startup measurements retain explicit nulls and produce empty CSV sensor cells", () => {
@@ -429,10 +431,55 @@ test("sensor config/fault history validates different lidar dimensions and prese
   assert.throws(() => validateRecording(config));
 });
 
-test("all airframes preserve propulsion, surfaces and flight data in schema 8 JSON and CSV", () => {
-  for (const airframe of ["quadrotor", "fixedwing", "vtol"]) {
+test("rotor arrays follow the selected frame and inactive CSV channels remain empty", () => {
+  for (const airframe of AIRFRAMES) {
+    const input = record(airframe),
+      n = rotorCount(airframe);
+    const result = validateRecording(JSON.parse(recordingToJson(input)));
+    assert.equal(result.samples[1].motors.length, n);
+    assert.deepEqual(result.samples[1].motors, input.samples[1].motors);
+    const [header, row] = recordingToCsv(input)
+      .split("\n")
+      .map((s) => s.split(","));
+    assert.equal(row[header.indexOf("lift_motor_channel_count")], String(n));
+    for (let i = 5; i <= 8; i++) {
+      for (const [key, array] of [
+        [`motor_${i}_normalized`, input.samples[0].motors],
+        [`pwm_${i}_us`, input.samples[0].pwm],
+        [
+          `motor_${i}_efficiency_fraction`,
+          input.samples[0].faults.motorEfficiency,
+        ],
+      ])
+        assert.equal(
+          row[header.indexOf(key)],
+          i <= n ? String(array[i - 1]) : "",
+        );
+    }
+    for (const mutate of [
+      (s) => s.motors.pop(),
+      (s) => s.pwm.push(1000),
+      (s) => s.faults.motorEfficiency.pop(),
+      (s) => (s.motors[n - 1] = NaN),
+    ]) {
+      const bad = structuredClone(input);
+      mutate(bad.samples[0]);
+      assert.throws(() => validateRecording(bad));
+    }
+    input.events.push({
+      time: 0,
+      type: "fault",
+      fault: "motor",
+      value: { index: n, efficiency: 0 },
+    });
+    assert.throws(() => validateRecording(input));
+  }
+});
+
+test("all airframes preserve propulsion, surfaces and flight data in schema 9 JSON and CSV", () => {
+  for (const airframe of AIRFRAMES) {
     const input = record(airframe);
-    if (airframe !== "quadrotor")
+    if (["fixedwing", "vtol"].includes(airframe))
       input.events.push({
         time: 0,
         type: "fault",
@@ -457,10 +504,10 @@ test("all airframes preserve propulsion, surfaces and flight data in schema 8 JS
     const [header, row] = recordingToCsv(input)
       .split("\n")
       .map((line) => line.split(","));
-    assert.equal(header.length, 144);
+    assert.equal(header.length, 157);
     assert.equal(
       row[header.indexOf("airframe_code")],
-      String(["quadrotor", "fixedwing", "vtol"].indexOf(airframe)),
+      String(AIRFRAMES.indexOf(airframe)),
     );
     assert.equal(
       Number(row[header.indexOf("airspeed_m_s")]),
@@ -468,13 +515,13 @@ test("all airframes preserve propulsion, surfaces and flight data in schema 8 JS
     );
     assert.ok(
       row
-        .slice(98)
+        .slice(98, 144)
         .every((cell) => cell !== "" && Number.isFinite(Number(cell))),
     );
   }
 });
 
-test("schema 8 rejects mismatched airframes, malformed flight state and invalid transition or propulsion faults", () => {
+test("schema 9 rejects mismatched airframes, malformed flight state and invalid transition or propulsion faults", () => {
   const mutations = [
     (r) => (r.samples[0].airframe = "fixedwing"),
     (r) => delete r.samples[0].flight,
@@ -553,7 +600,7 @@ test("ground-start runway takeoff and abort history round trip with exact phase 
   const [header, ...rows] = recordingToCsv(input)
     .split("\n")
     .map((line) => line.split(","));
-  assert.equal(header.length, 144);
+  assert.equal(header.length, 157);
   const phase = header.indexOf("takeoff_phase_code"),
     brake = header.indexOf("wheel_brake_fraction");
   assert.ok(rows.some((row) => row[phase] === "6"));
@@ -622,6 +669,6 @@ test("scene epochs select immutable custom gate sources and reject forged totals
     mutate(bad);
     assert.throws(() => validateRecording(bad));
   }
-  for (const version of [1, 2, 3, 4, 5, 6, 7])
-    assert.throws(() => validateRecording({ ...input, version }), /version 8/);
+  for (const version of [1, 2, 3, 4, 5, 6, 7, 8])
+    assert.throws(() => validateRecording({ ...input, version }), /version 9/);
 });

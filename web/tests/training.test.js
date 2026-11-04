@@ -1,6 +1,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createTrainer } from "../training.js";
+import { createSimulation } from "../sim.js";
+import { AIRFRAMES } from "../rotor-geometry.js";
+
+test("six and eight rotor aircraft complete hover training and preserve course restrictions", async () => {
+  const { isCourseSupported } = await import("../training.js");
+  for (const airframe of ["hexarotor", "octorotor"]) {
+    for (const course of [
+      "free",
+      "hover",
+      "gates",
+      "landing",
+      "circuit",
+      "custom",
+    ])
+      assert.equal(isCourseSupported(course, airframe), true);
+    assert.equal(isCourseSupported("runway", airframe), false);
+    const sim = createSimulation({ airframe }),
+      trainer = createTrainer("hover", airframe);
+    trainer.update(sim.snapshot());
+    let state;
+    for (let i = 0; i < 2200; i++) state = trainer.update(sim.step());
+    assert.equal(state.complete, true);
+    assert.equal(state.reason, "");
+  }
+  assert.equal(AIRFRAMES.length, 5);
+});
 
 const sample = (time, position = [0, 0, -2], extra = {}) => ({
   time,

@@ -12,7 +12,7 @@ test("API sends the documented commands and copies input and output", async () =
     },
     () => () => {},
   );
-  assert.equal(api.version, "1.6");
+  assert.equal(api.version, "1.7");
   assert.ok(Object.isFrozen(api));
   const targets = { roll: 1 };
   const pending = api.setTargets(targets);

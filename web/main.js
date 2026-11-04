@@ -1,4 +1,5 @@
 import { DEFAULT_CONFIG, AIRFRAME_PRESETS, validateConfig } from "./sim.js";
+import { MULTIROTOR_AIRFRAMES } from "./rotor-geometry.js";
 import { createScene } from "./scene.js";
 import {
   validateRecording,
@@ -293,12 +294,29 @@ for (const t of targets) {
   });
 }
 
-$("motor-bars").innerHTML = [1, 2, 3, 4]
-  .map(
-    (i) =>
-      `<div class="motor-row"><span class="motor-name">M${i}</span><div class="motor-track"><div id="motor-${i}" class="motor-fill"></div></div><span class="motor-reading"><span id="pwm-${i}">—</span> <small id="motor-unit-${i}">µs</small></span></div>`,
-  )
-  .join("");
+let displayedMotorLayout = "";
+function updateMotorLayout(snapshot) {
+  const kind = snapshot.airframe;
+  const count = kind === "fixedwing" ? 0 : snapshot.motors.length;
+  const key = `${kind}:${count}`;
+  if (displayedMotorLayout === key) return;
+  displayedMotorLayout = key;
+  $("motor-bars").innerHTML = Array.from(
+    { length: count },
+    (_, i) =>
+      `<div class="motor-row"><span class="motor-name">M${i + 1}</span><div class="motor-track"><div id="motor-${i + 1}" class="motor-fill"></div></div><span class="motor-reading"><span id="pwm-${i + 1}">—</span> <small id="motor-unit-${i + 1}">µs</small></span></div>`,
+  ).join("");
+  const select = $("fault-motor"),
+    previous = select.value;
+  select.replaceChildren(
+    ...Array.from(
+      { length: count },
+      (_, i) => new Option(`M${i + 1}`, String(i)),
+    ),
+  );
+  if ([...select.options].some((option) => option.value === previous))
+    select.value = previous;
+}
 
 const groups = [
   [
@@ -756,8 +774,11 @@ worker.onmessage = ({ data }) => {
     clearCameraPreview();
     config = data.config;
     scenario = data.scenario;
-    $("position-altitude").value =
-      config.airframe === "quadrotor" ? 3 : Math.min(30, config.geofenceHeight);
+    $("position-altitude").value = MULTIROTOR_AIRFRAMES.includes(
+      config.airframe,
+    )
+      ? 3
+      : Math.min(30, config.geofenceHeight);
     exportedTime = 0;
     $("target-roll").disabled = scenario === "step";
     document.querySelector(".control-hint").textContent =
@@ -840,7 +861,8 @@ function updateTelemetry() {
     ...s.position.slice(0, 2),
   ).toFixed(2);
   $("rmse-value").textContent = (s.metrics.rmse * DEG).toFixed(2);
-  for (let i = 0; i < 4; i++) {
+  updateMotorLayout(s);
+  for (let i = 0; i < (s.airframe === "fixedwing" ? 0 : s.motors.length); i++) {
     const command = s.externalInput?.rotorSpeedCommands?.[i];
     $(`motor-${i + 1}`).style.width =
       `${externalActive ? (command ?? 0) * 100 : s.motors[i] * 100}%`;
@@ -853,7 +875,7 @@ function updateTelemetry() {
   }
   $("motor-note").textContent = externalActive
     ? `${hilControllerName()} 馬達通道映射後的正規化轉速指令；模型映射與參數見介接紀錄。`
-    : "固定翼不使用升力旋翼；PWM 為模型換算值，未連接實體飛控。";
+    : "3D 機體為示意；固定翼不使用升力旋翼，PWM 為模型換算值。";
   $("age-label").textContent = externalActive ? "馬達資料齡期" : "感測資料齡期";
   $("drop-label").textContent = externalActive ? "協定錯誤" : "模擬丟包";
   $("rtf-value").textContent = replay
@@ -881,14 +903,16 @@ function updateTelemetry() {
     ? "—"
     : sampleCount.toLocaleString();
   const kind = s.airframe;
-  const wing = kind !== "quadrotor";
+  const wing = kind === "fixedwing" || kind === "vtol";
   $("airframe-eyebrow").textContent = {
     quadrotor: "QUADROTOR",
+    hexarotor: "HEXAROTOR",
+    octorotor: "OCTOROTOR",
     fixedwing: "FIXED WING",
     vtol: "LIFT+CRUISE VTOL",
   }[kind];
   $("airframe-status").textContent =
-    `機型：${{ quadrotor: "四旋翼", fixedwing: "固定翼", vtol: "升力加巡航 VTOL" }[kind] || "未知"}`;
+    `機型：${{ quadrotor: "四旋翼", hexarotor: "六旋翼", octorotor: "八旋翼", fixedwing: "固定翼", vtol: "升力加巡航 VTOL" }[kind] || "未知"}`;
   const f = s.flight,
     p = s.propulsion,
     surfaces = s.controlSurfaces;
@@ -1150,10 +1174,14 @@ const mapExtent = () =>
         ? hilState.mission.limits.radius
         : config.geofenceRadius,
     ),
-    externalActive ? 500 : config.airframe === "quadrotor" ? 50 : 500,
+    externalActive
+      ? 500
+      : MULTIROTOR_AIRFRAMES.includes(config.airframe)
+        ? 50
+        : 500,
   );
 const squareMission = () => {
-  const wing = config.airframe !== "quadrotor";
+  const wing = !MULTIROTOR_AIRFRAMES.includes(config.airframe);
   const side = wing
     ? Math.min(60, (config.geofenceRadius / Math.SQRT2) * 0.9)
     : 8;
@@ -2254,7 +2282,7 @@ function showCameraFrame(frame) {
   const pose = frame.pose,
     intrinsics = frame.intrinsics;
   $("camera-metadata").textContent =
-    `影格機型 ${{ quadrotor: "四旋翼", fixedwing: "固定翼", vtol: "VTOL" }[frame.airframe]} · 模擬時間 ${frame.time.toFixed(3)} s · NED 位置 ${pose.positionNed.map((v) => v.toFixed(2)).join(" / ")} m · 機體四元數 ${pose.bodyQuaternionWxyz.map((v) => v.toFixed(3)).join(" / ")} · 拍攝時雲台偏航 / 俯仰 / 橫滾 ${["yaw", "pitch", "roll"].map((axis) => (frame.gimbal.actual[axis] * DEG).toFixed(1)).join(" / ")}° · 焦距 fx/fy ${intrinsics.fx.toFixed(1)} / ${intrinsics.fy.toFixed(1)} px · 主點 cx/cy ${intrinsics.cx.toFixed(1)} / ${intrinsics.cy.toFixed(1)} px · 水平視角 ${intrinsics.horizontalFovDeg.toFixed(1)}° · 景深範圍 ${frame.nearM.toFixed(2)}–${frame.farM.toFixed(1)} m`;
+    `影格機型 ${{ quadrotor: "四旋翼", hexarotor: "六旋翼", octorotor: "八旋翼", fixedwing: "固定翼", vtol: "VTOL" }[frame.airframe]} · 模擬時間 ${frame.time.toFixed(3)} s · NED 位置 ${pose.positionNed.map((v) => v.toFixed(2)).join(" / ")} m · 機體四元數 ${pose.bodyQuaternionWxyz.map((v) => v.toFixed(3)).join(" / ")} · 拍攝時雲台偏航 / 俯仰 / 橫滾 ${["yaw", "pitch", "roll"].map((axis) => (frame.gimbal.actual[axis] * DEG).toFixed(1)).join(" / ")}° · 焦距 fx/fy ${intrinsics.fx.toFixed(1)} / ${intrinsics.fy.toFixed(1)} px · 主點 cx/cy ${intrinsics.cx.toFixed(1)} / ${intrinsics.cy.toFixed(1)} px · 水平視角 ${intrinsics.horizontalFovDeg.toFixed(1)}° · 景深範圍 ${frame.nearM.toFixed(2)}–${frame.farM.toFixed(1)} m`;
   updateCameraStatus();
 }
 async function captureCameraFrame() {

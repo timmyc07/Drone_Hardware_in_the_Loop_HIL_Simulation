@@ -1,3 +1,5 @@
+import { AIRFRAMES, MULTIROTOR_AIRFRAMES } from "./rotor-geometry.js";
+
 const deepFreeze = (value) => {
   Object.freeze(value);
   for (const item of Object.values(value))
@@ -7,13 +9,17 @@ const deepFreeze = (value) => {
 export const TRAINING_COURSES = deepFreeze({
   free: {
     title: "自由飛行",
-    airframes: ["quadrotor", "fixedwing", "vtol"],
+    airframes: AIRFRAMES,
     gates: [],
   },
-  hover: { title: "定點懸停", airframes: ["quadrotor", "vtol"], gates: [] },
+  hover: {
+    title: "定點懸停",
+    airframes: [...MULTIROTOR_AIRFRAMES, "vtol"],
+    gates: [],
+  },
   gates: {
     title: "四門航線",
-    airframes: ["quadrotor", "vtol"],
+    airframes: [...MULTIROTOR_AIRFRAMES, "vtol"],
     gates: [
       { north: 8, east: 0, altitude: 2, yaw: 0, radius: 1.5 },
       { north: 8, east: 8, altitude: 2, yaw: Math.PI / 2, radius: 1.5 },
@@ -21,11 +27,15 @@ export const TRAINING_COURSES = deepFreeze({
       { north: 0, east: 0, altitude: 2, yaw: -Math.PI / 2, radius: 1.5 },
     ],
   },
-  landing: { title: "精準降落", airframes: ["quadrotor", "vtol"], gates: [] },
+  landing: {
+    title: "精準降落",
+    airframes: [...MULTIROTOR_AIRFRAMES, "vtol"],
+    gates: [],
+  },
   runway: { title: "跑道起降循環", airframes: ["fixedwing"], gates: [] },
   circuit: {
     title: "巡航航線",
-    airframes: ["quadrotor", "fixedwing", "vtol"],
+    airframes: AIRFRAMES,
     gates: [
       { north: 100, east: 0, altitude: 30, yaw: 0, radius: 20 },
       { north: 100, east: 120, altitude: 30, yaw: Math.PI / 2, radius: 20 },
@@ -38,7 +48,7 @@ export const TRAINING_COURSES = deepFreeze({
 export function isCourseSupported(course, airframe) {
   return (
     typeof course === "string" &&
-    ["quadrotor", "fixedwing", "vtol"].includes(airframe) &&
+    AIRFRAMES.includes(airframe) &&
     (course === "custom" ||
       (Object.hasOwn(TRAINING_COURSES, course) &&
         TRAINING_COURSES[course].airframes.includes(airframe)))

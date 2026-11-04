@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { lidarPoints, MAX_LIDAR_POINTS } from "./sensors.js";
-import { RUNWAY } from "./sim.js";
+import { getRotorLayout, MULTIROTOR_AIRFRAMES } from "./rotor-geometry.js";
+import { AIRFRAME_PRESETS, RUNWAY } from "./sim.js";
 import { createCameraRenderer } from "./camera-renderer.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
@@ -121,46 +122,52 @@ export function createScene(container) {
     );
     head.rotation.y = (side * Math.PI) / 4;
   }
-  const quad = new THREE.Group();
-  drone.add(quad);
-  box(quad, [0.29, 0.085, 0.34], [0, 0, 0], dark);
-  box(quad, [0.23, 0.055, 0.27], [0, 0.065, 0], shell);
-  box(quad, [0.12, 0.012, 0.16], [0, 0.1, -0.015], black);
-  box(quad, [0.1, 0.015, 0.025], [0, 0.11, -0.06], teal);
-  const rotors = [];
-  const arm = 0.23;
-  for (const [x, z] of [
-    [arm, -arm],
-    [arm, arm],
-    [-arm, arm],
-    [-arm, -arm],
-  ]) {
-    const beam = box(
-      quad,
-      [0.075, 0.045, Math.hypot(x, z)],
-      [x / 2, 0, z / 2],
-      shell,
-    );
-    beam.rotation.y = Math.atan2(x, z);
-    cylinder(quad, 0.047, 0.045, [x, 0.033, z], dark);
-    cylinder(quad, 0.036, 0.015, [x, 0.063, z], x > 0 ? teal : orange);
-    const rotor = new THREE.Group();
-    rotor.position.set(x, 0.079, z);
-    box(rotor, [0.028, 0.008, 0.31], [0, 0, 0], rotorMaterial);
-    cylinder(rotor, 0.017, 0.014, [0, 0.006, 0], black);
-    quad.add(rotor);
-    rotors.push(rotor);
+  function multirotor(kind) {
+    const quad = new THREE.Group();
+    drone.add(quad);
+    box(quad, [0.29, 0.085, 0.34], [0, 0, 0], dark);
+    box(quad, [0.23, 0.055, 0.27], [0, 0.065, 0], shell);
+    box(quad, [0.12, 0.012, 0.16], [0, 0.1, -0.015], black);
+    box(quad, [0.1, 0.015, 0.025], [0, 0.11, -0.06], teal);
+    const rotors = [];
+    const visualArm =
+      kind === "quadrotor" ? 0.325 : AIRFRAME_PRESETS[kind].arm * Math.SQRT2;
+    for (const motor of getRotorLayout(kind, visualArm)) {
+      const x = motor.positionFrd[1],
+        z = -motor.positionFrd[0];
+      const beam = box(
+        quad,
+        [0.075, 0.045, Math.hypot(x, z)],
+        [x / 2, 0, z / 2],
+        shell,
+      );
+      beam.rotation.y = Math.atan2(x, z);
+      cylinder(quad, 0.047, 0.045, [x, 0.033, z], dark);
+      cylinder(quad, 0.036, 0.015, [x, 0.063, z], x > 0 ? teal : orange);
+      const rotor = new THREE.Group();
+      rotor.position.set(x, 0.079, z);
+      box(rotor, [0.028, 0.008, 0.31], [0, 0, 0], rotorMaterial);
+      cylinder(rotor, 0.017, 0.014, [0, 0.006, 0], black);
+      quad.add(rotor);
+      rotors.push({ rotor, motor });
+    }
+    for (const x of [-0.12, 0.12]) {
+      box(quad, [0.022, 0.15, 0.022], [x, -0.095, 0.09], dark).rotation.z =
+        x > 0 ? -0.15 : 0.15;
+      box(quad, [0.022, 0.15, 0.022], [x, -0.095, -0.09], dark).rotation.z =
+        x > 0 ? -0.15 : 0.15;
+      box(quad, [0.035, 0.022, 0.29], [x * 1.1, -0.17, 0], black);
+    }
+    box(quad, [0.105, 0.075, 0.06], [0, -0.025, -0.2], black);
+    const lens = cylinder(quad, 0.027, 0.015, [0, -0.025, -0.237], teal);
+    lens.rotation.x = Math.PI / 2;
+
+    quad.visible = kind === "quadrotor";
+    return { aircraft: quad, rotors };
   }
-  for (const x of [-0.12, 0.12]) {
-    box(quad, [0.022, 0.15, 0.022], [x, -0.095, 0.09], dark).rotation.z =
-      x > 0 ? -0.15 : 0.15;
-    box(quad, [0.022, 0.15, 0.022], [x, -0.095, -0.09], dark).rotation.z =
-      x > 0 ? -0.15 : 0.15;
-    box(quad, [0.035, 0.022, 0.29], [x * 1.1, -0.17, 0], black);
-  }
-  box(quad, [0.105, 0.075, 0.06], [0, -0.025, -0.2], black);
-  const lens = cylinder(quad, 0.027, 0.015, [0, -0.025, -0.237], teal);
-  lens.rotation.x = Math.PI / 2;
+  const multirotors = Object.fromEntries(
+    MULTIROTOR_AIRFRAMES.map((kind) => [kind, multirotor(kind)]),
+  );
 
   function winged(liftRotors) {
     const aircraft = new THREE.Group();
@@ -193,20 +200,18 @@ export function createScene(container) {
     const rudder = box(aircraft, [0.03, 0.17, 0.08], [0, 0.23, 0.65], dark);
     const lift = [];
     if (liftRotors) {
-      for (const x of [-0.65, 0.65]) {
-        box(aircraft, [0.07, 0.06, 0.86], [x, 0.03, 0], dark);
-        for (const z of [-0.36, 0.36]) {
-          cylinder(aircraft, 0.06, 0.06, [x, 0.09, z], dark);
-          const rotor = new THREE.Group();
-          rotor.position.set(x, 0.13, z);
-          box(rotor, [0.035, 0.012, 0.48], [0, 0, 0], rotorMaterial);
-          aircraft.add(rotor);
-          lift.push({
-            rotor,
-            motorIndex: x > 0 ? (z < 0 ? 0 : 1) : z < 0 ? 3 : 2,
-          });
-          cylinder(aircraft, 0.025, 0.02, [x, 0.14, z], orange);
-        }
+      for (const x of [-0.5, 0.5])
+        box(aircraft, [0.07, 0.06, 1.1], [x, 0.03, 0], dark);
+      for (const motor of getRotorLayout("vtol", Math.SQRT2 * 0.5)) {
+        const x = motor.positionFrd[1],
+          z = -motor.positionFrd[0];
+        cylinder(aircraft, 0.06, 0.06, [x, 0.09, z], dark);
+        const rotor = new THREE.Group();
+        rotor.position.set(x, 0.13, z);
+        box(rotor, [0.035, 0.012, 0.48], [0, 0, 0], rotorMaterial);
+        aircraft.add(rotor);
+        lift.push({ rotor, motor });
+        cylinder(aircraft, 0.025, 0.02, [x, 0.14, z], orange);
       }
     }
     aircraft.visible = false;
@@ -216,7 +221,9 @@ export function createScene(container) {
   const fixedwing = winged(false);
   const vtol = winged(true);
   const airframes = {
-    quadrotor: quad,
+    quadrotor: multirotors.quadrotor.aircraft,
+    hexarotor: multirotors.hexarotor.aircraft,
+    octorotor: multirotors.octorotor.aircraft,
     fixedwing: fixedwing.aircraft,
     vtol: vtol.aircraft,
   };
@@ -495,9 +502,13 @@ export function createScene(container) {
       .copy(target)
       .add(
         mode === "top"
-          ? new THREE.Vector3(0.001, airframe === "quadrotor" ? 8 : 15, 0)
+          ? new THREE.Vector3(
+              0.001,
+              MULTIROTOR_AIRFRAMES.includes(airframe) ? 8 : 15,
+              0,
+            )
           : new THREE.Vector3(3, 2, 4).multiplyScalar(
-              airframe === "quadrotor" ? 1 : 2,
+              MULTIROTOR_AIRFRAMES.includes(airframe) ? 1 : 2,
             ),
       );
     controls.update();
@@ -546,14 +557,15 @@ export function createScene(container) {
         trailGeometry.attributes.position.needsUpdate = true;
         lastTime = snapshot.time;
       }
-      rotors.forEach((rotor, i) => {
-        rotor.rotation.y +=
-          (i % 2 ? -1 : 1) *
-          (snapshot.motors[i] || 0) *
-          Math.max(0, wallDt) *
-          90;
-      });
-      if (airframe !== "quadrotor") {
+      if (MULTIROTOR_AIRFRAMES.includes(airframe)) {
+        multirotors[airframe].rotors.forEach(({ rotor, motor }) => {
+          rotor.rotation.y +=
+            (motor.spin === "ccw" ? 1 : -1) *
+            snapshot.motors[motor.index] *
+            Math.max(0, wallDt) *
+            90;
+        });
+      } else {
         const model = airframe === "fixedwing" ? fixedwing : vtol;
         model.propeller.rotation.z +=
           (snapshot.propulsion?.motor || 0) * Math.max(0, wallDt) * 90;
@@ -564,10 +576,10 @@ export function createScene(container) {
           model.elevator.rotation.x = surfaces.elevator;
           model.rudder.rotation.y = surfaces.rudder;
         }
-        model.lift.forEach(({ rotor, motorIndex }) => {
+        model.lift.forEach(({ rotor, motor }) => {
           rotor.rotation.y +=
-            (motorIndex % 2 ? -1 : 1) *
-            (snapshot.motors[motorIndex] || 0) *
+            (motor.spin === "ccw" ? 1 : -1) *
+            snapshot.motors[motor.index] *
             Math.max(0, wallDt) *
             90;
         });

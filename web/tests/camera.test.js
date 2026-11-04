@@ -140,6 +140,17 @@ test("camera frame validation checks metadata, lengths, finite depth and exact c
     assert.throws(() => validateCameraFrame(input));
   }
 });
+test("camera datasets preserve six and eight rotor identity without changing optical axes", () => {
+  for (const airframe of ["hexarotor", "octorotor"]) {
+    const base = frame(),
+      expected = { ...base, airframe };
+    const restored = parseCameraDataset(cameraDatasetToJson([expected]))[0];
+    assert.equal(restored.airframe, airframe);
+    assert.deepEqual(restored.pose, base.pose);
+    assert.deepEqual(restored.rgbRgba, base.rgbRgba);
+  }
+});
+
 test("camera metadata uses the acquired joints while a commanded target is still moving", () => {
   const acquired = withAngles({ yaw: 0, pitch: 0 });
   acquired.gimbal.target.yaw = Math.PI / 2;

@@ -1,4 +1,5 @@
 import { gimbalRotation, validateGimbalState } from "./gimbal.js";
+import { AIRFRAMES } from "./rotor-geometry.js";
 
 export const DEFAULT_CAMERA_CONFIG = Object.freeze({
   width: 320,
@@ -122,7 +123,7 @@ export function cameraMetadata(snapshot, input = DEFAULT_CAMERA_CONFIG) {
     bodyQuaternionWxyz = vector(snapshot.quaternion, 4);
   if (Math.abs(Math.hypot(...bodyQuaternionWxyz) - 1) > 1e-5)
     throw new Error("Camera pose requires a unit quaternion");
-  if (!["quadrotor", "fixedwing", "vtol"].includes(snapshot.airframe))
+  if (!AIRFRAMES.includes(snapshot.airframe))
     throw new Error("Invalid camera airframe");
   const [w, x, y, z] = bodyQuaternionWxyz;
   const body = [

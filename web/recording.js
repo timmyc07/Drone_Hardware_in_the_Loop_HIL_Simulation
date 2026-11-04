@@ -2,15 +2,15 @@ import { createSimulation, validateConfig, bodyToNedAngles } from "./sim.js";
 import { DEFAULT_SENSOR_CONFIG, validateSensorConfig } from "./sensors.js";
 import { TRAINING_COURSES, resolveTrainingGates } from "./training.js";
 import { DEFAULT_SCENE, validateScene } from "./scene-data.js";
+import { AIRFRAMES, rotorCount } from "./rotor-geometry.js";
 import {
   DEFAULT_GIMBAL_SETTINGS,
   validateGimbalSettings,
   validateGimbalState,
 } from "./gimbal.js";
 
-export const RECORDING_VERSION = 8;
-export const MODEL_VERSION = "0.5.0";
-const AIRFRAMES = ["quadrotor", "fixedwing", "vtol"];
+export const RECORDING_VERSION = 9;
+export const MODEL_VERSION = "0.6.0";
 const MODES = ["attitude", "position", "mission", "rtl", "land", "takeoff"];
 const TAKEOFF_PHASES = [
   "idle",
@@ -270,8 +270,8 @@ function sample(
     gimbal,
     attitude,
     rates: vector(value.rates, 3),
-    motors: vector(value.motors, 4, 0, 1),
-    pwm: vector(value.pwm, 4, 1000, 2000),
+    motors: vector(value.motors, rotorCount(airframe), 0, 1),
+    pwm: vector(value.pwm, rotorCount(airframe), 1000, 2000),
     target: targets(value.target, false, true),
     imu: { accel: vector(imu.accel, 3), gyro: vector(imu.gyro, 3) },
     metrics: resultMetrics,
@@ -316,7 +316,12 @@ function sample(
       critical: boolean(battery.critical),
     },
     faults: {
-      motorEfficiency: vector(faults.motorEfficiency, 4, 0, 1),
+      motorEfficiency: vector(
+        faults.motorEfficiency,
+        rotorCount(airframe),
+        0,
+        1,
+      ),
       linkLost: boolean(faults.linkLost),
       pusherEfficiency: number(faults.pusherEfficiency, 0, 1),
     },
@@ -605,7 +610,7 @@ export function validateRecording(value) {
   object(value);
   if (value.version !== RECORDING_VERSION)
     throw new Error(
-      "Unsupported recording version: version 8 required; legacy recordings are not supported",
+      "Unsupported recording version: version 9 required; legacy recordings are not supported",
     );
   if (
     value.format !== "flight-lab" ||
@@ -859,6 +864,10 @@ export function recordingToCsv(record) {
       GIMBAL_AXES.map((axis) => `gimbal_${field}_${axis}_boolean`),
     ),
     "gimbal_tracking_error_rad",
+    "lift_motor_channel_count",
+    ...[5, 6, 7, 8].map((i) => `motor_${i}_normalized`),
+    ...[5, 6, 7, 8].map((i) => `pwm_${i}_us`),
+    ...[5, 6, 7, 8].map((i) => `motor_${i}_efficiency_fraction`),
   ];
   const rows = samples.map((s, index) =>
     [
@@ -868,8 +877,8 @@ export function recordingToCsv(record) {
       ...s.quaternion,
       ...s.attitude,
       ...s.rates,
-      ...s.motors,
-      ...s.pwm,
+      ...s.motors.slice(0, 4),
+      ...s.pwm.slice(0, 4),
       s.target.altitude,
       s.target.roll,
       s.target.pitch,
@@ -892,7 +901,7 @@ export function recordingToCsv(record) {
       s.battery.usedWh,
       s.battery.remainingSeconds,
       Number(s.armed),
-      ...s.faults.motorEfficiency,
+      ...s.faults.motorEfficiency.slice(0, 4),
       Number(s.faults.linkLost),
       s.navigation.index,
       Number(s.navigation.fenceBreached),
@@ -948,6 +957,10 @@ export function recordingToCsv(record) {
         GIMBAL_AXES.map((axis) => Number(s.gimbal[field][axis])),
       ),
       s.gimbal.trackingErrorRad,
+      s.motors.length,
+      ...[4, 5, 6, 7].map((i) => s.motors[i] ?? ""),
+      ...[4, 5, 6, 7].map((i) => s.pwm[i] ?? ""),
+      ...[4, 5, 6, 7].map((i) => s.faults.motorEfficiency[i] ?? ""),
     ].join(","),
   );
   return [header.join(","), ...rows].join("\n");

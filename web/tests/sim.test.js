@@ -1362,3 +1362,141 @@ test("gimbal motion never changes physics or controller noise and external SITL 
   externalAdvance(external, 0.1, [0.7, 0.7, 0.7, 0.7]);
   assert.deepEqual(external.snapshot().gimbal.actual, before.actual);
 });
+
+test("six and eight rotor presets hover with all real channels and track roll, pitch and yaw with correct signs", () => {
+  for (const airframe of ["hexarotor", "octorotor"]) {
+    const sim = createSimulation({ airframe }),
+      count = airframe === "hexarotor" ? 6 : 8;
+    let s = advance(sim, 20);
+    near(s.position[2], -2, 1e-8);
+    assert.equal(s.motors.length, count);
+    assert.equal(s.pwm.length, count);
+    assert.equal(s.faults.motorEfficiency.length, count);
+    assert.equal(s.flight.liftN, 0);
+    assert.equal(s.propulsion.thrustN, 0);
+    near(
+      s.battery.power,
+      DEFAULT_CONFIG.batteryBasePower +
+        DEFAULT_CONFIG.batteryMotorPower *
+          s.motors.reduce((sum, speed) => sum + speed ** 3, 0),
+      1e-8,
+    );
+    sim.setTargets({ roll: 0.15, pitch: -0.1, yawRate: 0.1 });
+    s = advance(sim, 12);
+    near(s.attitude[0], 0.15, 0.015);
+    near(s.attitude[1], -0.1, 0.015);
+    near(s.rates[2], 0.1, 0.025);
+    assert.ok(s.position[0] > 1);
+    assert.ok(s.position[1] > 1);
+    assert.ok(s.attitude[2] > 0.5);
+  }
+});
+
+test("six and eight rotor position navigation completes a mission then returns and lands with real motors", () => {
+  for (const airframe of ["hexarotor", "octorotor"]) {
+    const sim = createSimulation({ airframe, wind: 2, geofenceRadius: 300 });
+    sim.setMode("position");
+    let s = advance(sim, 15);
+    assert.ok(Math.hypot(s.position[0], s.position[1]) < 1);
+    near(s.position[2], -2, 0.1);
+    sim.setMission([
+      { north: 4, east: 3, altitude: 3, hold: 1 },
+      { north: -2, east: 4, altitude: 3, hold: 0.5 },
+    ]);
+    sim.setMode("mission");
+    s = advance(sim, 35);
+    assert.equal(s.navigation.completed, true);
+    assert.ok(Math.hypot(s.position[0] + 2, s.position[1] - 4) < 1);
+    sim.setMode("rtl");
+    s = advance(sim, 55);
+    assert.equal(s.status, "landed");
+    assert.equal(s.armed, false);
+    assert.ok(Math.hypot(s.position[0], s.position[1]) < 1);
+    assert.ok(s.motors.every((v) => v < 1e-8));
+  }
+});
+
+test("each new rotor fault produces the geometry-predicted physical torque without fault-aware command reallocation", () => {
+  for (const airframe of ["hexarotor", "octorotor"]) {
+    const count = airframe === "hexarotor" ? 6 : 8,
+      offset = airframe === "hexarotor" ? Math.PI / 6 : Math.PI / 8;
+    for (let index = 0; index < count; index++) {
+      const sim = createSimulation({
+        airframe,
+        attitudeKp: 0,
+        rateKp: 0,
+        rateKi: 0,
+        altitudeKp: 0,
+        altitudeKd: 0,
+        drag: 0,
+      });
+      const before = sim.snapshot();
+      sim.injectFault("motor", { index, efficiency: 0 });
+      const after = sim.step(0.0001),
+        angle = offset + (index * 2 * Math.PI) / count;
+      const expected = [
+        Math.sin(angle),
+        -Math.cos(angle),
+        index % 2 === 0 ? -1 : 1,
+      ];
+      after.rates.forEach((rate, axis) => {
+        if (Math.abs(expected[axis]) < 1e-10) assert.ok(Math.abs(rate) < 1e-8);
+        else assert.equal(Math.sign(rate), Math.sign(expected[axis]));
+      });
+      assert.ok(after.velocity[2] > 0);
+      assert.deepEqual(after.motors, before.motors);
+      assert.equal(after.faults.motorEfficiency[index], 0);
+      sim.clearFaults();
+      assert.deepEqual(
+        sim.snapshot().faults.motorEfficiency,
+        Array(count).fill(1),
+      );
+      const safe = sim.snapshot();
+      assert.throws(() =>
+        sim.injectFault("motor", { index: count, efficiency: 0 }),
+      );
+      assert.deepEqual(sim.snapshot(), safe);
+    }
+  }
+});
+
+test("new multirotor inputs enforce count-specific thrust capacity, ground authorization and external quad isolation", () => {
+  for (const airframe of ["hexarotor", "octorotor"]) {
+    assert.doesNotThrow(() =>
+      validateConfig({ airframe, mass: 2, maxMotorThrust: 4 }),
+    );
+    assert.throws(
+      () => validateConfig({ airframe, maxMotorThrust: 0.1 }),
+      /weight/,
+    );
+    assert.throws(
+      () =>
+        createSimulation(
+          { airframe, startOnGround: true },
+          { controlSource: "external" },
+        ),
+      /quadrotor/,
+    );
+    const sim = createSimulation({ airframe, startOnGround: true });
+    sim.arm();
+    sim.setMode("position");
+    assert.deepEqual(advance(sim, 1).position, [0, 0, 0]);
+    sim.takeoff();
+    const s = advance(sim, 12);
+    near(s.position[2], -2, 0.1);
+    assert.equal(s.armed, true);
+    assert.throws(() => sim.injectFault("pusher", { efficiency: 0 }), /pusher/);
+    assert.throws(() => sim.setTransition("cruise"), /VTOL/);
+    sim.reset();
+    assert.deepEqual(
+      sim.snapshot(),
+      createSimulation({ airframe, startOnGround: true }).snapshot(),
+    );
+    const stale = createSimulation({ airframe, dropout: 1 });
+    const stopped = advance(stale, 10);
+    assert.equal(stopped.status, "failsafe");
+    assert.equal(stopped.position[2], 0);
+    assert.ok(stopped.motors.every((v) => v < 1e-8));
+    near(Math.hypot(...stopped.quaternion), 1, 1e-12);
+  }
+});

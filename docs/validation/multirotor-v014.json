@@ -1,0 +1,107 @@
+{
+  "passed": true,
+  "flights": {
+    "hexarotor": {
+      "samples": 1759,
+      "seconds": 87.86499999999258,
+      "motors": 6,
+      "missionCompleted": true,
+      "lastMotorEfficiency": 0.5,
+      "events": [
+        {
+          "time": 0,
+          "type": "sensorConfig"
+        },
+        {
+          "time": 0,
+          "type": "mission"
+        },
+        {
+          "time": 0,
+          "type": "takeoff"
+        },
+        {
+          "time": 0,
+          "type": "mode"
+        },
+        {
+          "time": 79.20500000000045,
+          "type": "fault",
+          "value": {
+            "index": 5,
+            "efficiency": 0.5
+          }
+        }
+      ],
+      "csvColumns": 157,
+      "roundTrip": true,
+      "errors": {
+        "position": 5.773159728050814e-15,
+        "quaternion": 5.828670879282072e-16,
+        "motors": 3.3306690738754696e-16
+      },
+      "sha256": "14d671c0afec07ba775f93a0556e8d1025babc100c84c7730a14b429db2ebc5c"
+    },
+    "octorotor": {
+      "samples": 2018,
+      "seconds": 100.84499999998077,
+      "motors": 8,
+      "missionCompleted": true,
+      "lastMotorEfficiency": 0.5,
+      "events": [
+        {
+          "time": 0,
+          "type": "sensorConfig"
+        },
+        {
+          "time": 0,
+          "type": "mission"
+        },
+        {
+          "time": 0,
+          "type": "takeoff"
+        },
+        {
+          "time": 0,
+          "type": "mode"
+        },
+        {
+          "time": 98.56999999998284,
+          "type": "fault",
+          "value": {
+            "index": 7,
+            "efficiency": 0.5
+          }
+        }
+      ],
+      "csvColumns": 157,
+      "roundTrip": true,
+      "errors": {
+        "position": 3.552713678800501e-15,
+        "quaternion": 8.569533971325427e-16,
+        "motors": 4.440892098500626e-16
+      },
+      "sha256": "9b1e0a522f6cb4fe912a0fcf897a68dd8e8b7c821b99cda4fcd654f9fb1f2398"
+    }
+  },
+  "camera": {
+    "airframe": "octorotor",
+    "time": 100.84499999998077,
+    "width": 320,
+    "height": 240,
+    "exactPoseMatchesRecording": true,
+    "sha256": "47f6587c7ee693e4aa81dff6131168a72eb08680feda7c4f846f7cb9de327405"
+  },
+  "automatedTests": 190,
+  "uiReplayFinalDisplay": {
+    "displayedTime": "01:40.84",
+    "faultControlDisabled": true,
+    "faultLabel": "\u6545\u969c\uff1a\u9023\u7dda\u6b63\u5e38 \u00b7 \u99ac\u9054\u6548\u7387 100% / 100% / 100% / 100% / 100% / 100% / 100% / 50%",
+    "motorRows": 8,
+    "play": "\u25b6 \u64ad\u653e\u91cd\u64ad",
+    "recordedSeconds": 100.84499999998077,
+    "expectedClock": "01:40.84",
+    "passed": true
+  },
+  "limitations": "Software simulation only; no calibration, fault-tolerant allocation or external six/eight rotor SITL."
+}

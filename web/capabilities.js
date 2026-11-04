@@ -259,8 +259,9 @@ export const CAPABILITIES = [
     id: "multi-rotor",
     category: "飛行模型",
     title: "多種旋翼配置",
-    description: "不同旋翼數量與幾何配置。",
-    status: "planned",
+    description:
+      "四、六、八旋翼 X 型配置；新機型已測試飛行及資料往返，未提供故障容錯或外部六／八旋翼飛控介接。",
+    status: "partial",
     sources: [
       "https://github.com/PX4/PX4-Autopilot/blob/main/docs/en/simulation/index.md",
     ],
@@ -787,7 +788,7 @@ export const CAPABILITIES = [
     id: "replay-json",
     category: "資料與整合",
     title: "JSON 重播",
-    description: "版本 8 JSON 保存完整場景、雲台狀態與事件；拒絕版本 1 至 7。",
+    description: "版本 9 JSON 保存完整場景、雲台狀態與事件；拒絕版本 1 至 8。",
     status: "partial",
     sources: [
       "https://www.liftoff-game.com/news/full-release-liftoff-micro-drones",
@@ -860,7 +861,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "程式控制 API",
     description:
-      "同頁 API 1.6 提供場景及雲台操作；外部 SITL 使用獨立本機服務。",
+      "同頁 API 1.7 提供場景及雲台操作；外部 SITL 使用獨立本機服務。",
     status: "partial",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/apis.md"],
   },

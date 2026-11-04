@@ -120,7 +120,7 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   const record = validateRecording(exported.recording);
   assert.equal(record.config.seed, 18);
   assert.equal(record.scenario, "step");
-  assert.equal(record.version, 8);
+  assert.equal(record.version, 9);
   assert.equal(record.sensorFrames.length, record.samples.length);
   assert.equal(record.sensorFrames[0].time, record.samples[0].time);
   assert.equal(record.setup.sensors.gpsNoiseM, 1.5);
@@ -228,6 +228,40 @@ test("worker runs, pauses, records simulation-time samples and exports validated
     (await call({ type: "pointCloudExport", value: "bad" })).ok,
     false,
   );
+  for (const [airframe, count] of [
+    ["hexarotor", 6],
+    ["octorotor", 8],
+  ]) {
+    const multi = await call({ type: "reset", config: { airframe } });
+    assert.equal(multi.ok, true);
+    assert.equal(multi.value.snapshot.motors.length, count);
+    assert.equal(multi.value.snapshot.pwm.length, count);
+    assert.equal(
+      (
+        await call({
+          type: "fault",
+          fault: "motor",
+          value: { index: count - 1, efficiency: 0.5 },
+        })
+      ).value.snapshot.faults.motorEfficiency[count - 1],
+      0.5,
+    );
+    assert.equal(
+      (
+        await call({
+          type: "fault",
+          fault: "motor",
+          value: { index: count, efficiency: 0.5 },
+        })
+      ).ok,
+      false,
+    );
+    const multiRecord = validateRecording(
+      (await call({ type: "apiExport" })).value,
+    );
+    assert.equal(multiRecord.samples[0].airframe, airframe);
+    assert.equal(multiRecord.samples[0].motors.length, count);
+  }
   const wing = await call({
     type: "reset",
     config: { airframe: "fixedwing", geofenceRadius: 300 },
@@ -625,7 +659,7 @@ test(
     const exported = await call({ type: "apiExport" });
     assert.equal(exported.ok, true);
     const recording = validateRecording(exported.value);
-    assert.equal(recording.version, 8);
+    assert.equal(recording.version, 9);
     assert.ok(
       recording.events.some(
         (event) =>

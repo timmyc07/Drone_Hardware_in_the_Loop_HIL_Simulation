@@ -1,3 +1,4 @@
+import { getRotorLayout, rotorCount } from "./rotor-geometry.js";
 import { createGimbal, validateGimbalSettings } from "./gimbal.js";
 import {
   aerodynamicForces,
@@ -61,6 +62,22 @@ export const AIRFRAME_PRESETS = Object.freeze({
     ...DEFAULT_CONFIG,
     airframe: "vtol",
     geofenceRadius: 300,
+  }),
+  hexarotor: Object.freeze({
+    ...DEFAULT_CONFIG,
+    airframe: "hexarotor",
+    mass: 1.8,
+    arm: 0.3,
+    rateKp: 0.3,
+    rateKi: 0.05,
+  }),
+  octorotor: Object.freeze({
+    ...DEFAULT_CONFIG,
+    airframe: "octorotor",
+    mass: 2.4,
+    arm: 0.35,
+    rateKp: 0.56,
+    rateKi: 0.09,
   }),
 });
 const bounds = {
@@ -131,7 +148,7 @@ export function validateConfig(config = {}) {
     throw new Error("seed must be an integer");
   if (
     result.airframe !== "fixedwing" &&
-    result.maxMotorThrust * 4 <= result.mass * 9.80665
+    result.maxMotorThrust * rotorCount(result.airframe) <= result.mass * 9.80665
   )
     throw new Error("maxMotorThrust must provide more than vehicle weight");
   if (!Number.isInteger(result.batteryCells))
@@ -140,7 +157,7 @@ export function validateConfig(config = {}) {
     throw new Error(
       "criticalBatteryThreshold must be below lowBatteryThreshold",
     );
-  if (result.airframe !== "quadrotor") wingTrim(result);
+  if (["fixedwing", "vtol"].includes(result.airframe)) wingTrim(result);
   return result;
 }
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -205,7 +222,13 @@ export function createSimulation(configuration = {}, options = {}) {
       );
   };
   const lever = config.arm / Math.SQRT2;
-  const hasWing = config.airframe !== "quadrotor";
+  const hasWing = ["fixedwing", "vtol"].includes(config.airframe);
+  const count = rotorCount(config.airframe),
+    motorEnd = 13 + count,
+    pusherIndex = motorEnd,
+    servoIndex = motorEnd + 1,
+    stateSize = motorEnd + 4;
+  const layout = getRotorLayout(config.airframe, config.arm);
   const fixedWing = config.airframe === "fixedwing";
   const inertia = hasWing
     ? [
@@ -216,9 +239,9 @@ export function createSimulation(configuration = {}, options = {}) {
     : [0.5, 0.5, 1].map((v) => v * config.mass * config.arm ** 2);
   if (hasWing) inertia[2] = inertia[0] + inertia[1];
   // Motors: front-right, rear-right, rear-left, front-left. Positive torque signs.
-  const rollSign = [-1, -1, 1, 1],
-    pitchSign = [1, -1, -1, 1],
-    yawSign = [1, -1, 1, -1];
+  const rollSign = layout.map((rotor) => rotor.rollScale),
+    pitchSign = layout.map((rotor) => rotor.pitchScale),
+    yawSign = layout.map((rotor) => rotor.yawTorqueSign);
   const yawLever = 0.02;
   let state,
     time,
@@ -311,7 +334,7 @@ export function createSimulation(configuration = {}, options = {}) {
         s.slice(3, 6).map((v, i) => v - wind[i]),
       ),
       s.slice(10, 13),
-      s.slice(18, 21),
+      s.slice(servoIndex, stateSize),
       -s[2],
     );
   }
@@ -345,8 +368,8 @@ export function createSimulation(configuration = {}, options = {}) {
       0,
       0,
       0,
-      ...Array(4).fill(
-        Math.sqrt((config.mass * G) / (4 * config.maxMotorThrust)),
+      ...Array(count).fill(
+        Math.sqrt((config.mass * G) / (count * config.maxMotorThrust)),
       ),
     ];
     state.push(0, 0, 0, 0);
@@ -375,7 +398,7 @@ export function createSimulation(configuration = {}, options = {}) {
     baseTarget = { ...target };
     scenario = "hover";
     scenarioStart = 0;
-    commands = state.slice(13, 17);
+    commands = state.slice(13, motorEnd);
     integrals = [0, 0, 0];
     randomState = config.seed >>> 0;
     queue = [];
@@ -404,7 +427,7 @@ export function createSimulation(configuration = {}, options = {}) {
     armed = true;
     crashed = false;
     faults = {
-      motorEfficiency: [1, 1, 1, 1],
+      motorEfficiency: Array(count).fill(1),
       linkLost: false,
       pusherEfficiency: 1,
     };
@@ -435,11 +458,11 @@ export function createSimulation(configuration = {}, options = {}) {
       state[5] = wind[2];
       state[6] = Math.cos(trim.alpha / 2);
       state[8] = Math.sin(trim.alpha / 2);
-      for (let i = 13; i < 17; i++) state[i] = 0;
-      state[17] = Math.sqrt(trim.thrust / config.maxPusherThrust);
-      state[19] = trim.elevator;
+      for (let i = 13; i < motorEnd; i++) state[i] = 0;
+      state[pusherIndex] = Math.sqrt(trim.thrust / config.maxPusherThrust);
+      state[servoIndex + 1] = trim.elevator;
       commands.fill(0);
-      pusherCommand = state[17];
+      pusherCommand = state[pusherIndex];
       surfaceCommands[1] = trim.elevator;
       observed.altitude = 30;
       observed.attitude[1] = trim.alpha;
@@ -454,7 +477,7 @@ export function createSimulation(configuration = {}, options = {}) {
       state[7] = 0;
       state[8] = 0;
       state[9] = 0;
-      for (let i = 10; i < 21; i++) state[i] = 0;
+      for (let i = 10; i < stateSize; i++) state[i] = 0;
       armed = false;
       commands.fill(0);
       pusherCommand = 0;
@@ -478,11 +501,11 @@ export function createSimulation(configuration = {}, options = {}) {
         s[2] >= -0.001 &&
         (!fixedWing || Math.hypot(s[3], s[4]) < 0.03))
     )
-      return Array(21).fill(0);
+      return Array(stateSize).fill(0);
     const r = rotation(s.slice(6, 10));
     // Motor states/commands are normalized rotor speeds; thrust is proportional to speed squared.
     const thrusts = s
-      .slice(13, 17)
+      .slice(13, motorEnd)
       .map(
         (v, i) =>
           clamp(v, 0, 1) ** 2 *
@@ -493,7 +516,7 @@ export function createSimulation(configuration = {}, options = {}) {
     const wing = aero(s);
     const pusherThrust = hasWing
       ? config.maxPusherThrust *
-        clamp(s[17], 0, 1) ** 2 *
+        clamp(s[pusherIndex], 0, 1) ** 2 *
         faults.pusherEfficiency
       : 0;
     const forceBody = [...wing.forceBody];
@@ -590,8 +613,10 @@ export function createSimulation(configuration = {}, options = {}) {
       (w * rRate + x * q - y * p) / 2,
       ...angular,
       ...commands.map((v, i) => (v - s[13 + i]) / config.motorTau),
-      (pusherCommand - s[17]) / config.motorTau,
-      ...surfaceCommands.map((v, i) => (v - s[18 + i]) / config.servoTau),
+      (pusherCommand - s[pusherIndex]) / config.motorTau,
+      ...surfaceCommands.map(
+        (v, i) => (v - s[servoIndex + i]) / config.servoTau,
+      ),
     ];
   }
   function sample() {
@@ -695,7 +720,7 @@ export function createSimulation(configuration = {}, options = {}) {
     const wingUp = hasWing
       ? -rotate(rotation(state.slice(6, 10)), aero().forceBody)[2] +
         config.maxPusherThrust *
-          state[17] ** 2 *
+          state[pusherIndex] ** 2 *
           faults.pusherEfficiency *
           Math.sin(theta)
       : 0;
@@ -708,7 +733,7 @@ export function createSimulation(configuration = {}, options = {}) {
           (rollSign[i] * torque[0]) / lever +
           (pitchSign[i] * torque[1]) / lever +
           (yawSign[i] * torque[2]) / yawLever) /
-        (4 * config.maxMotorThrust),
+        (count * config.maxMotorThrust),
     );
     commands = raw.map((v) => Math.sqrt(clamp(v, 0, 1)));
     // Conditional integration: freeze the integral while any motor is saturated.
@@ -896,7 +921,7 @@ export function createSimulation(configuration = {}, options = {}) {
     const passive = [
       -0.08 * wing.betaRad - 0.5 * wing.pHat + 0.08 * wing.rHat,
       wing.pitchStatic - 8 * wing.qHat,
-      0.12 * wing.betaRad - 0.3 * wing.rHat - 0.01 * state[18],
+      0.12 * wing.betaRad - 0.3 * wing.rHat - 0.01 * state[servoIndex],
     ];
     surfaceCommands = requested.map((moment, i) =>
       clamp(
@@ -1397,7 +1422,11 @@ export function createSimulation(configuration = {}, options = {}) {
         stopTakeoff("insufficient-airspeed");
         return;
       }
-      if (takeoffPhase === "runup" && state[17] > 0.85 && pusherCommand > 0.9) {
+      if (
+        takeoffPhase === "runup" &&
+        state[pusherIndex] > 0.85 &&
+        pusherCommand > 0.9
+      ) {
         takeoffPhase = "roll";
         runwayBrake = 0;
       }
@@ -1493,7 +1522,7 @@ export function createSimulation(configuration = {}, options = {}) {
   }
   function injectFault(kind, value) {
     if (kind === "pusher") {
-      if (!hasWing) throw new Error("Quadrotor has no cruise pusher");
+      if (!hasWing) throw new Error("Multirotor has no cruise pusher");
       faults.pusherEfficiency = validateFields(
         value,
         { efficiency: [0, 1] },
@@ -1503,7 +1532,7 @@ export function createSimulation(configuration = {}, options = {}) {
       if (fixedWing) throw new Error("Fixed wing has no lift rotors");
       const checked = validateFields(
         value,
-        { index: [0, 3], efficiency: [0, 1] },
+        { index: [0, count - 1], efficiency: [0, 1] },
         "Motor fault",
       );
       if (!Number.isInteger(checked.index))
@@ -1523,7 +1552,7 @@ export function createSimulation(configuration = {}, options = {}) {
   }
   function clearFaults() {
     faults = {
-      motorEfficiency: [1, 1, 1, 1],
+      motorEfficiency: Array(count).fill(1),
       linkLost: false,
       pusherEfficiency: 1,
     };
@@ -1584,7 +1613,9 @@ export function createSimulation(configuration = {}, options = {}) {
       availableWh > 0
         ? config.batteryBasePower +
           config.batteryMotorPower *
-            state.slice(13, 18).reduce((sum, speed) => sum + speed ** 3, 0)
+            state
+              .slice(13, servoIndex)
+              .reduce((sum, speed) => sum + speed ** 3, 0)
         : 0;
     const resistance = config.batteryInternalResistance;
     // Simplified Thevenin pack; cap electrical demand at maximum deliverable power.
@@ -1910,8 +1941,8 @@ export function createSimulation(configuration = {}, options = {}) {
       state = nextState;
       for (let i = 6; i < 10; i++) state[i] /= norm;
     }
-    for (let i = 13; i < 18; i++) state[i] = clamp(state[i], 0, 1);
-    for (let i = 18; i < 21; i++)
+    for (let i = 13; i < servoIndex; i++) state[i] = clamp(state[i], 0, 1);
+    for (let i = servoIndex; i < stateSize; i++)
       state[i] = clamp(state[i], -WING.surfaceLimit, WING.surfaceLimit);
     if (
       fixedWing &&
@@ -1935,7 +1966,7 @@ export function createSimulation(configuration = {}, options = {}) {
         runwayBrake = 1;
         state[2] = 0;
         state[5] = 0;
-        for (let i = 10; i < 21; i++) state[i] = 0;
+        for (let i = 10; i < stateSize; i++) state[i] = 0;
       } else if (fixedWing || state[5] > 2.5) {
         crashed = true;
         navigation.reason = "ground-impact";
@@ -1962,7 +1993,7 @@ export function createSimulation(configuration = {}, options = {}) {
       navigation.reason = "obstacle-collision";
       disarm();
       state.splice(3, 3, 0, 0, 0);
-      for (let i = 10; i < 21; i++) state[i] = 0;
+      for (let i = 10; i < stateSize; i++) state[i] = 0;
     }
     if (
       !crashed &&
@@ -1992,7 +2023,7 @@ export function createSimulation(configuration = {}, options = {}) {
         (!fixedWing || Math.hypot(state[3], state[4]) < 0.08))
     ) {
       state.splice(3, 3, 0, 0, 0);
-      for (let i = 10; i < 21; i++) state[i] = 0;
+      for (let i = 10; i < stateSize; i++) state[i] = 0;
     }
     if (navigation.mode === "land" && navigation.completed && !armed)
       target = { altitude: 0, roll: 0, pitch: 0, yawRate: 0, airspeed: 0 };
@@ -2045,18 +2076,20 @@ export function createSimulation(configuration = {}, options = {}) {
       rates: state.slice(10, 13),
       airframe: config.airframe,
       runway: runwaySnapshot(),
-      motors: state.slice(13, 17),
+      motors: state.slice(13, motorEnd),
       propulsion: {
         command: pusherCommand,
-        motor: state[17],
+        motor: state[pusherIndex],
         thrustN: hasWing
-          ? config.maxPusherThrust * state[17] ** 2 * faults.pusherEfficiency
+          ? config.maxPusherThrust *
+            state[pusherIndex] ** 2 *
+            faults.pusherEfficiency
           : 0,
       },
       controlSurfaces: {
-        aileron: state[18],
-        elevator: state[19],
-        rudder: state[20],
+        aileron: state[servoIndex],
+        elevator: state[servoIndex + 1],
+        rudder: state[servoIndex + 2],
       },
       flight: flightSnapshot(),
       pwm: commands.map((v) => 1000 + v * 1000),
