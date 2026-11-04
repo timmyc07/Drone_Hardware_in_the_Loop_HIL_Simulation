@@ -100,9 +100,14 @@
             <option value="gates">穿越訓練門</option>
             <option value="landing">降落</option>
             <option value="circuit">巡航航線</option>
+            <option value="runway">跑道起降循環</option>
           </select></label
         >
         <p id="training-status">尚未開始</p>
+        <p id="training-runway-hint" hidden>
+          須由地面起跑，完成爬升，再落地、上鎖並停穩 2
+          秒才得分；空中起始不符合條件。此練習不代表正式認證。
+        </p>
         <label
           >環境
           <select id="environment-preset">
@@ -360,12 +365,14 @@
                 <option value="mission">任務</option>
                 <option value="rtl">返航</option>
                 <option value="land">降落</option>
+                <option value="takeoff" disabled>跑道起飛</option>
               </select></label
             >
             <div class="feature-actions">
               <button data-command="arm">解鎖</button
               ><button data-command="disarm">上鎖</button
               ><button data-command="takeoff">起飛</button
+              ><button id="abort-takeoff" disabled>中止起飛</button
               ><button data-mode="rtl">返航</button
               ><button data-mode="land">降落</button>
             </div>
@@ -399,6 +406,8 @@
             <p id="flight-details">等待狀態</p>
             <p id="wing-telemetry">空速與翼面狀態：—</p>
             <p id="wing-hint"></p>
+            <p id="runway-status">跑道狀態：—</p>
+            <p id="abort-hint"></p>
             <div id="transition-controls" class="feature-actions" hidden>
               <button id="transition-hover">切換懸停</button
               ><button id="transition-cruise">切換巡航</button
@@ -575,8 +584,13 @@
           </select></label
         >
         <p>
-          切換機型會載入該機型預設參數並重設實驗；固定翼從 30 m 空中配平開始。
+          切換機型會載入該機型預設參數並重設實驗；固定翼預設從 30 m
+          空中配平開始。
         </p>
+        <label
+          ><input id="config-start-on-ground" type="checkbox" />
+          從地面靜止、未解鎖狀態開始</label
+        >
         <div id="settings-fields"></div>
         <section class="settings-group">
           <h3>虛擬感測器</h3>

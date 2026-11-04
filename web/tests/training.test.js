@@ -105,3 +105,93 @@ test("circuit uses ordered positive plane crossings with interpolated positions"
   t.update(sample(9, [0, 20, -30]));
   assert.equal(t.update(sample(10, [0, -20, -30])).complete, true);
 });
+
+const runwaySample = (time, phase, extra = {}) =>
+  sample(time, extra.position ?? [0, 0, 0], {
+    status: "landed",
+    armed: false,
+    flight: { airspeedMps: 0 },
+    runway: {
+      onRunway: true,
+      weightOnWheels: true,
+      rotationSpeedMps: 10,
+      takeoffPhase: phase,
+    },
+    ...extra,
+  });
+
+test("runway practice requires ground start, takeoff and stable disarmed runway landing", () => {
+  const t = createTrainer("runway", "fixedwing");
+  assert.throws(() => createTrainer("runway", "vtol"));
+  const ground = t.update(runwaySample(0, "idle"));
+  assert.equal(ground.total, 0);
+  assert.equal(ground.passed, 0);
+  t.update(runwaySample(1, "runup", { armed: true }));
+  t.update(runwaySample(2, "rotate", { armed: true }));
+  t.update(
+    runwaySample(3, "complete", {
+      position: [20, 0, -25],
+      status: "flying",
+      armed: true,
+      flight: { airspeedMps: 10 },
+      runway: {
+        onRunway: true,
+        weightOnWheels: false,
+        rotationSpeedMps: 10,
+        takeoffPhase: "complete",
+      },
+    }),
+  );
+  assert.equal(
+    t.update(runwaySample(4, "complete", { armed: true })).complete,
+    false,
+  );
+  t.update(runwaySample(5, "complete"));
+  assert.equal(
+    t.update(
+      runwaySample(6, "complete", {
+        runway: {
+          onRunway: false,
+          weightOnWheels: true,
+          rotationSpeedMps: 10,
+          takeoffPhase: "complete",
+        },
+      }),
+    ).holdSeconds,
+    0,
+  );
+  t.update(runwaySample(7, "complete"));
+  const done = t.update(runwaySample(9, "complete"));
+  assert.equal(done.complete, true);
+  assert.equal(done.score, 1000);
+});
+
+test("air start cannot earn runway score and aborted or crashed runs latch until reset", () => {
+  const t = createTrainer("runway", "fixedwing");
+  t.update(
+    runwaySample(0, "complete", {
+      position: [0, 0, -30],
+      status: "flying",
+      armed: true,
+      flight: { airspeedMps: 15 },
+      runway: {
+        onRunway: true,
+        weightOnWheels: false,
+        rotationSpeedMps: 10,
+        takeoffPhase: "complete",
+      },
+    }),
+  );
+  t.update(runwaySample(1, "complete"));
+  assert.equal(t.update(runwaySample(4, "complete")).complete, false);
+  t.reset();
+  t.update(runwaySample(0, "idle"));
+  assert.equal(t.update(runwaySample(1, "aborted")).reason, "takeoff-aborted");
+  assert.equal(t.update(runwaySample(2, "idle")).reason, "takeoff-aborted");
+  t.reset();
+  assert.equal(
+    t.update(runwaySample(0, "idle", { status: "crashed" })).reason,
+    "crashed",
+  );
+  assert.equal(t.update(runwaySample(1, "idle")).reason, "crashed");
+});

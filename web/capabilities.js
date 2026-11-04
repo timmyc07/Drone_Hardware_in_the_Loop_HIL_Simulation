@@ -186,6 +186,11 @@ export const SOURCES = [
     kind: "開源文件",
   },
   {
+    name: "PX4 固定翼跑道起飛",
+    url: "https://docs.px4.io/main/en/flight_modes_fw/takeoff",
+    kind: "官方文件",
+  },
+  {
     name: "JSBSim",
     url: "https://github.com/JSBSim-Team/jsbsim",
     kind: "開源專案",
@@ -296,9 +301,11 @@ export const CAPABILITIES = [
     id: "takeoff",
     category: "控制與航行",
     title: "起飛",
-    description: "提供四旋翼起飛指令。",
-    status: "implemented",
+    description:
+      "四旋翼及 VTOL 提供起飛指令；固定翼提供簡化跑道起飛與中止；未實機校準。",
+    status: "partial",
     sources: [
+      "https://docs.px4.io/main/en/flight_modes_fw/takeoff",
       "https://www.easa.europa.eu/en/document-library/easy-access-rules/online-publications/easy-access-rules-unmanned-aircraft-systems?page=5",
       "https://www.simnet.aero/product-page/introduction-to-arducopter-auto-missions-with-mission-planner",
     ],
@@ -672,7 +679,8 @@ export const CAPABILITIES = [
     id: "racing-gates",
     category: "訓練與評估",
     title: "競速門",
-    description: "近距離四門與巡航四門依序判定穿越；固定翼僅支援巡航航線。",
+    description:
+      "近距離四門與巡航四門依序判定穿越；固定翼在這兩類航門中僅支援巡航航線。",
     status: "partial",
     sources: ["https://www.velocidrone.com/features"],
   },
@@ -743,7 +751,7 @@ export const CAPABILITIES = [
     id: "record-csv",
     category: "資料與整合",
     title: "CSV 飛行紀錄",
-    description: "匯出 119 欄飛行及感測資料 CSV，另可匯出光達點雲。",
+    description: "版本 0.5 可匯出 127 欄飛行及感測資料 CSV。",
     status: "partial",
     sources: ["https://wiki.zephyr-sim.com/help/faqs"],
   },
@@ -751,7 +759,7 @@ export const CAPABILITIES = [
     id: "replay-json",
     category: "資料與整合",
     title: "JSON 重播",
-    description: "版本 4 JSON 保存機型、感測器影格及事件；拒絕版本 1、2、3。",
+    description: "版本 5 JSON 保存機型、感測器影格及事件；拒絕版本 1 至 4。",
     status: "partial",
     sources: [
       "https://www.liftoff-game.com/news/full-release-liftoff-micro-drones",
@@ -819,8 +827,7 @@ export const CAPABILITIES = [
     id: "api",
     category: "資料與整合",
     title: "程式控制 API",
-    description:
-      "同頁 API 1.1 支援查詢、控制、訂閱、VTOL 轉換及水平推進器故障；無網路或飛控協定橋接。",
+    description: "同頁 API 1.2 新增起飛及中止；無網路或飛控協定橋接。",
     status: "partial",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/apis.md"],
   },

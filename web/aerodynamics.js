@@ -25,7 +25,8 @@ export function aerodynamicForces(
 ) {
   const [u, v, w] = velocityBody,
     airspeedMps = Math.hypot(u, v, w);
-  const alphaRad = airspeedMps > 1e-8 ? Math.atan2(w, u) : 0;
+  const alphaRad =
+    Math.hypot(u, w) > 1e-8 * Math.max(1, airspeedMps) ? Math.atan2(w, u) : 0;
   const betaRad =
     airspeedMps > 1e-8 ? Math.asin(clamp(v / airspeedMps, -1, 1)) : 0;
   const density = 1.225 * Math.exp(-clamp(altitude, -500, 11000) / 8500);
@@ -37,7 +38,10 @@ export function aerodynamicForces(
       Math.exp(clamp(-60 * (Math.abs(alphaRad) - WING.stallAlpha), -40, 40)));
   const linearLift =
     WING.cl0 + WING.clAlpha * alphaRad + WING.clElevator * surfaces[1];
-  const cl = (1 - blend) * linearLift + blend * 1.1 * Math.sin(2 * alphaRad);
+  // Spanwise flow cannot provide the same wing lift as flow over the chord.
+  const cl =
+    ((1 - blend) * linearLift + blend * 1.1 * Math.sin(2 * alphaRad)) *
+    Math.cos(betaRad) ** 2;
   const cd =
     WING.cd0 +
     cl ** 2 / (Math.PI * WING.efficiency * aspect) +
@@ -66,7 +70,10 @@ export function aerodynamicForces(
   const forceBody = direction.map((value) => -dragN * value);
   forceBody[0] += liftN * Math.sin(alphaRad);
   const sideForce =
-    dynamicPressurePa * config.wingArea * (-0.8 * betaRad + 0.12 * surfaces[2]);
+    dynamicPressurePa *
+    config.wingArea *
+    (-0.8 * betaRad + 0.12 * surfaces[2]) *
+    Math.cos(betaRad);
   const sideDirection = [
     -Math.cos(alphaRad) * Math.sin(betaRad),
     Math.cos(betaRad),

@@ -8,6 +8,7 @@ import {
 // Equations/conventions: https://github.com/bobzwik/Quadcopter_SimCon
 export const DEFAULT_CONFIG = Object.freeze({
   airframe: "quadrotor",
+  startOnGround: false,
   wingArea: 0.4,
   wingSpan: 1.6,
   wingChord: 0.25,
@@ -41,6 +42,12 @@ export const DEFAULT_CONFIG = Object.freeze({
   batteryCells: 4,
   lowBatteryThreshold: 0.2,
   criticalBatteryThreshold: 0.07,
+});
+export const RUNWAY = Object.freeze({
+  startNorth: 0,
+  endNorth: 200,
+  halfWidth: 15,
+  headingRad: 0,
 });
 export const AIRFRAME_PRESETS = Object.freeze({
   quadrotor: DEFAULT_CONFIG,
@@ -99,6 +106,11 @@ export function validateConfig(config = {}) {
   )
     throw new Error("Configuration must be an object");
   for (const [key, value] of Object.entries(config)) {
+    if (key === "startOnGround") {
+      if (typeof value !== "boolean")
+        throw new Error("startOnGround must be a boolean");
+      continue;
+    }
     if (key === "airframe") {
       if (typeof value !== "string" || !Object.hasOwn(AIRFRAME_PRESETS, value))
         throw new Error("Unknown airframe");
@@ -218,6 +230,11 @@ export function createSimulation(configuration = {}) {
     transitionPhase,
     transitionProgress;
   let landing, groundRolling, missionLegStart, missionRejoin;
+  let takeoffPhase,
+    takeoffAbortReason,
+    takeoffStarted,
+    runwayBrake,
+    launchAuthorized;
   const rotate = (r, v) =>
     [0, 1, 2].map(
       (i) => r[3 * i] * v[0] + r[3 * i + 1] * v[1] + r[3 * i + 2] * v[2],
@@ -303,6 +320,11 @@ export function createSimulation(configuration = {}) {
     transitionProgress = fixedWing ? 1 : 0;
     landing = null;
     groundRolling = false;
+    takeoffPhase = "idle";
+    takeoffAbortReason = "";
+    takeoffStarted = 0;
+    runwayBrake = fixedWing ? 1 : 0;
+    launchAuthorized = !config.startOnGround;
     missionLegStart = [0, 0];
     missionRejoin = false;
     target = {
@@ -367,7 +389,7 @@ export function createSimulation(configuration = {}) {
       velocity: [0, 0],
     };
     imu = { accel: [0, 0, -G], gyro: [0, 0, 0] };
-    if (fixedWing) {
+    if (fixedWing && !config.startOnGround) {
       const trim = wingTrim(config);
       state[2] = -30;
       state[3] = config.cruiseAirspeed + wind[0];
@@ -385,25 +407,39 @@ export function createSimulation(configuration = {}) {
       observed.attitude[1] = trim.alpha;
       positionTarget.altitude = 30;
     }
+    if (config.startOnGround) {
+      state[2] = 0;
+      state[3] = 0;
+      state[4] = 0;
+      state[5] = 0;
+      state[6] = 1;
+      state[7] = 0;
+      state[8] = 0;
+      state[9] = 0;
+      for (let i = 10; i < 21; i++) state[i] = 0;
+      armed = false;
+      commands.fill(0);
+      pusherCommand = 0;
+      surfaceCommands = [0, 0, 0];
+      observed.altitude = 0;
+      observed.attitude = [0, 0, 0];
+      groundRolling = fixedWing;
+      target = { altitude: 0, roll: 0, pitch: 0, yawRate: 0, airspeed: 0 };
+      baseTarget = { ...target };
+      positionTarget.altitude = 0;
+    }
     observed.airspeed = aero().airspeedMps;
     battery = batterySnapshot();
     return snapshot();
   }
   function derivative(s) {
-    if (crashed || (!armed && s[2] >= -0.001)) return Array(21).fill(0);
-    if (groundRolling) {
-      const speed = Math.hypot(s[3], s[4]),
-        friction = Math.min(2, speed / 0.02);
-      return [
-        s[3],
-        s[4],
-        0,
-        (-friction * s[3]) / Math.max(speed, 0.001),
-        (-friction * s[4]) / Math.max(speed, 0.001),
-        0,
-        ...Array(15).fill(0),
-      ];
-    }
+    if (
+      crashed ||
+      ((!armed || !launchAuthorized) &&
+        s[2] >= -0.001 &&
+        (!fixedWing || Math.hypot(s[3], s[4]) < 0.03))
+    )
+      return Array(21).fill(0);
     const r = rotation(s.slice(6, 10));
     // Motor states/commands are normalized rotor speeds; thrust is proportional to speed squared.
     const thrusts = s
@@ -437,6 +473,67 @@ export function createSimulation(configuration = {}) {
           (axis === 2 ? yawLever : lever) +
         wing.momentBody[axis],
     );
+    if (fixedWing && groundRolling) {
+      const [roll, pitch, yaw] = angles(s.slice(6, 10));
+      const normal = Math.max(0, config.mass * acceleration[2]);
+      const forward = [Math.cos(yaw), Math.sin(yaw)],
+        lateral = [-Math.sin(yaw), Math.cos(yaw)];
+      const longitudinal = s[3] * forward[0] + s[4] * forward[1],
+        sideways = s[3] * lateral[0] + s[4] * lateral[1];
+      const engineForce =
+        forceWorld[0] * forward[0] + forceWorld[1] * forward[1];
+      const rollingCoefficient = 0.025 + 0.35 * runwayBrake;
+      const friction =
+        Math.abs(longitudinal) < (runwayBrake > 0.5 ? 0.2 : 0.03)
+          ? -clamp(
+              engineForce + config.mass * 20 * longitudinal,
+              -normal * (0.04 + 0.76 * runwayBrake),
+              normal * (0.04 + 0.76 * runwayBrake),
+            )
+          : -Math.sign(longitudinal) * rollingCoefficient * normal;
+      const lateralForce =
+        forceWorld[0] * lateral[0] + forceWorld[1] * lateral[1];
+      const sideFriction =
+        Math.abs(sideways) < 0.2 && runwayBrake > 0.5
+          ? -clamp(
+              lateralForce + config.mass * 20 * sideways,
+              -0.7 * normal,
+              0.7 * normal,
+            )
+          : clamp(-config.mass * 10 * sideways, -0.7 * normal, 0.7 * normal);
+      for (let i = 0; i < 2; i++)
+        acceleration[i] +=
+          (friction * forward[i] + sideFriction * lateral[i]) / config.mass;
+      // Rigid unilateral wheel support: the normal reaction cannot pull the aircraft down.
+      acceleration[2] -= normal / config.mass;
+      // Educational runway restraint stays engaged until the rotation gate authorizes liftoff.
+      if (takeoffPhase !== "rotate") acceleration[2] = 0;
+      torque[0] += clamp(
+        -torque[0] - inertia[0] * (120 * roll + 20 * s[10]),
+        -normal * 0.4,
+        normal * 0.4,
+      );
+      if (takeoffPhase !== "rotate")
+        torque[1] += clamp(
+          -torque[1] - inertia[1] * (120 * pitch + 20 * s[11]),
+          -normal * 0.6,
+          normal * 0.6,
+        );
+      else if (pitch > 0.2 || pitch < -0.03)
+        torque[1] +=
+          inertia[1] * (120 * (clamp(pitch, -0.03, 0.2) - pitch) - 20 * s[11]);
+      const steering = clamp(
+        -0.7 * wrap(yaw) - 0.07 * s[1] - 0.15 * s[12],
+        -0.35,
+        0.35,
+      );
+      const desiredYawRate = (longitudinal * Math.tan(steering)) / 0.6;
+      const steeringMoment =
+        Math.abs(longitudinal) < 0.2
+          ? -torque[2] - inertia[2] * 20 * s[12]
+          : inertia[2] * 8 * (desiredYawRate - s[12]);
+      torque[2] += clamp(steeringMoment, -normal * 0.5, normal * 0.5);
+    }
     const [p, q, rRate] = s.slice(10, 13),
       [w, x, y, z] = s.slice(6, 10);
     // Euler rigid-body equation includes omega cross J*omega.
@@ -495,15 +592,28 @@ export function createSimulation(configuration = {}) {
     if (armed && time - observed.time > 0.5 + 1e-10) {
       failed = true;
       navigation.reason = "stale-sensor";
+      if (
+        fixedWing &&
+        ["runup", "roll", "rotate", "climb"].includes(takeoffPhase)
+      ) {
+        stopTakeoff("safety");
+        navigation.reason = "stale-sensor";
+      }
     }
-    if (failed || !armed || crashed || battery.soc <= 0) {
+    if (
+      failed ||
+      !armed ||
+      crashed ||
+      battery.soc <= 0 ||
+      (!launchAuthorized && state[2] >= -0.001)
+    ) {
       commands.fill(0);
       pusherCommand = 0;
       surfaceCommands = [0, 0, 0];
       integrals.fill(0);
       return;
     }
-    if (groundRolling) {
+    if (groundRolling && !["runup", "roll", "rotate"].includes(takeoffPhase)) {
       commands.fill(0);
       pusherCommand = 0;
       surfaceCommands = [0, 0, 0];
@@ -642,6 +752,30 @@ export function createSimulation(configuration = {}) {
     }
   }
   function wingPitchDemand() {
+    if (fixedWing && navigation.mode === "takeoff") {
+      if (["runup", "roll"].includes(takeoffPhase)) return 0;
+      if (takeoffPhase === "rotate") return 0.14;
+      const safe = 1.4 * stallSpeed(config, observed.altitude);
+      const climb =
+        clamp(
+          (observed.airspeed - 1.15 * stallSpeed(config, observed.altitude)) /
+            (safe - 1.15 * stallSpeed(config, observed.altitude)),
+          0,
+          1,
+        ) * 0.12;
+      const pressure =
+        0.5 *
+        1.225 *
+        Math.exp(-observed.altitude / 8500) *
+        Math.max(3, observed.airspeed) ** 2;
+      const alpha = clamp(
+        ((config.mass * G) / (pressure * config.wingArea) - WING.cl0) /
+          WING.clAlpha,
+        0,
+        0.2,
+      );
+      return clamp(alpha + climb, 0, 0.3);
+    }
     if (!fixedWing && transition === "hover") return target.pitch;
     const speed = Math.max(3, observed.airspeed),
       height = observed.altitude;
@@ -691,7 +825,14 @@ export function createSimulation(configuration = {}) {
       const error = demandSpeed - observed.airspeed;
       const candidate = clamp(speedIntegral + error * dt, -10, 10);
       const thrust = wing.dragN + 1.4 * error + 0.3 * candidate;
-      pusherCommand = Math.sqrt(clamp(thrust / config.maxPusherThrust, 0, 1));
+      const requestedPusher =
+        groundRolling && ["runup", "roll", "rotate"].includes(takeoffPhase)
+          ? 1
+          : Math.sqrt(clamp(thrust / config.maxPusherThrust, 0, 1));
+      pusherCommand =
+        takeoffPhase === "runup"
+          ? Math.min(pusherCommand + dt / 0.8, requestedPusher)
+          : requestedPusher;
       if (thrust >= 0 && thrust <= config.maxPusherThrust)
         speedIntegral = candidate;
     } else {
@@ -903,7 +1044,14 @@ export function createSimulation(configuration = {}) {
     navigation.targetPosition = [positionTarget.north, positionTarget.east];
   }
 
+  function takeoffActive() {
+    return (
+      fixedWing && ["runup", "roll", "rotate", "climb"].includes(takeoffPhase)
+    );
+  }
   function setTargets(values) {
+    if (takeoffActive())
+      throw new Error("Abort runway takeoff before changing targets");
     if (
       !values ||
       typeof values !== "object" ||
@@ -964,6 +1112,8 @@ export function createSimulation(configuration = {}) {
     return value;
   }
   function setPositionTarget(value) {
+    if (takeoffActive())
+      throw new Error("Abort runway takeoff before changing position target");
     if (safetyReason || ["rtl", "land", "mission"].includes(navigation.mode))
       throw new Error(
         "Select position mode before changing a navigation target; safety return/landing cannot be overridden",
@@ -973,6 +1123,8 @@ export function createSimulation(configuration = {}) {
     navigation.targetPosition = [positionTarget.north, positionTarget.east];
   }
   function setMission(points) {
+    if (takeoffActive())
+      throw new Error("Abort runway takeoff before changing mission");
     if (!Array.isArray(points) || points.length < 1 || points.length > 50)
       throw new Error("Mission must contain 1 to 50 waypoints");
     const validated = Array.from(points, (value) => validatePoint(value, true));
@@ -1059,6 +1211,13 @@ export function createSimulation(configuration = {}) {
     navigation.targetPosition = [positionTarget.north, positionTarget.east];
   }
   function setMode(mode) {
+    if (mode === "takeoff") {
+      if (!fixedWing || !groundRolling || state[2] < -0.1)
+        throw new Error(
+          "Takeoff mode requires a fixed-wing aircraft on the runway",
+        );
+      return takeoff();
+    }
     if (!["attitude", "position", "mission", "rtl", "land"].includes(mode))
       throw new Error("Unknown flight mode");
     if (crashed || failed)
@@ -1074,9 +1233,20 @@ export function createSimulation(configuration = {}) {
     }
     if (safetyReason === "critical-battery" && mode !== "land")
       throw new Error("Critical battery requires landing");
+    if (takeoffActive())
+      throw new Error("Abort runway takeoff before changing flight mode");
     enterMode(mode, safetyReason);
   }
   function arm() {
+    if (
+      fixedWing &&
+      takeoffPhase === "aborted" &&
+      !groundRolling &&
+      navigation.mode === "takeoff"
+    )
+      throw new Error(
+        "Select an airborne flight mode before rearming an aborted takeoff",
+      );
     if (crashed || failed || battery.critical || faults.linkLost)
       throw new Error(
         "Cannot arm after crash, failsafe, critical battery or lost link",
@@ -1085,22 +1255,190 @@ export function createSimulation(configuration = {}) {
     integrals.fill(0);
   }
   function disarm() {
+    if (takeoffActive()) {
+      takeoffPhase = "aborted";
+      takeoffAbortReason = "pilot";
+      runwayBrake = groundRolling ? 1 : 0;
+      navigation.reason = "takeoff-aborted";
+    }
     armed = false;
+    if (state[2] >= -0.001) launchAuthorized = false;
     commands.fill(0);
     pusherCommand = 0;
     surfaceCommands = [0, 0, 0];
     integrals.fill(0);
   }
+  function runwaySnapshot() {
+    return {
+      onRunway:
+        state[0] >= RUNWAY.startNorth - 1e-8 &&
+        state[0] <= RUNWAY.endNorth + 1e-8 &&
+        Math.abs(state[1]) <= RUNWAY.halfWidth,
+      weightOnWheels: fixedWing ? groundRolling : state[2] >= -0.001,
+      distanceRemainingM: Math.max(
+        0,
+        RUNWAY.endNorth - Math.max(RUNWAY.startNorth, state[0]),
+      ),
+      crossTrackM: state[1],
+      rotationSpeedMps: fixedWing
+        ? 1.2 * stallSpeed(config, Math.max(0, -state[2]))
+        : 0,
+      takeoffPhase,
+      abortReason: takeoffAbortReason,
+      brake: runwayBrake,
+    };
+  }
+  function stopTakeoff(reason) {
+    takeoffPhase = "aborted";
+    takeoffAbortReason = reason;
+    if (groundRolling) {
+      armed = false;
+      launchAuthorized = false;
+      runwayBrake = 1;
+      pusherCommand = 0;
+      surfaceCommands = [0, 0, 0];
+      commands.fill(0);
+      integrals.fill(0);
+      navigation.reason = "takeoff-aborted";
+      target = { altitude: 0, roll: 0, pitch: 0, yawRate: 0, airspeed: 0 };
+    } else if (reason === "pilot") {
+      enterMode("position", "takeoff-aborted");
+      positionTarget.altitude = Math.max(30, -state[2]);
+    } else {
+      enterMode("land", "takeoff-aborted");
+      landing = { phase: "final" };
+    }
+  }
+  function abortTakeoff() {
+    if (
+      !fixedWing ||
+      !["runup", "roll", "rotate", "climb"].includes(takeoffPhase)
+    )
+      throw new Error("No runway takeoff is active");
+    stopTakeoff("pilot");
+  }
+  function navigateTakeoff(dt) {
+    const wing = aero(),
+      runway = runwaySnapshot();
+    const forwardAirspeed = inverseRotate(
+      rotation(state.slice(6, 10)),
+      state.slice(3, 6).map((v, i) => v - wind[i]),
+    )[0];
+    if (faults.pusherEfficiency <= 0.01) {
+      stopTakeoff("pusher-failure");
+      return;
+    }
+    if (battery.low || faults.linkLost) {
+      stopTakeoff("safety");
+      return;
+    }
+    if (groundRolling) {
+      if (
+        !runway.onRunway ||
+        (Math.abs(wrap(angles(state.slice(6, 10))[2])) > 0.35 &&
+          Math.hypot(state[3], state[4]) > 1)
+      ) {
+        stopTakeoff("runway-excursion");
+        return;
+      }
+      const stopping = Math.hypot(state[3], state[4]) ** 2 / (2 * 0.2 * G) + 5;
+      if (runway.distanceRemainingM < stopping + 5) {
+        stopTakeoff("runway-end");
+        return;
+      }
+      if (
+        time - takeoffStarted > 12 &&
+        forwardAirspeed < runway.rotationSpeedMps * 0.8
+      ) {
+        stopTakeoff("insufficient-airspeed");
+        return;
+      }
+      if (takeoffPhase === "runup" && state[17] > 0.85 && pusherCommand > 0.9) {
+        takeoffPhase = "roll";
+        runwayBrake = 0;
+      }
+      if (
+        takeoffPhase === "roll" &&
+        wing.airspeedMps >= runway.rotationSpeedMps &&
+        state[3] > 2 &&
+        forwardAirspeed >= 0.9 * runway.rotationSpeedMps &&
+        Math.abs(wrap(angles(state.slice(6, 10))[2])) < 0.25
+      )
+        takeoffPhase = "rotate";
+    } else {
+      takeoffPhase = "climb";
+      if (-state[2] >= 28) {
+        takeoffPhase = "complete";
+        positionTarget = { north: state[0], east: state[1], altitude: 30 };
+        explicitPosition = true;
+        enterMode("position");
+        return;
+      }
+    }
+    const course = Math.atan2(
+      observed.velocity[1],
+      Math.max(0.1, observed.velocity[0]),
+    );
+    const bank = groundRolling
+      ? 0
+      : clamp(
+          -0.6 * course - 0.015 * observed.position[1],
+          -(-state[2] < 10 ? 0.1 : 0.25),
+          -state[2] < 10 ? 0.1 : 0.25,
+        );
+    target = {
+      altitude: 30,
+      roll: bank,
+      pitch: 0,
+      yawRate: 0,
+      airspeed: Math.max(
+        config.cruiseAirspeed,
+        1.4 * stallSpeed(config, Math.max(0, -state[2])),
+      ),
+    };
+    navigation.targetPosition = [RUNWAY.endNorth, 0];
+  }
+
   function takeoff() {
+    if (takeoffActive()) throw new Error("Runway takeoff is already active");
     if (safetyReason)
       throw new Error(
         "Cannot take off during a safety return/landing; reset first",
       );
-    if (fixedWing && state[2] >= -0.1)
-      throw new Error(
-        "Fixed-wing runway takeoff is not implemented; reset starts airborne in trim",
-      );
+    if (fixedWing && state[2] >= -0.1) {
+      if (!runwaySnapshot().onRunway)
+        throw new Error("Aircraft must be on the runway before takeoff");
+      if (runwaySnapshot().distanceRemainingM < 25)
+        throw new Error("Insufficient runway remaining for takeoff");
+      if (Math.hypot(state[3], state[4]) > 0.5)
+        throw new Error("Stop on the runway before beginning takeoff");
+      if (Math.abs(wrap(angles(state.slice(6, 10))[2])) > 0.25)
+        throw new Error("Align North with the runway before takeoff");
+      arm();
+      launchAuthorized = true;
+      groundRolling = true;
+      runwayBrake = 1;
+      takeoffPhase = "runup";
+      takeoffAbortReason = "";
+      takeoffStarted = time;
+      navigation.mode = "takeoff";
+      navigation.reason = "";
+      navigation.completed = false;
+      speedIntegral = 0;
+      pusherCommand = 0;
+      target = {
+        altitude: 30,
+        roll: 0,
+        pitch: 0,
+        yawRate: 0,
+        airspeed: Math.max(config.cruiseAirspeed, 1.4 * stallSpeed(config)),
+      };
+      baseTarget = { ...target };
+      return;
+    }
     arm();
+    launchAuthorized = true;
+    if (hasWing) baseTarget.airspeed = config.cruiseAirspeed;
     positionTarget = {
       north: state[0],
       east: state[1],
@@ -1232,7 +1570,17 @@ export function createSimulation(configuration = {}) {
     enterMode(mode, reason);
   }
   function navigate(dt) {
-    if (!armed || crashed || failed) return;
+    if (
+      !armed ||
+      crashed ||
+      failed ||
+      (!launchAuthorized && state[2] >= -0.001)
+    )
+      return;
+    if (fixedWing && navigation.mode === "takeoff") {
+      navigateTakeoff(dt);
+      return;
+    }
     if (battery.critical) safetyMode("land", "critical-battery");
     else if (safetyReason !== "critical-battery") {
       if (faults.linkLost && !safetyReason) safetyMode("rtl", "link-loss");
@@ -1439,6 +1787,17 @@ export function createSimulation(configuration = {}) {
     for (let i = 13; i < 18; i++) state[i] = clamp(state[i], 0, 1);
     for (let i = 18; i < 21; i++)
       state[i] = clamp(state[i], -WING.surfaceLimit, WING.surfaceLimit);
+    if (
+      fixedWing &&
+      groundRolling &&
+      takeoffPhase === "rotate" &&
+      state[2] < -0.002 &&
+      state[5] < 0
+    ) {
+      groundRolling = false;
+      takeoffPhase = "climb";
+      runwayBrake = 0;
+    }
     if (hasWing && !crashed && state[2] >= 0 && !groundRolling) {
       if (
         fixedWing &&
@@ -1447,6 +1806,7 @@ export function createSimulation(configuration = {}) {
         Math.abs(angles(state.slice(6, 10))[0]) < 0.25
       ) {
         groundRolling = true;
+        runwayBrake = 1;
         state[2] = 0;
         state[5] = 0;
         for (let i = 10; i < 21; i++) state[i] = 0;
@@ -1490,11 +1850,21 @@ export function createSimulation(configuration = {}) {
       navigation.completed = true;
       disarm();
     }
-    if (groundRolling && Math.hypot(state[3], state[4]) < 0.25) {
-      navigation.completed = true;
+    if (
+      groundRolling &&
+      !["runup", "roll", "rotate"].includes(takeoffPhase) &&
+      Math.hypot(state[3], state[4]) < 0.08 &&
+      (navigation.mode === "land" || takeoffPhase === "aborted")
+    ) {
+      if (navigation.mode === "land") navigation.completed = true;
       disarm();
     }
-    if (crashed || (!armed && state[2] >= -0.001)) {
+    if (
+      crashed ||
+      (!armed &&
+        state[2] >= -0.001 &&
+        (!fixedWing || Math.hypot(state[3], state[4]) < 0.08))
+    ) {
       state.splice(3, 3, 0, 0, 0);
       for (let i = 10; i < 21; i++) state[i] = 0;
     }
@@ -1531,6 +1901,7 @@ export function createSimulation(configuration = {}) {
       attitude: angles(state.slice(6, 10)),
       rates: state.slice(10, 13),
       airframe: config.airframe,
+      runway: runwaySnapshot(),
       motors: state.slice(13, 17),
       propulsion: {
         command: pusherCommand,
@@ -1600,5 +1971,6 @@ export function createSimulation(configuration = {}) {
     clearFaults,
     setObstacles,
     setTransition,
+    abortTakeoff,
   };
 }

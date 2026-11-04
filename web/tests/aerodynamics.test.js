@@ -61,3 +61,18 @@ test("control surface moments vanish at zero airspeed and have correct control s
     );
   }
 });
+
+test("pure spanwise wind has no fictitious chordwise lift or alpha discontinuity at zero forward speed", () => {
+  const left = aerodynamicForces(config, [-1e-15, -6, 0]),
+    right = aerodynamicForces(config, [1e-15, -6, 0]);
+  near(left.alphaRad, 0);
+  near(right.alphaRad, 0);
+  near(left.liftN, 0);
+  near(right.liftN, 0);
+  near(left.forceBody[0], 0);
+  near(right.forceBody[0], 0);
+  assert.ok(
+    left.forceBody[1] > 0 && right.forceBody[1] > 0,
+    "drag opposes the lateral relative velocity",
+  );
+});

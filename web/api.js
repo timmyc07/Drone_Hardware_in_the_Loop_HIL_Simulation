@@ -6,11 +6,13 @@ export function createFlightApi(request, onState) {
     structuredClone(await request(structuredClone(command)));
   const withValue = (type) => (value) => send({ type, value });
   return Object.freeze({
-    version: "1.1",
+    version: "1.2",
     getState: () => send({ type: "inspect" }),
     getSensors: () => send({ type: "inspectSensors" }),
     setTargets: withValue("targets"),
     setMode: withValue("mode"),
+    takeoff: () => send({ type: "takeoff" }),
+    abortTakeoff: () => send({ type: "abortTakeoff" }),
     setTransition: withValue("transition"),
     setPusherFault: (efficiency) =>
       send({ type: "fault", fault: "pusher", value: { efficiency } }),

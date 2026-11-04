@@ -287,6 +287,7 @@ $("settings-fields").innerHTML = groups
   .join("");
 function populateConfig(values) {
   $("config-airframe").value = values.airframe;
+  $("config-start-on-ground").checked = values.startOnGround;
   $("model-preset").disabled = values.airframe !== "quadrotor";
   for (const [key, , , , , factor] of fields)
     $(`config-${key}`).value = Number((values[key] * factor).toFixed(8));
@@ -314,6 +315,7 @@ $("settings-form").onsubmit = async (event) => {
         ? { ...config }
         : { ...AIRFRAME_PRESETS[selectedAirframe] };
     next.airframe = selectedAirframe;
+    next.startOnGround = $("config-start-on-ground").checked;
     for (const [key, , , , , factor] of fields)
       next[key] = Number($(`config-${key}`).value) / factor;
     const validated = validateConfig(next);
@@ -688,7 +690,7 @@ function updateTelemetry() {
     : "空速與翼面狀態：不適用";
   $("wing-hint").textContent =
     kind === "fixedwing"
-      ? "固定翼由 30 m、15 m/s 空中配平開始；地面無跑道起飛，空中可復飛。位置及返航以盤旋保持，降落採固定航向進場，不能懸停。"
+      ? "固定翼預設由 30 m、15 m/s 空中配平開始；可在參數中選擇地面起始，空中可復飛。位置及返航以盤旋保持，降落採固定航向進場，不能懸停。"
       : kind === "vtol"
         ? "VTOL 轉換進度表示控制分配；翼面升力持續計算。"
         : "";
@@ -700,18 +702,58 @@ function updateTelemetry() {
   $("fault-pusher").disabled = !!replay || !wing;
   for (const option of $("training-select").options)
     option.disabled = !isCourseSupported(option.value, kind);
+  const runway = s.runway;
   document.querySelector('[data-command="takeoff"]').textContent =
-    kind === "fixedwing" ? "復飛" : "起飛";
+    kind === "fixedwing"
+      ? runway.weightOnWheels
+        ? "跑道起飛"
+        : "復飛"
+      : "起飛";
+  const takeoffPhases = {
+    idle: "待命",
+    runup: "啟動檢查",
+    roll: "滑跑",
+    rotate: "抬輪",
+    climb: "爬升",
+    complete: "完成",
+    aborted: "已中止",
+  };
+  const abortReasons = {
+    pilot: "操作者中止",
+    "pusher-failure": "巡航推進故障",
+    "runway-end": "跑道終點",
+    "runway-excursion": "偏離跑道",
+    "insufficient-airspeed": "空速不足",
+    safety: "安全保護",
+  };
+  $("runway-status").textContent =
+    `跑道：${runway.onRunway ? "跑道內" : "跑道外"} · ${runway.weightOnWheels ? "地面接觸" : "離地"} · ${takeoffPhases[runway.takeoffPhase]} · 抬輪空速門檻 ${runway.rotationSpeedMps.toFixed(1)} m/s · 剩餘 ${runway.distanceRemainingM.toFixed(1)} m · 側向偏離 ${runway.crossTrackM.toFixed(1)} m · 制動指令 ${(runway.brake * 100).toFixed(0)}%${runway.abortReason ? ` · ${abortReasons[runway.abortReason]}` : ""}`;
+  $("abort-takeoff").disabled =
+    !!replay ||
+    kind !== "fixedwing" ||
+    !["runup", "roll", "rotate", "climb"].includes(runway.takeoffPhase);
+  $("abort-takeoff").textContent = runway.weightOnWheels
+    ? "中止起飛"
+    : "結束起飛並保持飛行";
+  $("abort-hint").textContent =
+    !$("abort-takeoff").disabled && !runway.weightOnWheels
+      ? "空中結束起飛流程後會保持飛行。"
+      : "";
   document.querySelector('[data-scenario="hover"] strong').textContent =
     kind === "fixedwing" ? "巡航基準" : "穩定懸停";
   document.querySelector('[data-scenario="hover"] small').textContent =
-    kind === "fixedwing" ? "固定翼由空中配平狀態開始" : "維持高度與水平姿態";
+    kind === "fixedwing"
+      ? config.startOnGround
+        ? "固定翼由地面靜止狀態開始"
+        : "固定翼由空中配平狀態開始"
+      : "維持高度與水平姿態";
   $("flight-mode").querySelector('option[value="position"]').textContent =
     kind === "fixedwing" ? "位置盤旋" : "位置";
   $("target-airspeed").disabled = !!replay || !wing;
   const nav = s.navigation;
   const modeLabels = {
     attitude: "姿態",
+    takeoff: "跑道起飛",
     position: kind === "fixedwing" ? "位置盤旋" : "位置",
     mission: "任務",
     rtl: "返航",
@@ -732,6 +774,7 @@ function updateTelemetry() {
     "stale-sensor": "感測資料逾時",
     "obstacle-collision": "撞上障礙物",
     "ground-impact": "非正常觸地",
+    "takeoff-aborted": "起飛已中止",
     rtl: "返航降落",
     crashed: "碰撞",
   };
@@ -751,6 +794,7 @@ function updateTelemetry() {
     ? `故障：${s.faults.linkLost ? "連線中斷" : "連線正常"} · 馬達效率 ${s.faults.motorEfficiency.map((v) => `${Math.round(v * 100)}%`).join(" / ")}${wing ? ` · 巡航推進效率 ${Math.round(s.faults.pusherEfficiency * 100)}%` : ""}`
     : "故障：—";
   const training = s.training;
+  $("training-runway-hint").hidden = $("training-select").value !== "runway";
   $("training-status").textContent =
     training && !isCourseSupported(training.course, kind)
       ? "此練習不適用目前機型，請選擇其他練習。"
@@ -1057,6 +1101,7 @@ for (const id of [
   $(id).onchange = applyEnvironment;
 $("training-select").onchange = () => {
   const value = $("training-select").value;
+  $("training-runway-hint").hidden = value !== "runway";
   scene?.setGates(TRAINING_COURSES[value].gates);
   worker.postMessage({ type: "training", value });
 };
@@ -1095,6 +1140,7 @@ $("fault-apply").onclick = () =>
       efficiency: Number($("fault-efficiency").value),
     },
   });
+$("abort-takeoff").onclick = () => worker.postMessage({ type: "abortTakeoff" });
 $("fault-pusher").onclick = () =>
   worker.postMessage({
     type: "fault",
@@ -1299,7 +1345,7 @@ function updatePilot(now) {
 function setReplayControls(disabled) {
   document
     .querySelectorAll(
-      "#mission-workspace button:not(#mission-export), #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #sensor-export-csv, #flight-mode, [data-command], [data-mode], #position-apply, #fault-apply, #fault-link, #fault-clear, #fault-pusher, #transition-hover, #transition-cruise, #pilot-enable",
+      "#mission-workspace button:not(#mission-export), #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #sensor-export-csv, #flight-mode, [data-command], [data-mode], #position-apply, #fault-apply, #fault-link, #fault-clear, #abort-takeoff, #fault-pusher, #transition-hover, #transition-cruise, #pilot-enable",
     )
     .forEach((element) => {
       element.disabled = disabled;
@@ -1328,6 +1374,7 @@ function showReplayEvent(type, value) {
     sensorConfig = value;
   } else if (type === "training") {
     $("training-select").value = value;
+    $("training-runway-hint").hidden = value !== "runway";
     scene?.setGates(TRAINING_COURSES[value].gates);
   }
 }

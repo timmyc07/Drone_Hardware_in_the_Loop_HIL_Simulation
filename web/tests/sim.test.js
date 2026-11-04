@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createSimulation, DEFAULT_CONFIG, validateConfig } from "../sim.js";
+import {
+  createSimulation,
+  DEFAULT_CONFIG,
+  validateConfig,
+  RUNWAY,
+} from "../sim.js";
 
 const advance = (sim, seconds, dt = 0.005) => {
   for (let i = 0; i < Math.round(seconds / dt); i++) sim.step(dt);
@@ -684,7 +689,8 @@ test("fixed wing flies home runway entry, flare, touchdown and physical ground r
   const stopped = advance(sim, 2);
   assert.equal(stopped.target.altitude, 0);
   assert.equal(stopped.target.airspeed, 0);
-  assert.throws(() => sim.takeoff(), /runway takeoff/);
+  sim.takeoff();
+  assert.equal(sim.snapshot().runway.takeoffPhase, "runup");
 });
 
 test("VTOL conversion transfers support from real lift rotors to wing and back, then lands", () => {
@@ -804,4 +810,338 @@ test("gust then reset exactly matches a fresh simulation for all airframes, incl
     const fresh = createSimulation(config);
     assert.deepEqual(sim.step(), fresh.step());
   }
+});
+
+test("ground starts require an explicit takeoff authorization even after arm and navigation commands", () => {
+  for (const airframe of ["quadrotor", "fixedwing", "vtol"]) {
+    const sim = createSimulation({ airframe, startOnGround: true });
+    let s = sim.snapshot();
+    assert.deepEqual(s.position, [0, 0, 0]);
+    assert.deepEqual(s.velocity, [0, 0, 0]);
+    assert.equal(s.armed, false);
+    assert.equal(s.target.altitude, 0);
+    assert.equal(s.runway.takeoffPhase, "idle");
+    sim.arm();
+    sim.setMode("position");
+    sim.setMission([{ north: 0, east: 0, altitude: 0, hold: 0 }]);
+    sim.setMode("mission");
+    s = advance(sim, 2);
+    assert.deepEqual(s.position, [0, 0, 0]);
+    assert.equal(s.navigation.completed, false);
+    assert.ok(s.motors.every((v) => v === 0));
+    assert.equal(s.propulsion.motor, 0);
+    sim.takeoff();
+    s = advance(sim, 30);
+    assert.ok(-s.position[2] > (airframe === "quadrotor" ? 1.9 : 27));
+  }
+  for (const startOnGround of [1, "true", null, new Boolean(true)])
+    assert.throws(() => validateConfig({ startOnGround }));
+  const airborne = createSimulation({ airframe: "fixedwing" }),
+    before = airborne.snapshot();
+  assert.throws(() => airborne.setMode("takeoff"), /on the runway/);
+  assert.deepEqual(airborne.snapshot(), before);
+});
+
+test("runway takeoff integrates runup, roll, force-supported rotation and climbout without teleporting", () => {
+  const sim = createSimulation({ airframe: "fixedwing", startOnGround: true });
+  sim.setMode("takeoff");
+  let previous = sim.snapshot(),
+    liftOff,
+    complete;
+  const phases = [];
+  for (let i = 0; i < 40 * 200; i++) {
+    const s = sim.step();
+    if (phases.at(-1) !== s.runway.takeoffPhase)
+      phases.push(s.runway.takeoffPhase);
+    assert.ok(
+      Math.hypot(...s.position.map((v, j) => v - previous.position[j])) < 0.15,
+      "position must come from integration",
+    );
+    assert.ok(s.position[2] <= 1e-9, "wheels never penetrate ground");
+    if (s.runway.takeoffPhase === "runup" || s.runway.takeoffPhase === "roll")
+      near(s.position[2], 0, 1e-6);
+    if (s.runway.takeoffPhase === "rotate")
+      assert.ok(s.flight.airspeedMps >= s.runway.rotationSpeedMps);
+    if (!s.runway.weightOnWheels && !liftOff) {
+      liftOff = s;
+      assert.ok(s.position[0] > 1 && s.position[0] < RUNWAY.endNorth);
+      assert.ok(
+        s.flight.liftN + s.propulsion.thrustN * Math.sin(s.attitude[1]) >
+          1.2 * 9.80665,
+      );
+    }
+    if (s.runway.takeoffPhase === "complete") {
+      complete = s;
+      break;
+    }
+    previous = s;
+  }
+  assert.deepEqual(phases, ["runup", "roll", "rotate", "climb", "complete"]);
+  assert.ok(liftOff && complete);
+  assert.equal(complete.navigation.mode, "position");
+  assert.ok(-complete.position[2] >= 28);
+  assert.equal(complete.runway.abortReason, "");
+  const settled = advance(sim, 15);
+  near(settled.position[2], -30, 0.5);
+  assert.equal(settled.status, "flying");
+});
+
+test("runway takeoff maintains the centerline in headwind, tailwind and three meter-per-second crosswind", () => {
+  for (const windDirection of [0, 90, 180]) {
+    const sim = createSimulation({
+      airframe: "fixedwing",
+      startOnGround: true,
+      wind: 3,
+      windDirection,
+    });
+    sim.takeoff();
+    let done,
+      maxCross = 0;
+    for (let i = 0; i < 35 * 200; i++) {
+      const s = sim.step();
+      if (s.runway.weightOnWheels) {
+        maxCross = Math.max(maxCross, Math.abs(s.position[1]));
+        assert.equal(s.runway.onRunway, true);
+      }
+      assert.notEqual(s.runway.takeoffPhase, "aborted");
+      assert.notEqual(s.status, "crashed");
+      if (s.runway.takeoffPhase === "complete") {
+        done = s;
+        break;
+      }
+    }
+    assert.ok(done);
+    assert.ok(maxCross < 2);
+    assert.ok(done.flight.airspeedMps > 13);
+    assert.ok(-done.position[2] >= 28);
+  }
+});
+
+test("pilot abort and disarm brake a moving aircraft over time, preserve phase data and allow a stopped retry", () => {
+  for (const command of ["abortTakeoff", "disarm"]) {
+    const sim = createSimulation({
+      airframe: "fixedwing",
+      startOnGround: true,
+    });
+    sim.takeoff();
+    const moving = advance(sim, 1.5);
+    assert.ok(moving.velocity[0] > 4);
+    sim[command]();
+    assert.deepEqual(
+      sim.snapshot().velocity,
+      moving.velocity,
+      "abort cannot clear velocity",
+    );
+    const braking = sim.step();
+    assert.ok(braking.velocity[0] > 0);
+    assert.ok(braking.position[0] > moving.position[0]);
+    const stopped = advance(sim, 3);
+    assert.equal(stopped.runway.takeoffPhase, "aborted");
+    assert.equal(stopped.runway.abortReason, "pilot");
+    assert.equal(stopped.armed, false);
+    assert.ok(Math.hypot(...stopped.velocity) < 0.01);
+    assert.ok(stopped.position[0] > moving.position[0] + 1);
+    assert.equal(stopped.runway.onRunway, true);
+    sim.clearFaults();
+    sim.takeoff();
+    assert.equal(advance(sim, 25).runway.takeoffPhase, "complete");
+  }
+});
+
+test("pusher failure aborts roll and inadequate thrust never produces timer-based liftoff", () => {
+  const sim = createSimulation({ airframe: "fixedwing", startOnGround: true });
+  sim.takeoff();
+  advance(sim, 1.5);
+  sim.injectFault("pusher", { efficiency: 0 });
+  let s = sim.step();
+  assert.equal(s.runway.takeoffPhase, "aborted");
+  assert.equal(s.runway.abortReason, "pusher-failure");
+  assert.ok(s.velocity[0] > 0);
+  s = advance(sim, 4);
+  assert.equal(s.armed, false);
+  assert.ok(Math.hypot(...s.velocity) < 0.01);
+  near(s.position[2], 0);
+  sim.clearFaults();
+  sim.takeoff();
+  assert.equal(advance(sim, 25).runway.takeoffPhase, "complete");
+  const weak = createSimulation({ airframe: "fixedwing", startOnGround: true });
+  weak.injectFault("pusher", { efficiency: 0.02 });
+  weak.takeoff();
+  for (let i = 0; i < 15 * 200; i++) {
+    s = weak.step();
+    near(s.position[2], 0, 1e-7);
+    assert.equal(s.runway.weightOnWheels, true);
+  }
+  assert.equal(s.runway.takeoffPhase, "aborted");
+  assert.equal(s.runway.abortReason, "insufficient-airspeed");
+  assert.equal(s.armed, false);
+});
+
+test("large tailwind cannot masquerade as forward rotation airspeed; remaining-runway braking stops before the end", () => {
+  const sim = createSimulation({
+    airframe: "fixedwing",
+    startOnGround: true,
+    wind: 20,
+  });
+  sim.takeoff();
+  let aborted, stopped;
+  for (let i = 0; i < 30 * 200; i++) {
+    const s = sim.step();
+    near(s.position[2], 0, 1e-7);
+    assert.equal(s.runway.weightOnWheels, true);
+    assert.ok(
+      s.position[0] < RUNWAY.endNorth,
+      "abort must leave enough runway to stop",
+    );
+    assert.ok(!["rotate", "climb", "complete"].includes(s.runway.takeoffPhase));
+    if (s.runway.takeoffPhase === "aborted" && !aborted) aborted = s;
+    if (aborted && Math.hypot(...s.velocity) < 0.01) {
+      stopped = s;
+      break;
+    }
+  }
+  assert.ok(aborted && stopped);
+  assert.equal(aborted.runway.abortReason, "runway-end");
+  assert.ok(aborted.velocity[0] > 20);
+  assert.ok(stopped.position[0] > aborted.position[0] + 30);
+  assert.equal(stopped.armed, false);
+  assert.equal(stopped.runway.onRunway, true);
+});
+
+test("runway heading-control loss aborts rather than rotating in an uncontrolled crosswind", () => {
+  const sim = createSimulation({
+    airframe: "fixedwing",
+    startOnGround: true,
+    wind: 15,
+    windDirection: 90,
+  });
+  sim.takeoff();
+  let stopped;
+  for (let i = 0; i < 4 * 200; i++) {
+    const s = sim.step();
+    near(s.position[2], 0, 1e-6);
+    if (s.runway.takeoffPhase === "aborted") {
+      stopped = s;
+      break;
+    }
+  }
+  assert.ok(stopped);
+  assert.equal(stopped.runway.abortReason, "runway-excursion");
+  assert.equal(stopped.armed, false);
+  assert.equal(stopped.propulsion.command, 0);
+});
+
+test("active runway phases reject competing command mutations atomically and explicit airborne abort chooses a safe flight mode", () => {
+  const sim = createSimulation({ airframe: "fixedwing", startOnGround: true });
+  sim.takeoff();
+  let before = sim.snapshot();
+  for (const action of [
+    () => sim.setTargets({ airspeed: 0 }),
+    () => sim.setMode("position"),
+    () => sim.setPositionTarget({ north: 5, east: 0, altitude: 30 }),
+    () => sim.setMission([{ north: 20, east: 0, altitude: 30, hold: 0 }]),
+    () => sim.takeoff(),
+  ]) {
+    assert.throws(action);
+    assert.deepEqual(sim.snapshot(), before);
+  }
+  advance(sim, 4);
+  assert.equal(sim.snapshot().runway.takeoffPhase, "climb");
+  sim.abortTakeoff();
+  assert.equal(sim.snapshot().runway.takeoffPhase, "aborted");
+  assert.equal(sim.snapshot().navigation.mode, "position");
+  assert.equal(sim.snapshot().armed, true);
+  assert.equal(advance(sim, 20).status, "flying");
+});
+
+test("runway takeoff liftoff and climb agree when the RK4 integration step is refined", () => {
+  const a = createSimulation({ airframe: "fixedwing", startOnGround: true }),
+    b = createSimulation({ airframe: "fixedwing", startOnGround: true });
+  a.takeoff();
+  b.takeoff();
+  const coarse = advance(a, 12, 0.005),
+    fine = advance(b, 12, 0.0025);
+  near(coarse.position[0], fine.position[0], 0.3);
+  near(coarse.position[2], fine.position[2], 0.1);
+  near(coarse.flight.airspeedMps, fine.flight.airspeedMps, 0.1);
+  assert.equal(coarse.runway.takeoffPhase, "climb");
+  assert.equal(fine.runway.takeoffPhase, "climb");
+});
+
+test("full fixed-wing runway cycle flies mission, returns, lands, stops and takes off again with remaining runway", () => {
+  const sim = createSimulation({ airframe: "fixedwing", startOnGround: true });
+  sim.takeoff();
+  advance(sim, 28);
+  assert.equal(sim.snapshot().runway.takeoffPhase, "complete");
+  sim.setMission(
+    [
+      [60, 0],
+      [60, 60],
+      [0, 60],
+      [0, 0],
+    ].map(([north, east]) => ({ north, east, altitude: 30, hold: 1 })),
+  );
+  sim.setMode("mission");
+  let missionDone = false;
+  for (let i = 0; i < 160 * 200; i++) {
+    const s = sim.step();
+    assert.equal(s.status, "flying");
+    if (s.navigation.completed) {
+      missionDone = true;
+      break;
+    }
+  }
+  assert.ok(missionDone);
+  sim.setMode("rtl");
+  let s = advance(sim, 60);
+  assert.equal(s.navigation.completed, true);
+  assert.equal(s.navigation.mode, "rtl");
+  sim.setMode("land");
+  for (let i = 0; i < 150 * 200; i++) {
+    s = sim.step();
+    if (!s.armed) break;
+  }
+  assert.equal(s.status, "landed");
+  assert.equal(s.armed, false);
+  assert.equal(s.runway.onRunway, true);
+  assert.ok(s.runway.distanceRemainingM > 25);
+  const departure = s.position[0];
+  sim.takeoff();
+  s = advance(sim, 25);
+  assert.equal(s.runway.takeoffPhase, "complete");
+  assert.ok(s.position[0] > departure + 100);
+  assert.ok(-s.position[2] > 27);
+});
+
+test("pusher failure just after liftoff glides onto the remaining runway and brakes to a stop", () => {
+  const sim = createSimulation({ airframe: "fixedwing", startOnGround: true });
+  sim.takeoff();
+  advance(sim, 4);
+  const airborne = sim.snapshot();
+  assert.equal(airborne.runway.takeoffPhase, "climb");
+  assert.ok(airborne.position[2] < -1);
+  sim.injectFault("pusher", { efficiency: 0 });
+  let previous = airborne,
+    stopped;
+  for (let i = 0; i < 25 * 200; i++) {
+    const s = sim.step();
+    assert.ok(
+      Math.hypot(...s.position.map((v, j) => v - previous.position[j])) < 0.15,
+    );
+    assert.equal(s.runway.takeoffPhase, "aborted");
+    assert.equal(s.runway.abortReason, "pusher-failure");
+    assert.equal(s.propulsion.thrustN, 0);
+    assert.notEqual(s.status, "crashed");
+    previous = s;
+    if (!s.armed) {
+      stopped = s;
+      break;
+    }
+  }
+  assert.ok(stopped);
+  assert.equal(stopped.status, "landed");
+  assert.equal(stopped.runway.onRunway, true);
+  assert.ok(stopped.position[0] > airborne.position[0] + 20);
+  assert.ok(stopped.position[0] < RUNWAY.endNorth);
+  assert.ok(Math.hypot(...stopped.velocity) < 0.01);
 });

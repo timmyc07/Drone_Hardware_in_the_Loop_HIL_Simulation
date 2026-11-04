@@ -2,10 +2,28 @@ import { createSimulation, validateConfig } from "./sim.js";
 import { DEFAULT_SENSOR_CONFIG, validateSensorConfig } from "./sensors.js";
 import { TRAINING_COURSES, isCourseSupported } from "./training.js";
 
-export const RECORDING_VERSION = 4;
-export const MODEL_VERSION = "0.4.0";
+export const RECORDING_VERSION = 5;
+export const MODEL_VERSION = "0.5.0";
 const AIRFRAMES = ["quadrotor", "fixedwing", "vtol"];
-const MODES = ["attitude", "position", "mission", "rtl", "land"];
+const MODES = ["attitude", "position", "mission", "rtl", "land", "takeoff"];
+const TAKEOFF_PHASES = [
+  "idle",
+  "runup",
+  "roll",
+  "rotate",
+  "climb",
+  "complete",
+  "aborted",
+];
+const ABORT_REASONS = [
+  "",
+  "pilot",
+  "pusher-failure",
+  "runway-end",
+  "runway-excursion",
+  "insufficient-airspeed",
+  "safety",
+];
 const COURSES = Object.keys(TRAINING_COURSES);
 export const DEFAULT_SETUP = Object.freeze({
   sensors: DEFAULT_SENSOR_CONFIG,
@@ -48,7 +66,7 @@ const vector = (value, length, min = -1e9, max = 1e9) => {
     throw new Error("Invalid vector");
   return Array.from(value, (item) => number(item, min, max));
 };
-function environment(value) {
+export function validateEnvironment(value) {
   object(value);
   return {
     preset: choice(value.preset, ["lab", "field", "warehouse"]),
@@ -76,7 +94,7 @@ export function validateSetup(value, config = {}) {
     mission,
     obstacles,
     training: choice(merged.training, COURSES),
-    environment: environment(merged.environment),
+    environment: validateEnvironment(merged.environment),
     sensors: validateSensorConfig(merged.sensors),
   };
 }
@@ -135,7 +153,7 @@ function training(value, airframe) {
     score: number(value.score, 0, 1000),
     nextGate,
     holdSeconds: number(value.holdSeconds, 0),
-    reason: choice(value.reason, ["", "crashed"]),
+    reason: choice(value.reason, ["", "crashed", "takeoff-aborted"]),
   };
 }
 function sample(value, route, routeText, routeCache, airframe) {
@@ -179,6 +197,8 @@ function sample(value, route, routeText, routeCache, airframe) {
   for (const key of ["dropped", "steps"])
     resultMetrics[key] = count(metrics[key]);
   const mode = choice(nav.mode, MODES);
+  if (mode === "takeoff" && airframe !== "fixedwing")
+    throw new Error("Runway takeoff mode requires a fixed-wing airframe");
   if (mode === "mission" && !route.length)
     throw new Error("Mission mode requires waypoints");
   const home = vector(nav.home, 2, -500, 500);
@@ -223,6 +243,7 @@ function sample(value, route, routeText, routeCache, airframe) {
         "link-loss",
         "obstacle-collision",
         "ground-impact",
+        "takeoff-aborted",
       ]),
     },
     battery: {
@@ -243,7 +264,21 @@ function sample(value, route, routeText, routeCache, airframe) {
     propulsion: propulsion(value.propulsion),
     controlSurfaces: surfaces(value.controlSurfaces),
     flight: flight(value.flight),
+    runway: runway(value.runway),
     training: training(value.training, airframe),
+  };
+}
+function runway(value) {
+  object(value);
+  return {
+    onRunway: boolean(value.onRunway),
+    weightOnWheels: boolean(value.weightOnWheels),
+    distanceRemainingM: number(value.distanceRemainingM, 0),
+    crossTrackM: number(value.crossTrackM),
+    rotationSpeedMps: number(value.rotationSpeedMps, 0),
+    takeoffPhase: choice(value.takeoffPhase, TAKEOFF_PHASES),
+    abortReason: choice(value.abortReason, ABORT_REASONS),
+    brake: number(value.brake, 0, 1),
   };
 }
 function propulsion(value) {
@@ -289,6 +324,10 @@ function event(input, sim) {
   object(input);
   const result = { time: number(input.time, 0, 1800.001), type: input.type };
   switch (input.type) {
+    case "abortTakeoff":
+      if (sim.snapshot().airframe !== "fixedwing")
+        throw new Error("Runway takeoff abort requires a fixed-wing airframe");
+      break;
     case "transition":
       if (sim.snapshot().airframe !== "vtol")
         throw new Error("Transition events require a VTOL airframe");
@@ -313,6 +352,8 @@ function event(input, sim) {
       break;
     case "mode":
       result.value = choice(input.value, MODES);
+      if (result.value === "takeoff" && sim.snapshot().airframe !== "fixedwing")
+        throw new Error("Runway takeoff mode requires a fixed-wing airframe");
       break;
     case "position":
       sim.setMode("attitude");
@@ -340,7 +381,7 @@ function event(input, sim) {
       result.value = choice(input.value, COURSES);
       break;
     case "environment":
-      result.value = environment(input.value);
+      result.value = validateEnvironment(input.value);
       break;
     case "render":
       result.value = boolean(input.value);
@@ -473,7 +514,7 @@ export function validateRecording(value) {
   object(value);
   if (value.version !== RECORDING_VERSION)
     throw new Error(
-      "Unsupported recording version: version 4 required; legacy recordings are not supported",
+      "Unsupported recording version: version 5 required; legacy recordings are not supported",
     );
   if (
     value.format !== "flight-lab" ||
@@ -695,6 +736,14 @@ export function recordingToCsv(record) {
     "transition_phase_code",
     "transition_progress_fraction",
     "pusher_efficiency_fraction",
+    "on_runway_boolean",
+    "weight_on_wheels_boolean",
+    "runway_distance_remaining_m",
+    "runway_cross_track_m",
+    "rotation_speed_m_s",
+    "takeoff_phase_code",
+    "takeoff_abort_reason_code",
+    "wheel_brake_fraction",
   ];
   const rows = samples.map((s, index) =>
     [
@@ -768,6 +817,14 @@ export function recordingToCsv(record) {
       ),
       s.flight.transitionProgress,
       s.faults.pusherEfficiency,
+      Number(s.runway.onRunway),
+      Number(s.runway.weightOnWheels),
+      s.runway.distanceRemainingM,
+      s.runway.crossTrackM,
+      s.runway.rotationSpeedMps,
+      TAKEOFF_PHASES.indexOf(s.runway.takeoffPhase),
+      ABORT_REASONS.indexOf(s.runway.abortReason),
+      s.runway.brake,
     ].join(","),
   );
   return [header.join(","), ...rows].join("\n");

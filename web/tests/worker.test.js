@@ -108,7 +108,7 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   const record = validateRecording(exported.recording);
   assert.equal(record.config.seed, 18);
   assert.equal(record.scenario, "step");
-  assert.equal(record.version, 4);
+  assert.equal(record.version, 5);
   assert.equal(record.sensorFrames.length, record.samples.length);
   assert.equal(record.sensorFrames[0].time, record.samples[0].time);
   assert.equal(record.setup.sensors.gpsNoiseM, 1.5);
@@ -222,6 +222,41 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   );
   assert.equal(vtolRecord.samples[0].airframe, "vtol");
   assert.equal(vtolRecord.events.at(-1).type, "transition");
+  const ground = await call({
+    type: "reset",
+    config: { airframe: "fixedwing", startOnGround: true },
+    setup: { training: "runway" },
+  });
+  assert.equal(ground.ok, true);
+  assert.equal(ground.value.snapshot.armed, false);
+  assert.equal(ground.value.snapshot.position[2], 0);
+  assert.equal(ground.value.snapshot.runway.weightOnWheels, true);
+  assert.equal(ground.value.running, false);
+  assert.equal(
+    (
+      await call({
+        type: "reset",
+        config: { airframe: "fixedwing", startOnGround: "true" },
+      })
+    ).ok,
+    false,
+  );
+  const runup = await call({ type: "takeoff" });
+  assert.equal(runup.ok, true);
+  assert.equal(runup.value.snapshot.navigation.mode, "takeoff");
+  assert.equal(runup.value.snapshot.armed, true);
+  assert.equal(runup.value.running, false);
+  const aborted = await call({ type: "abortTakeoff", value: 1n });
+  assert.equal(aborted.ok, true);
+  assert.equal(aborted.value.snapshot.runway.takeoffPhase, "aborted");
+  const groundRecord = validateRecording(
+    (await call({ type: "apiExport" })).value,
+  );
+  assert.equal(groundRecord.config.startOnGround, true);
+  assert.equal(groundRecord.setup.training, "runway");
+  assert.equal(groundRecord.samples.at(-1).runway.abortReason, "pilot");
+  assert.equal(groundRecord.events.at(-1).type, "abortTakeoff");
+  assert.equal(Object.hasOwn(groundRecord.events.at(-1), "value"), false);
 });
 
 test(
@@ -346,5 +381,109 @@ test(
     assert.equal(record.samples.at(-1).time, stopped.snapshot.time);
     assert.equal(record.sensorFrames.at(-1).time, stopped.snapshot.time);
     assert.equal(record.samples.length, stopped.sampleCount);
+  },
+);
+
+test(
+  "environment changes after an air-started fixed wing lands and begins runway takeoff",
+  { timeout: 20000 },
+  async (t) => {
+    const url = new URL("../worker.js", import.meta.url).href;
+    const worker = new Worker(
+      `
+    import { parentPort } from 'node:worker_threads';
+    let now = 0;
+    globalThis.performance = { now: () => now };
+    globalThis.setTimeout = fn => setImmediate(() => { now += 100; fn(); });
+    globalThis.postMessage = data => parentPort.postMessage(data);
+    globalThis.onmessage = null;
+    parentPort.on('message', data => globalThis.onmessage({ data }));
+    await import(${JSON.stringify(url)});
+  `,
+      { eval: true, type: "module" },
+    );
+    t.after(() => worker.terminate());
+    const next = (predicate) =>
+      new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          cleanup();
+          reject(new Error("Worker reply timeout"));
+        }, 15000);
+        const cleanup = () => {
+          clearTimeout(timer);
+          worker.off("message", receive);
+          worker.off("error", failed);
+        };
+        const receive = (data) => {
+          if (predicate(data)) {
+            cleanup();
+            resolve(data);
+          }
+        };
+        const failed = (error) => {
+          cleanup();
+          reject(error);
+        };
+        worker.on("message", receive);
+        worker.once("error", failed);
+      });
+    let serial = 0;
+    const call = (command) => {
+      const requestId = ++serial;
+      const result = next(
+        (data) => data.type === "apiReply" && data.requestId === requestId,
+      );
+      worker.postMessage({ ...command, requestId });
+      return result;
+    };
+    await next((data) => data.type === "state");
+    assert.equal(
+      (
+        await call({
+          type: "reset",
+          config: { airframe: "fixedwing", startOnGround: false },
+          scenario: "hover",
+        })
+      ).ok,
+      true,
+    );
+    assert.equal((await call({ type: "mode", value: "land" })).ok, true);
+    await call({ type: "speed", value: 4 });
+    const landed = next(
+      (data) =>
+        data.type === "state" &&
+        data.snapshot.status === "landed" &&
+        !data.snapshot.armed &&
+        data.snapshot.runway.onRunway,
+    );
+    assert.equal((await call({ type: "play" })).ok, true);
+    await landed;
+    assert.equal((await call({ type: "pause" })).ok, true);
+    const takeoff = await call({ type: "takeoff" });
+    assert.equal(takeoff.ok, true);
+    assert.equal(takeoff.value.snapshot.navigation.mode, "takeoff");
+    const environment = { preset: "field", timeOfDay: 18, fog: 0.2, rain: 0.1 };
+    const changed = await call({ type: "environment", value: environment });
+    assert.equal(changed.ok, true);
+    assert.deepEqual(changed.value.setup.environment, environment);
+    const invalid = await call({
+      type: "environment",
+      value: { ...environment, fog: 2 },
+    });
+    assert.equal(invalid.ok, false);
+    assert.deepEqual(
+      (await call({ type: "inspect" })).value.setup.environment,
+      environment,
+    );
+    const exported = await call({ type: "apiExport" });
+    assert.equal(exported.ok, true);
+    const recording = validateRecording(exported.value);
+    assert.equal(recording.version, 5);
+    assert.ok(
+      recording.events.some(
+        (event) =>
+          event.type === "environment" && event.value.preset === "field",
+      ),
+    );
   },
 );

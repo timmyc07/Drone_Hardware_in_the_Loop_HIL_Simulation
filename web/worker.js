@@ -10,6 +10,7 @@ import {
   MODEL_VERSION,
   compactSnapshot,
   validateSetup,
+  validateEnvironment,
 } from "./recording.js";
 
 const DT = 0.005;
@@ -149,7 +150,16 @@ function reset(nextConfig, nextScenario, nextSetup) {
 
 function recordEvent(data) {
   const event = { time: sim.snapshot().time, type: data.type };
-  if (!["gust", "clearFaults", "takeoff", "arm", "disarm"].includes(data.type))
+  if (
+    ![
+      "gust",
+      "clearFaults",
+      "takeoff",
+      "abortTakeoff",
+      "arm",
+      "disarm",
+    ].includes(data.type)
+  )
     event.value = structuredClone(data.value);
   if (data.type === "fault") event.fault = data.fault;
   events.push(event);
@@ -307,6 +317,12 @@ onmessage = ({ data }) => {
         recordEvent(data);
         publish();
         break;
+      case "abortTakeoff":
+        sim.abortTakeoff();
+        setup.mode = sim.snapshot().navigation.mode;
+        recordEvent(data);
+        publish();
+        break;
       case "arm":
         sim.arm();
         recordEvent(data);
@@ -335,10 +351,7 @@ onmessage = ({ data }) => {
         break;
       }
       case "environment":
-        setup.environment = validateSetup(
-          { ...setup, environment: data.value },
-          config,
-        ).environment;
+        setup.environment = validateEnvironment(data.value);
         recordEvent({ ...data, value: setup.environment });
         publish();
         break;

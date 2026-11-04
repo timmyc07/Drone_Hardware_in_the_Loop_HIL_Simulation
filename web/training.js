@@ -16,6 +16,7 @@ export const TRAINING_COURSES = {
     ],
   },
   landing: { title: "精準降落", airframes: ["quadrotor", "vtol"], gates: [] },
+  runway: { title: "跑道起降循環", airframes: ["fixedwing"], gates: [] },
   circuit: {
     title: "巡航航線",
     airframes: ["quadrotor", "fixedwing", "vtol"],
@@ -50,7 +51,8 @@ export function createTrainer(course = "free", airframe = "quadrotor") {
     descended,
     inside,
     fencePenalty,
-    elapsed;
+    elapsed,
+    runwayStage;
   function reset() {
     previous = undefined;
     start = undefined;
@@ -64,6 +66,7 @@ export function createTrainer(course = "free", airframe = "quadrotor") {
     inside = false;
     fencePenalty = false;
     elapsed = 0;
+    runwayStage = 0;
   }
   function result() {
     return {
@@ -93,7 +96,8 @@ export function createTrainer(course = "free", airframe = "quadrotor") {
       throw new Error("Invalid training snapshot");
     }
     if (previous && snapshot.time < previous.time) reset();
-    if (complete || reason === "crashed") return result();
+    if (complete || reason === "crashed" || reason === "takeoff-aborted")
+      return result();
     if (start === undefined) start = snapshot.time;
     elapsed = snapshot.time - start;
     const dt = previous ? snapshot.time - previous.time : 0;
@@ -105,6 +109,57 @@ export function createTrainer(course = "free", airframe = "quadrotor") {
       reason = "crashed";
       score = 0;
       previous = snapshot;
+      return result();
+    }
+    if (course === "runway") {
+      const runway = snapshot.runway;
+      if (
+        !runway ||
+        typeof runway.onRunway !== "boolean" ||
+        typeof runway.weightOnWheels !== "boolean" ||
+        !Number.isFinite(runway.rotationSpeedMps) ||
+        !Number.isFinite(snapshot.flight?.airspeedMps)
+      ) {
+        throw new Error("Invalid runway snapshot");
+      }
+      if (
+        runway.takeoffPhase === "aborted" ||
+        snapshot.navigation?.reason === "takeoff-aborted"
+      ) {
+        reason = "takeoff-aborted";
+        score = 0;
+        previous = { time: snapshot.time, position: [...snapshot.position] };
+        return result();
+      }
+      if (!previous && runway.onRunway && runway.weightOnWheels && speed < 0.25)
+        runwayStage = 1;
+      if (runwayStage === 1 && ["runup", "roll"].includes(runway.takeoffPhase))
+        runwayStage = 2;
+      if (
+        runwayStage === 2 &&
+        ["rotate", "climb"].includes(runway.takeoffPhase)
+      )
+        runwayStage = 3;
+      if (
+        runwayStage === 3 &&
+        runway.takeoffPhase === "complete" &&
+        !runway.weightOnWheels &&
+        altitude >= 25 &&
+        snapshot.flight.airspeedMps >= runway.rotationSpeedMps
+      )
+        runwayStage = 4;
+      const landed =
+        runwayStage === 4 &&
+        snapshot.status === "landed" &&
+        runway.onRunway &&
+        runway.weightOnWheels &&
+        !snapshot.armed &&
+        speed < 0.25;
+      holdSeconds = landed ? holdSeconds + (inside ? dt : 0) : 0;
+      inside = landed;
+      complete = holdSeconds >= 2;
+      score = complete ? 1000 : 0;
+      previous = { time: snapshot.time, position: [...snapshot.position] };
       return result();
     }
     if (snapshot.navigation?.fenceBreached) fencePenalty = true;

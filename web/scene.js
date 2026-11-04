@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { lidarPoints } from "./sensors.js";
+import { RUNWAY } from "./sim.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 export function createScene(container) {
@@ -56,6 +57,54 @@ export function createScene(container) {
     parent.add(mesh);
     return mesh;
   };
+  const runway = new THREE.Group();
+  const runwayLength = RUNWAY.endNorth - RUNWAY.startNorth;
+  runway.position.z = -(RUNWAY.startNorth + RUNWAY.endNorth) / 2;
+  runway.rotation.y = -RUNWAY.headingRad;
+  scene.add(runway);
+  const asphalt = material(0x30383e, 0, 0.95);
+  const runwayPaint = material(0xe1e7df, 0, 0.8);
+  box(
+    runway,
+    [RUNWAY.halfWidth * 2, 0.006, runwayLength],
+    [0, -0.002, 0],
+    asphalt,
+  );
+  for (const side of [-1, 1]) {
+    box(
+      runway,
+      [0.22, 0.01, runwayLength],
+      [side * (RUNWAY.halfWidth - 0.5), 0.005, 0],
+      runwayPaint,
+    );
+    for (let stripe = 0; stripe < 4; stripe++) {
+      const x = side * (RUNWAY.halfWidth * (0.2 + stripe * 0.17));
+      for (const end of [-1, 1])
+        box(
+          runway,
+          [0.6, 0.01, 4],
+          [x, 0.005, end * (runwayLength / 2 - 4)],
+          runwayPaint,
+        );
+    }
+  }
+  for (
+    let offset = -runwayLength / 2 + 12;
+    offset < runwayLength / 2 - 12;
+    offset += 12
+  )
+    box(runway, [0.2, 0.01, 6], [0, 0.005, offset], runwayPaint);
+  // Arrow points north, toward the far end of the runway.
+  box(runway, [0.3, 0.012, 5], [0, 0.006, runwayLength / 2 - 14], runwayPaint);
+  for (const side of [-1, 1]) {
+    const head = box(
+      runway,
+      [0.3, 0.012, 3],
+      [side * 0.9, 0.006, runwayLength / 2 - 16],
+      runwayPaint,
+    );
+    head.rotation.y = (side * Math.PI) / 4;
+  }
   const quad = new THREE.Group();
   drone.add(quad);
   box(quad, [0.29, 0.085, 0.34], [0, 0, 0], dark);
@@ -99,6 +148,16 @@ export function createScene(container) {
 
   function winged(liftRotors) {
     const aircraft = new THREE.Group();
+    // Gear bottoms sit at the physical ground plane without changing the flight state.
+    aircraft.position.y = 0.271;
+    for (const [x, z] of [
+      [-0.13, 0.3],
+      [0.13, 0.3],
+      [0, -0.43],
+    ]) {
+      box(aircraft, [0.025, 0.18, 0.025], [x, -0.18, z], dark);
+      box(aircraft, [0.045, 0.05, 0.11], [x, -0.245, z], black);
+    }
     box(aircraft, [0.25, 0.19, 1.25], [0, 0, 0], shell);
     box(aircraft, [0.18, 0.1, 0.28], [0, 0.13, -0.25], black);
     box(aircraft, [2.2, 0.065, 0.35], [0, 0.02, -0.02], shell);
