@@ -290,7 +290,8 @@
         <section aria-labelledby="terrain-title">
           <h3 id="terrain-title">地形高度網格</h3>
           <p>
-            程序地形高度為基準面公尺，邊界與跑道、家點保護區須為平地；匯入 DEM 保留真實坡度。障礙盒及訓練門使用基準面座標。
+            程序地形高度為基準面公尺，邊界與跑道、家點保護區須為平地；匯入 DEM
+            保留真實坡度。障礙盒及訓練門使用基準面座標。
           </p>
           <div class="feature-actions">
             <button id="terrain-flat">平地</button
@@ -558,6 +559,17 @@
           <p id="hil-status" role="status">本機服務尚未連線</p>
           <p id="hil-controller"></p>
           <p id="hil-readiness"></p>
+          <p id="hil-health">飛控健康回報：未知</p>
+          <p id="hil-health-warning"></p>
+          <p>
+            此處只呈現飛控回報，預檢位元正常不保證解鎖或起飛成功。QGroundControl
+            也可能依事件及設定檢查判斷，並非此處完整重現。
+          </p>
+          <details>
+            <summary>查看原始健康診斷</summary>
+            <p id="hil-health-bits"></p>
+            <pre id="hil-health-messages" aria-label="飛控近期健康訊息"></pre>
+          </details>
           <p id="hil-stats"></p>
           <p>
             命令送出後請依解鎖狀態與高度回饋確認；外部估測值未提供時不會以真值冒充。

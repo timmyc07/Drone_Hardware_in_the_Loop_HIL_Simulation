@@ -1,0 +1,90 @@
+{
+  "format": "flight-lab-controller-health-validation",
+  "version": 1,
+  "appVersion": "0.19.0",
+  "tests": {
+    "passed": 275,
+    "failed": 0
+  },
+  "qgcPassiveEvidence": {
+    "version": "5.1.5",
+    "samples": 391,
+    "windowSeconds": 139.072,
+    "sysStatus": {
+      "present": 50380847,
+      "enabled": 50446383,
+      "health": 320915519,
+      "unhealthyMask": 65536,
+      "unhealthyNames": [
+        "RC_RECEIVER"
+      ],
+      "prearmEnabled": false,
+      "prearmReportedHealthy": true
+    },
+    "rawPacketSha256": "b8f3a4f994ae39f408c7ee1fa8f2c53ab97e1f17f49b19683657b18e67a93425",
+    "sources": {
+      "qgcSensorHealth": "https://github.com/mavlink/qgroundcontrol/blob/v5.1.5/src/Vehicle/Vehicle.cc#L1073-L1101",
+      "qgcStatusBranches": "https://github.com/mavlink/qgroundcontrol/blob/v5.1.5/src/Toolbar/MainStatusIndicator.qml#L73-L101",
+      "px4StatusMapping": "https://github.com/PX4/PX4-Autopilot/blob/v1.17.0/src/modules/mavlink/streams/SYS_STATUS.hpp#L138-L156",
+      "px4ConsoleReadiness": "https://github.com/PX4/PX4-Autopilot/blob/v1.17.0/src/modules/commander/Commander.cpp#L2415-L2426"
+    }
+  },
+  "px4": {
+    "version": "1.17.0",
+    "method": "Normal takeoff/land commands through local browser companion UI; not QGC GUI commands",
+    "airborneHealth": "armed",
+    "observedAirborneAltitudeM": 2.458949363070817,
+    "pausedHealth": "unknown",
+    "pausedClockUnchanged": true,
+    "normalLandingDisarmed": true,
+    "replay": {
+      "passed": true,
+      "bootstrapTicks": 17,
+      "acceptedActuators": 30514,
+      "checkedSamples": 2443,
+      "simSeconds": 122.12400000005732,
+      "maxPositionErrorM": 0,
+      "maxQuaternionError": 0,
+      "maxMotorError": 0
+    }
+  },
+  "ardupilot": {
+    "version": "4.7.2",
+    "method": "Owned native Session API with product SYS_STATUS polling; no harness-injected diagnostic requests",
+    "observedHealthStates": [
+      "unknown",
+      "failed",
+      "reported-ok",
+      "armed"
+    ],
+    "takeoffAttempts": 2,
+    "firstArmRejected": {
+      "command": 400,
+      "result": 4,
+      "messages": [
+        "Arm: Gyros inconsistent",
+        "Arm: AHRS: waiting for home"
+      ]
+    },
+    "maxAltitudeM": 2.542121329222298,
+    "normalLandAccepted": true,
+    "finalDisarmed": true,
+    "bridgeStayedDisabled": true,
+    "replay": {
+      "passed": true,
+      "bootstrapTicks": 1007,
+      "acceptedActuators": 59146,
+      "checkedSamples": 1184,
+      "simSeconds": 59.145999999952856,
+      "maxPositionErrorM": 0,
+      "maxQuaternionError": 0,
+      "maxMotorError": 0
+    }
+  },
+  "limits": [
+    "Native SITL, not hardware calibration",
+    "QGC GUI takeoff/land is not verified",
+    "Controller health cache is not stored or replayed in existing flight recordings",
+    "STATUSTEXT fragments are preserved independently, not reassembled"
+  ]
+}

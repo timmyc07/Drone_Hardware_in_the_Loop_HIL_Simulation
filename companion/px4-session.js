@@ -1,4 +1,5 @@
 import { GroundStationBridge } from "./gcs-bridge.js";
+import { ControllerHealth } from "./controller-health.js";
 import { EventEmitter } from "node:events";
 import net from "node:net";
 import { createHash } from "node:crypto";
@@ -53,6 +54,7 @@ export class Px4Session extends EventEmitter {
       armed: false,
       estimated: null,
     };
+    this.health = new ControllerHealth("px4");
     this.sequence = 0;
     this.bytes = 0;
     this.groundStation = new GroundStationBridge(this, {
@@ -66,7 +68,13 @@ export class Px4Session extends EventEmitter {
       groundStation: this.groundStation.snapshot(),
       clock: { stepUs: Math.round(DT * 1e6) },
       snapshot: this.sim?.snapshot() ?? null,
-      controller: { ...this.controller },
+      controller: {
+        ...this.controller,
+        health: this.health.snapshot({
+          verified: this.controller.verified,
+          live: this.phase === "running",
+        }),
+      },
       mission: this.missionManager?.snapshot() ?? null,
       stats: {
         ...this.stats,

@@ -280,3 +280,76 @@ export function externalMissionControls(
     ),
   };
 }
+
+const HEALTH_BITS = Object.freeze({
+  0: "陀螺儀",
+  1: "加速度計",
+  2: "磁力計",
+  3: "氣壓計",
+  4: "差壓感測器",
+  5: "GPS",
+  16: "遙控接收器",
+  21: "姿態與航向參考",
+  28: "預檢",
+});
+export function formatHilHealth(
+  health,
+  { verified = false, connected = false } = {},
+) {
+  const sys = health?.sysStatus;
+  const validAge = (value) => Number.isFinite(value) && value >= 0;
+  const heartbeatFresh =
+    connected &&
+    verified &&
+    validAge(health?.heartbeatAgeMs) &&
+    health.heartbeatAgeMs <= 5000;
+  const fresh = heartbeatFresh && validAge(sys?.ageMs) && sys.ageMs <= 5000;
+  const labels = {
+    unknown: "未知",
+    "reported-ok": "飛控預檢位元回報正常",
+    failed: "飛控預檢回報失敗",
+    "checks-disabled": "飛控回報預檢位元未啟用",
+    armed: "飛控目前已解鎖",
+  };
+  const prearm =
+    fresh || (heartbeatFresh && health.prearm === "armed")
+      ? labels[health.prearm] || labels.unknown
+      : labels.unknown;
+  const age = (value) =>
+    validAge(value) ? `${(value / 1000).toFixed(1)} 秒` : "未知";
+  const hex = (value) =>
+    `0x${(value >>> 0).toString(16).padStart(8, "0").toUpperCase()}`;
+  const unhealthy = sys
+    ? Array.from({ length: 32 }, (_, bit) => bit)
+        .filter((bit) => ((sys.unhealthyMask >>> bit) & 1) !== 0)
+        .map(
+          (bit) => `${HEALTH_BITS[bit] || `位元 ${bit}`}（${hex(2 ** bit)}）`,
+        )
+    : [];
+  const status = `${connected ? "飛控健康回報" : "飛控健康回報（連線中斷，以下為斷線時歷史快照）"}：${prearm} · ${connected ? "" : "斷線時"}心跳齡期 ${age(health?.heartbeatAgeMs)} · ${connected ? "" : "斷線時"}狀態齡期 ${age(sys?.ageMs)}`;
+  const names = sys
+    ? Array.from({ length: 32 }, (_, bit) => bit)
+        .filter((bit) => ((sys.unhealthyMask >>> bit) & 1) !== 0)
+        .map((bit) => HEALTH_BITS[bit] || `位元 ${bit}`)
+    : [];
+  const warning = !sys
+    ? "尚未收到飛控健康旗標。"
+    : `${fresh ? "飛控回報" : "上次回報（過期或未驗證）"}${names.length ? "尚未健康：" + names.join("、") : "無未健康位元"}。`;
+  const details = sys
+    ? `存在 ${hex(sys.present)} · 啟用 ${hex(sys.enabled)} · 健康 ${hex(sys.health)} · 啟用但不健康 ${hex(sys.unhealthyMask)}：${unhealthy.length ? unhealthy.join("、") : "無回報位元"}${fresh ? "" : "（資料過期或未驗證）"}`
+    : "尚未收到飛控健康旗標。";
+  const messages = (Array.isArray(health?.messages) ? health.messages : [])
+    .slice(-20)
+    .map((message) => {
+      const chunk =
+        message.chunked || message.id !== 0
+          ? ` · 未組合片段 ${message.id}/${message.chunkSeq}`
+          : "";
+      const content =
+        message.text === null
+          ? `無法獨立解碼（${message.rawBytesHex}）`
+          : message.text;
+      return `歷史訊息 · ${connected ? "" : "斷線時齡期 "}${age(message.ageMs)}前 · 嚴重度 ${message.severity}${chunk}：${content}`;
+    });
+  return { status, warning, details, messages };
+}

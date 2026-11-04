@@ -1567,3 +1567,10 @@ select:disabled {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+#hil-health-messages {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 15rem;
+  overflow: auto;
+  color: #d5e5e9;
+}

@@ -400,3 +400,115 @@ test("ground station configuration uses the authenticated request and ownership 
   assert.equal(externalMissionControls(controlled, points).start, false);
   assert.equal(hilWebControlAllowed({}), false);
 });
+
+test("health presentation preserves unknown, stale and enabled-unhealthy bit semantics", async () => {
+  const { formatHilHealth } = await import("../hil-client.js");
+  const health = {
+    heartbeatAgeMs: 100,
+    prearm: "reported-ok",
+    sysStatus: {
+      present: 50380847,
+      enabled: 50446383,
+      health: 320915519,
+      unhealthyMask: 65536,
+      ageMs: 200,
+    },
+    messages: [
+      {
+        severity: 4,
+        text: null,
+        rawBytesHex: "e4b8",
+        id: 7,
+        chunkSeq: 1,
+        ageMs: 30000,
+        chunked: true,
+      },
+    ],
+  };
+  const shown = formatHilHealth(health, { verified: true, connected: true });
+  assert.match(shown.status, /預檢位元回報正常/);
+  assert.match(shown.details, /遙控接收器（0x00010000）/);
+  assert.match(shown.warning, /飛控回報尚未健康：遙控接收器/);
+  assert.match(
+    formatHilHealth(
+      { ...health, sysStatus: null, prearm: "armed" },
+      { verified: true, connected: true },
+    ).status,
+    /目前已解鎖/,
+  );
+  assert.match(
+    formatHilHealth(
+      { ...health, sysStatus: null, prearm: "reported-ok" },
+      { verified: true, connected: true },
+    ).status,
+    /未知/,
+  );
+  assert.match(
+    formatHilHealth(
+      { ...health, heartbeatAgeMs: -1, prearm: "armed" },
+      { verified: true, connected: true },
+    ).status,
+    /未知/,
+  );
+  assert.match(
+    formatHilHealth(
+      { ...health, heartbeatAgeMs: null, prearm: "armed" },
+      { verified: true, connected: true },
+    ).status,
+    /未知/,
+  );
+  assert.match(
+    formatHilHealth(health, { verified: true, connected: false }).status,
+    /斷線時.*心跳齡期/,
+  );
+  assert.match(
+    formatHilHealth(
+      { ...health, sysStatus: { ...health.sysStatus, ageMs: 5001 } },
+      { verified: true, connected: true },
+    ).warning,
+    /上次回報（過期或未驗證）/,
+  );
+  assert.match(
+    shown.messages[0],
+    /歷史訊息.*未組合片段 7\/1.*無法獨立解碼（e4b8）/,
+  );
+  assert.match(
+    formatHilHealth(
+      { ...health, heartbeatAgeMs: 5001 },
+      { verified: true, connected: true },
+    ).status,
+    /未知/,
+  );
+  assert.match(
+    formatHilHealth(health, { verified: true, connected: false }).status,
+    /連線中斷.*未知/,
+  );
+  assert.match(
+    formatHilHealth(null, { verified: true, connected: true }).status,
+    /未知/,
+  );
+  assert.match(
+    formatHilHealth(
+      { ...health, prearm: "checks-disabled" },
+      { verified: true, connected: true },
+    ).status,
+    /預檢位元未啟用/,
+  );
+  assert.match(
+    formatHilHealth(
+      { ...health, prearm: "armed" },
+      { verified: true, connected: true },
+    ).status,
+    /目前已解鎖/,
+  );
+  assert.match(
+    formatHilHealth(
+      {
+        ...health,
+        sysStatus: { ...health.sysStatus, unhealthyMask: 0x80000000 },
+      },
+      { verified: true, connected: true },
+    ).details,
+    /位元 31（0x80000000）/,
+  );
+});

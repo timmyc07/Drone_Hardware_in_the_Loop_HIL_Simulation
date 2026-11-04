@@ -1,4 +1,5 @@
 import { GroundStationBridge } from "./gcs-bridge.js";
+import { ControllerHealth } from "./controller-health.js";
 import { EventEmitter } from "node:events";
 import dgram from "node:dgram";
 import net from "node:net";
@@ -64,6 +65,7 @@ export class ArduPilotSession extends EventEmitter {
       flightMode: null,
       estimated: null,
     };
+    this.health = new ControllerHealth("ardupilot");
     this.stats = {
       sensorPackets: 0,
       actuatorPackets: 0,
@@ -83,7 +85,13 @@ export class ArduPilotSession extends EventEmitter {
       clock: { stepUs: 1000 },
       snapshot: this.sim?.snapshot() ?? null,
       mission: this.missionManager.snapshot(),
-      controller: { ...this.controller },
+      controller: {
+        ...this.controller,
+        health: this.health.snapshot({
+          verified: this.controller.verified,
+          live: this.phase === "running",
+        }),
+      },
       stats: {
         ...this.stats,
         lastActuatorAgeMs: this.lastActuator
@@ -311,38 +319,7 @@ export class ArduPilotSession extends EventEmitter {
       });
       this.startedAt = Date.now();
       this.publisher = setInterval(() => this.publish(), 50);
-      this.heartbeatTimer = setInterval(() => {
-        if (
-          this.telemetry &&
-          !this.telemetry.destroyed &&
-          !this.groundStation.externalOwner
-        ) {
-          this.writeMavlink(
-            Object.assign(new minimal.Heartbeat(), {
-              type: 6,
-              autopilot: 8,
-              baseMode: 0,
-              customMode: 0,
-              systemStatus: 4,
-              mavlinkVersion: 3,
-            }),
-          );
-          this.missionManager.poll();
-          if (!this.controller.verified)
-            this.writeMavlink(commandMessage(512, [148]));
-          if (!this.controller.parametersVerified)
-            for (const key of Object.keys(this.expectedParameters))
-              if (!Object.hasOwn(this.confirmedParameters, key))
-                this.writeMavlink(
-                  Object.assign(new common.ParamRequestRead(), {
-                    targetSystem: 1,
-                    targetComponent: 1,
-                    paramId: key,
-                    paramIndex: -1,
-                  }),
-                );
-        }
-      }, 1000);
+      this.heartbeatTimer = setInterval(() => this.pollTelemetry(), 1000);
       this.watchdog = setInterval(() => {
         if (
           ["starting", "running"].includes(this.phase) &&
@@ -400,7 +377,43 @@ export class ArduPilotSession extends EventEmitter {
       throw new Error("ArduPilot MAVLink is not connected");
     this.telemetry.write(this.send(message));
   }
+  pollTelemetry() {
+    if (
+      !["starting", "running"].includes(this.phase) ||
+      !this.telemetry ||
+      this.telemetry.destroyed
+    )
+      return;
+    // ArduCopter does not stream SYS_STATUS by default; this read cannot change flight control.
+    this.writeMavlink(commandMessage(512, [1]));
+    if (this.groundStation.externalOwner) return;
+    this.writeMavlink(
+      Object.assign(new minimal.Heartbeat(), {
+        type: 6,
+        autopilot: 8,
+        baseMode: 0,
+        customMode: 0,
+        systemStatus: 4,
+        mavlinkVersion: 3,
+      }),
+    );
+    this.missionManager.poll();
+    if (!this.controller.verified)
+      this.writeMavlink(commandMessage(512, [148]));
+    if (!this.controller.parametersVerified)
+      for (const key of Object.keys(this.expectedParameters))
+        if (!Object.hasOwn(this.confirmedParameters, key))
+          this.writeMavlink(
+            Object.assign(new common.ParamRequestRead(), {
+              targetSystem: 1,
+              targetComponent: 1,
+              paramId: key,
+              paramIndex: -1,
+            }),
+          );
+  }
   onTelemetry(id, message) {
+    const healthUpdated = this.health.update(id, message);
     this.telemetryEpoch++;
     // Native home/GPS observations remain current even while another GCS owns mission execution.
     if (!this.groundStation.externalOwner || id === 242 || id === 24)
@@ -468,7 +481,12 @@ export class ArduPilotSession extends EventEmitter {
             `ArduPilot command ${message.command} rejected (${message.result})`,
           ),
         );
-    } else if (id === 253) this.log(`MAVLink: ${message.text}`);
+    } else if (id === 253 && healthUpdated) {
+      const entry = this.health.snapshot().messages.at(-1);
+      this.log(
+        `MAVLink: ${entry.text ?? `UTF-8 fragment [${entry.rawBytesHex}]`}`,
+      );
+    }
   }
   receiveServo(data, remote) {
     if (

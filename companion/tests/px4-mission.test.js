@@ -8,9 +8,11 @@ import {
 } from "../px4-mission.js";
 import { projectNed, sensorMessages, DEFAULT_ORIGIN } from "../px4-protocol.js";
 import { createSimulation, validateConfig } from "../../web/sim.js";
+import { ControllerHealth } from "../controller-health.js";
 const points = [{ north: 8, east: -8, altitude: 3, hold: 0.5 }];
 function fixture() {
   const s = {
+    health: new ControllerHealth("px4"),
     config: validateConfig({ startOnGround: true }),
     origin: DEFAULT_ORIGIN,
     phase: "running",

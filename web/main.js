@@ -12,6 +12,7 @@ import {
   createHilClient,
   isCompanionOrigin,
   hilFlightReadiness,
+  formatHilHealth,
   hilWebControlAllowed,
   validGroundStationPort,
   shouldFollowTakeoff,
@@ -2909,6 +2910,7 @@ function setExternalControls(disabled) {
 }
 function presentHilState(state) {
   hilState = state;
+  showHilHealth(state, true);
   renderGroundStation(state);
   for (const button of document.querySelectorAll("[data-hil-command]")) {
     const action = button.dataset.hilCommand;
@@ -2944,8 +2946,8 @@ function presentHilState(state) {
   const missing = hilFlightReadiness(state);
   $("hil-readiness").textContent = ["ardupilot", "px4"].includes(c?.kind)
     ? missing.length
-      ? `準備未完成：等待${missing.join("、")}確認。`
-      : "身分、參數及心跳已確認；健康檢查可能仍需暖機，請留意飛控訊息。"
+      ? `通訊準備未完成：等待${missing.join("、")}確認。`
+      : "通訊準備：身分、參數及心跳已確認。"
     : "";
   $("hil-controller").textContent = c
     ? `${c.kind === "ardupilot" ? "ArduPilot" : "PX4"} ${c.version || "—"} · 回報來源 ${c.sourceSha || c.reportedGitHash || "—"} · ${c.kind === "ardupilot" ? "Quad X" : `機型 ${c.sysAutostart ?? "—"}`} · ${c.armed ? "已解鎖" : "未解鎖"} · 飛行模式 ${c.flightMode || "—"} · 估測 ${c.estimated == null ? "未提供" : "已提供"}`
@@ -3002,6 +3004,7 @@ async function connectHil() {
     onState: presentHilState,
     onDisconnect: () => {
       hilClient = undefined;
+      showHilHealth(hilState, false);
       if (externalActive) {
         hilState = { ...hilState, phase: "fault" };
         setPlaying(false);
@@ -3012,6 +3015,16 @@ async function connectHil() {
   });
   await client.connect();
   hilClient = client;
+}
+function showHilHealth(state, connected) {
+  const formatted = formatHilHealth(state?.controller?.health, {
+    verified: state?.controller?.verified === true,
+    connected,
+  });
+  $("hil-health").textContent = formatted.status;
+  $("hil-health-warning").textContent = formatted.warning;
+  $("hil-health-bits").textContent = formatted.details;
+  $("hil-health-messages").textContent = formatted.messages.join("\n");
 }
 function focusFlightView() {
   document.querySelector('[data-workspace="flight"]').click();

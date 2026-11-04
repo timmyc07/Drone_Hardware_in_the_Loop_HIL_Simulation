@@ -902,7 +902,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "地面站連接",
     description:
-      "受限本機橋接已以 MAVProxy 驗證兩種飛控任務與交接；QGroundControl 已驗遙測，GUI 控制待驗。",
+      "受限本機橋接已以 MAVProxy 驗證兩種飛控任務與交接，可查看即時健康旗標及歷史訊息；QGroundControl GUI 控制待驗。",
     status: "partial",
     sources: [
       "https://github.com/PX4/PX4-Autopilot/blob/main/docs/en/simulation/index.md",

@@ -64,7 +64,12 @@ export class Px4Gcs {
     });
   }
   poll() {
-    if (this.closed || this.session.groundStation?.externalOwner) return;
+    if (
+      this.closed ||
+      !["starting", "running"].includes(this.session.phase) ||
+      this.session.groundStation?.externalOwner
+    )
+      return;
     try {
       this.send(
         Object.assign(new minimal.Heartbeat(), {
@@ -93,6 +98,7 @@ export class Px4Gcs {
   }
   handle(id, m) {
     const s = this.session;
+    s.health.update(id, m);
     if (id === 0) {
       if (
         m.autopilot !== 12 ||
