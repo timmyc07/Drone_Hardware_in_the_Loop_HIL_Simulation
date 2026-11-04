@@ -502,12 +502,40 @@
                 關閉渲染
               </button>
             </div>
+            <div class="transport">
+              <button id="play" class="button primary" disabled>
+                <span aria-hidden="true">▶</span> 開始模擬</button
+              ><button
+                id="reset"
+                class="icon-button"
+                aria-label="重設實驗"
+                title="重設實驗"
+              >
+                ↺</button
+              ><span class="transport-divider"></span
+              ><label class="speed-label" for="speed"
+                >速度
+                <select id="speed">
+                  <option value="0.5">0.5×</option>
+                  <option value="1" selected>1×</option>
+                  <option value="2">2×</option>
+                  <option value="4">4×</option>
+                </select></label
+              ><span id="run-label" class="run-label">初始化數值模型…</span
+              ><span id="model-rate" class="model-rate"
+                ><span class="dot"></span>200 Hz 模型</span
+              >
+            </div>
             <div id="viewport" class="viewport">
               <div class="viewport-grid" aria-hidden="true"></div>
               <div class="viewport-top">
-                <span id="view-status" class="view-badge"
-                  ><span class="dot"></span>準備就緒</span
-                >
+                <div class="view-indicators">
+                  <span id="view-status" class="view-badge"
+                    ><span class="dot"></span>準備就緒</span
+                  ><span class="view-clearance"
+                    >離地高度 <strong id="view-clearance">—</strong> m</span
+                  >
+                </div>
                 <div class="clock-label">
                   SIMULATION TIME <strong id="sim-time">00:00.00</strong>
                 </div>
@@ -536,30 +564,6 @@
                 執行這一步
               </button>
             </section>
-            <div class="transport">
-              <button id="play" class="button primary" disabled>
-                <span aria-hidden="true">▶</span> 開始模擬</button
-              ><button
-                id="reset"
-                class="icon-button"
-                aria-label="重設實驗"
-                title="重設實驗"
-              >
-                ↺</button
-              ><span class="transport-divider"></span
-              ><label class="speed-label" for="speed"
-                >速度
-                <select id="speed">
-                  <option value="0.5">0.5×</option>
-                  <option value="1" selected>1×</option>
-                  <option value="2">2×</option>
-                  <option value="4">4×</option>
-                </select></label
-              ><span id="run-label" class="run-label">初始化數值模型…</span
-              ><span id="model-rate" class="model-rate"
-                ><span class="dot"></span>200 Hz 模型</span
-              >
-            </div>
           </div>
 
           <div class="metric-grid" aria-label="即時狀態">

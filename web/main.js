@@ -839,6 +839,7 @@ function updateTelemetry() {
   renderGimbal();
   if (!latest) return;
   const s = latest;
+  $("view-clearance").textContent = s.ground.clearanceM.toFixed(2);
   for (const t of targets) {
     const value = s.target[t.key] * t.factor;
     $(`target-${t.key}`).value = value;

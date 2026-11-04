@@ -1529,3 +1529,22 @@ select:disabled {
   margin: 6px 0;
   line-height: 1.45;
 }
+.view-indicators {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.view-clearance {
+  padding: 6px 10px;
+  color: #e5f4f0;
+  background: #102b32e8;
+  border: 1px solid #64d8c9a0;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.view-clearance strong {
+  color: #8ff0da;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
