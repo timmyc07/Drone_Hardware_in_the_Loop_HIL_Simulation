@@ -832,7 +832,7 @@ test("ground starts require an explicit takeoff authorization even after arm and
     assert.equal(s.propulsion.motor, 0);
     sim.takeoff();
     s = advance(sim, 30);
-    assert.ok(-s.position[2] > (airframe === "quadrotor" ? 1.9 : 27));
+    assert.ok(-s.position[2] > (airframe === "fixedwing" ? 27 : 1.9));
   }
   for (const startOnGround of [1, "true", null, new Boolean(true)])
     assert.throws(() => validateConfig({ startOnGround }));
@@ -1499,4 +1499,284 @@ test("new multirotor inputs enforce count-specific thrust capacity, ground autho
     assert.ok(stopped.motors.every((v) => v < 1e-8));
     near(Math.hypot(...stopped.quaternion), 1, 1e-12);
   }
+});
+
+function terrainPlateau(height) {
+  const heights = Array(81).fill(0);
+  for (let r = 2; r <= 6; r++)
+    for (let c = 2; c <= 6; c++) heights[r * 9 + c] = height;
+  return {
+    kind: "heightfield",
+    north: -40,
+    east: 40,
+    cellSize: 10,
+    rows: 9,
+    cols: 9,
+    heights,
+  };
+}
+
+test("multirotors and hovering VTOL follow real terrain AGL, land on raised or negative ground and take off locally", () => {
+  for (const airframe of ["quadrotor", "hexarotor", "octorotor", "vtol"])
+    for (const height of [3, -5]) {
+      const sim = createSimulation(
+        { airframe },
+        { terrain: terrainPlateau(height) },
+      );
+      sim.setMode("position");
+      sim.setPositionTarget({
+        north: 0,
+        east: 80,
+        altitude: 2,
+        altitudeReference: "agl",
+      });
+      let minimum = Infinity,
+        s;
+      for (let i = 0; i < 14000; i++) {
+        s = sim.step();
+        minimum = Math.min(minimum, s.ground.clearanceM);
+      }
+      assert.equal(s.status, "flying");
+      near(s.ground.heightM, height, 1e-8);
+      near(s.ground.clearanceM, 2, 0.05);
+      near(s.target.altitude, height + 2, 0.05);
+      assert.equal(s.navigation.altitudeReference, "agl");
+      assert.equal(s.navigation.positionAltitude, 2);
+      assert.ok(
+        minimum > 1,
+        "AGL tracking must avoid ground while crossing the slope",
+      );
+      sim.setMode("land");
+      s = advance(sim, 25);
+      assert.equal(s.status, "landed");
+      assert.equal(s.armed, false);
+      near(s.position[2], -height, 1e-8);
+      near(s.ground.clearanceM, 0, 1e-8);
+      assert.equal(s.navigation.altitudeReference, "datum");
+      near(s.target.altitude, height, 1e-8);
+      const imu = sim.readSensors().specificForceFrd;
+      near(Math.hypot(...imu), 9.80665, 1e-8);
+      sim.takeoff();
+      s = advance(sim, 15);
+      assert.equal(s.status, "flying");
+      near(s.ground.clearanceM, 2, 0.05);
+    }
+});
+
+test("continuous terrain sweep catches a thin ridge even when both RK4 endpoints are above the mesh and freezes crash state", () => {
+  const terrain = {
+    kind: "heightfield",
+    north: 299.5,
+    east: -1,
+    cellSize: 1,
+    rows: 3,
+    cols: 3,
+    heights: [0, 0, 0, 0, 31, 0, 0, 0, 0],
+  };
+  const sim = createSimulation({ airframe: "fixedwing" }, { terrain }),
+    free = createSimulation({ airframe: "fixedwing" });
+  let before, hit;
+  for (let i = 0; i < 1100; i++) {
+    before = sim.snapshot();
+    free.step(0.02);
+    hit = sim.step(0.02);
+    if (hit.status === "crashed") break;
+  }
+  assert.equal(hit.navigation.reason, "terrain-impact");
+  assert.equal(hit.armed, false);
+  assert.ok(before.ground.clearanceM > 1);
+  assert.ok(free.snapshot().position[0] > hit.position[0]);
+  const endpoint = free.snapshot();
+  const h = 31 * Math.max(0, 1 - Math.abs(endpoint.position[0] - 300.5));
+  assert.ok(
+    -endpoint.position[2] - h > 1,
+    "a height-at-endpoint collision test would miss this ridge",
+  );
+  const impactPosition = hit.position,
+    impactAttitude = hit.attitude;
+  advance(sim, 1);
+  assert.deepEqual(sim.snapshot().position, impactPosition);
+  assert.deepEqual(sim.snapshot().attitude, impactAttitude);
+});
+
+test("terrain commands, AGL mode guards and altitude-reference changes are atomic and reset restores constructor ground", () => {
+  const fenced = createSimulation({}, { terrain: terrainPlateau(1) });
+  fenced.setMode("position");
+  fenced.setPositionTarget({
+    north: 0,
+    east: 80,
+    altitude: 98,
+    altitudeReference: "agl",
+  });
+  const oldFenceState = fenced.snapshot();
+  assert.throws(() => fenced.setTerrain(terrainPlateau(3)), /geofence/);
+  assert.deepEqual(fenced.snapshot(), oldFenceState);
+  const initial = terrainPlateau(3),
+    sim = createSimulation({}, { terrain: initial });
+  sim.setMode("position");
+  sim.setPositionTarget({
+    north: 0,
+    east: 80,
+    altitude: 2,
+    altitudeReference: "agl",
+  });
+  advance(sim, 70);
+  const safe = sim.snapshot();
+  assert.throws(() => sim.setTerrain(terrainPlateau(6)), /intersect/);
+  assert.deepEqual(sim.snapshot(), safe);
+  const oldPosition = safe.position;
+  sim.setTerrain(terrainPlateau(4));
+  assert.deepEqual(sim.snapshot().position, oldPosition);
+  near(sim.snapshot().ground.heightM, 4, 1e-8);
+  const snapshot = sim.snapshot();
+  assert.throws(
+    () =>
+      sim.setPositionTarget({
+        north: 0,
+        east: 80,
+        altitude: 98,
+        altitudeReference: "agl",
+      }),
+    /geofence/,
+  );
+  assert.deepEqual(sim.snapshot(), snapshot);
+  assert.throws(() =>
+    sim.setPositionTarget({
+      north: 0,
+      east: 80,
+      altitude: 2,
+      altitudeReference: "bad",
+    }),
+  );
+  assert.deepEqual(sim.snapshot(), snapshot);
+  sim.setTargets({ altitude: 6 });
+  assert.equal(sim.snapshot().navigation.altitudeReference, "datum");
+  assert.equal(sim.snapshot().navigation.positionAltitude, 6);
+  sim.setMode("attitude");
+  assert.throws(
+    () =>
+      sim.setPositionTarget({
+        north: 0,
+        east: 80,
+        altitude: 2,
+        altitudeReference: "agl",
+      }),
+    /position/,
+  );
+  sim.reset();
+  assert.deepEqual(
+    sim.snapshot(),
+    createSimulation({}, { terrain: initial }).snapshot(),
+  );
+  const wing = createSimulation({ airframe: "fixedwing" });
+  wing.setMode("position");
+  assert.throws(
+    () =>
+      wing.setPositionTarget({
+        north: 0,
+        east: 0,
+        altitude: 2,
+        altitudeReference: "agl",
+      }),
+    /AGL/,
+  );
+  const vtol = createSimulation({ airframe: "vtol" });
+  vtol.setMode("position");
+  vtol.setPositionTarget({
+    north: 0,
+    east: 0,
+    altitude: 12,
+    altitudeReference: "agl",
+  });
+  advance(vtol, 10);
+  const hover = vtol.snapshot();
+  assert.throws(() => vtol.setTransition("cruise"), /datum/);
+  assert.deepEqual(vtol.snapshot(), hover);
+  vtol.setTargets({ altitude: 12 });
+  assert.doesNotThrow(() => vtol.setTransition("cruise"));
+  advance(vtol, 15);
+  vtol.setTransition("hover");
+  let transitionTail = null;
+  for (let i = 0; i < 3000; i++) {
+    const current = vtol.step();
+    if (
+      current.flight.transitionProgress > 0 &&
+      current.flight.transitionProgress < 0.01
+    ) {
+      transitionTail = current;
+      break;
+    }
+  }
+  assert.ok(
+    transitionTail,
+    "real VTOL transition must reach a nonzero tail below one percent",
+  );
+  assert.throws(
+    () =>
+      vtol.setPositionTarget({
+        north: transitionTail.position[0],
+        east: transitionTail.position[1],
+        altitude: 2,
+        altitudeReference: "agl",
+      }),
+    /AGL/,
+  );
+  assert.deepEqual(vtol.snapshot(), transitionTail);
+  for (
+    let i = 0;
+    i < 3000 && vtol.snapshot().flight.transitionProgress !== 0;
+    i++
+  )
+    vtol.step();
+  assert.equal(vtol.snapshot().flight.transitionProgress, 0);
+  assert.doesNotThrow(() =>
+    vtol.setPositionTarget({
+      north: vtol.snapshot().position[0],
+      east: vtol.snapshot().position[1],
+      altitude: 2,
+      altitudeReference: "agl",
+    }),
+  );
+  const external = createSimulation(
+    { startOnGround: true },
+    { controlSource: "external" },
+  );
+  assert.deepEqual(external.snapshot().ground, {
+    heightM: 0,
+    normalNed: [0, 0, -1],
+    clearanceM: 0,
+  });
+  assert.throws(() => external.setTerrain({ kind: "flat" }), /disabled/);
+  assert.throws(
+    () =>
+      createSimulation(
+        { startOnGround: true },
+        { controlSource: "external", terrain: initial },
+      ),
+    /flat/,
+  );
+});
+
+test("wing-borne VTOL collides with terrain instead of gaining a fictitious hillside landing", () => {
+  const terrain = {
+    kind: "heightfield",
+    north: 220,
+    east: -1,
+    cellSize: 1,
+    rows: 3,
+    cols: 3,
+    heights: [0, 0, 0, 0, 100, 0, 0, 0, 0],
+  };
+  const sim = createSimulation(
+    { airframe: "vtol", geofenceRadius: 500 },
+    { terrain },
+  );
+  sim.setTargets({ altitude: 12 });
+  advance(sim, 10);
+  sim.setTransition("cruise");
+  const s = advance(sim, 35);
+  assert.equal(s.status, "crashed");
+  assert.equal(s.navigation.reason, "terrain-impact");
+  assert.equal(s.armed, false);
+  assert.ok(s.position[0] < 222);
 });

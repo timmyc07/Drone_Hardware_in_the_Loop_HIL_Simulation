@@ -32,6 +32,15 @@ class Element {
 test("numeric input updates exported draft, retains subsequent edits and supports readonly", async () => {
   const ids = [
     "scene-dirty",
+    "terrain-north",
+    "terrain-east",
+    "terrain-cell",
+    "terrain-heights",
+    "terrain-error",
+    "terrain-flat",
+    "terrain-hill",
+    "terrain-ridge",
+    "terrain-valley",
     "scene-name",
     "scene-course",
     "scene-tool",
@@ -75,6 +84,26 @@ test("numeric input updates exported draft, retains subsequent edits and support
       },
       notify: () => {},
     });
+    elements["terrain-ridge"].onclick();
+    elements["scene-export"].onclick();
+    assert.equal(Math.max(...exported.terrain.heights), 10);
+    elements["terrain-valley"].onclick();
+    elements["scene-export"].onclick();
+    assert.equal(Math.min(...exported.terrain.heights), -8);
+    elements["terrain-flat"].onclick();
+    elements["scene-export"].onclick();
+    assert.equal(exported.terrain.kind, "flat");
+    elements["terrain-hill"].onclick();
+    elements["scene-export"].onclick();
+    assert.equal(exported.terrain.kind, "heightfield");
+    assert.equal(Math.max(...exported.terrain.heights), 12);
+    const terrainText = elements["terrain-heights"].value;
+    elements["terrain-heights"].value = "invalid";
+    elements["terrain-heights"].oninput();
+    assert.equal(elements["scene-export"].disabled, true);
+    elements["terrain-heights"].value = terrainText;
+    elements["terrain-heights"].oninput();
+    assert.equal(elements["scene-export"].disabled, false);
     elements["scene-add-obstacle"].onclick();
     let field = elements["scene-object-fields"].children[0].children[0];
     field.value = "10";

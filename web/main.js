@@ -115,6 +115,7 @@ let internalSaved;
 const worker = new Worker(new URL("./worker.js", import.meta.url), {
   type: "module",
 });
+let lastAltitudeReference;
 let requestId = 0;
 const pendingApi = new Map();
 const apiSubscribers = new Set();
@@ -232,7 +233,7 @@ const targets = [
   },
   {
     key: "altitude",
-    label: "目標高度",
+    label: "目標高度（基準面）",
     min: 0,
     max: 100,
     step: 0.1,
@@ -772,6 +773,7 @@ worker.onmessage = ({ data }) => {
   timing = data.timing;
   sampleCount = data.sampleCount;
   if (data.message === "reset") {
+    lastAltitudeReference = undefined;
     clearCameraPreview();
     config = data.config;
     scenario = data.scenario;
@@ -989,6 +991,33 @@ function updateTelemetry() {
     kind === "fixedwing" ? "位置盤旋" : "位置";
   $("target-airspeed").disabled = !!replay || !wing;
   const nav = s.navigation;
+  const aglOption = $("position-reference").querySelector(
+    'option[value="agl"]',
+  );
+  aglOption.disabled =
+    kind === "fixedwing" ||
+    (kind === "vtol" &&
+      (s.flight.transition !== "hover" || s.flight.transitionProgress !== 0));
+  if (nav.altitudeReference !== lastAltitudeReference) {
+    $("position-reference").value = nav.altitudeReference;
+    lastAltitudeReference = nav.altitudeReference;
+  }
+  $("ground-status").textContent =
+    externalActive && s.controlSource !== "external"
+      ? "等待外部飛控模型真值。"
+      : "地表基準高度 " +
+        s.ground.heightM.toFixed(1) +
+        " m · 離地高度 " +
+        s.ground.clearanceM.toFixed(1) +
+        " m" +
+        (externalActive
+          ? " · 模型真值"
+          : " · 位置目標 " +
+            nav.positionAltitude.toFixed(1) +
+            " m（" +
+            (nav.altitudeReference === "agl" ? "離地" : "基準面") +
+            "）");
+
   const modeLabels = {
     attitude: "姿態",
     takeoff: "跑道起飛",
@@ -1573,6 +1602,7 @@ $("position-apply").onclick = () => {
     north: Number($("position-north").value),
     east: Number($("position-east").value),
     altitude: Number($("position-altitude").value),
+    altitudeReference: $("position-reference").value,
   };
   worker.postMessage({ type: "mode", value: "position" });
   worker.postMessage({ type: "position", value });
@@ -1802,7 +1832,7 @@ function setReplayControls(disabled) {
   renderGimbal();
   document
     .querySelectorAll(
-      "#mission-workspace button:not(#mission-export), #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #camera-capture, #camera-add, #camera-live, #flight-mode, [data-command], [data-mode], #position-apply, #fault-apply, #fault-link, #fault-clear, #abort-takeoff, #fault-pusher, #transition-hover, #transition-cruise, #pilot-enable",
+      "#mission-workspace button:not(#mission-export), #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #camera-capture, #camera-add, #camera-live, #flight-mode, [data-command], [data-mode], #position-reference, #position-apply, #fault-apply, #fault-link, #fault-clear, #abort-takeoff, #fault-pusher, #transition-hover, #transition-cruise, #pilot-enable",
     )
     .forEach((element) => {
       element.disabled = disabled;
@@ -1834,6 +1864,7 @@ function renderScene(value, viewOnly) {
   lastRenderedSceneReadonly = viewOnly;
   sceneEditor?.setScene(value, viewOnly);
   showSceneControls(value);
+  scene?.setTerrain(value.terrain);
   scene?.setEnvironment(value.environment);
   scene?.setObstacles(value.obstacles);
   scene?.setGates(resolveTrainingGates(value, config.airframe));
@@ -2454,9 +2485,11 @@ let hilPreviousGrounded;
 let hilFollowed = false;
 function setExternalControls(disabled) {
   renderGimbal();
+  if (disabled && latest?.controlSource !== "external")
+    $("ground-status").textContent = "等待外部飛控模型真值。";
   $("hil-type").disabled = disabled;
   const selector =
-    "#reset, #settings-open, #speed, #import-open, #target-controls input, #gust, [data-scenario], #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #flight-mode, [data-mode], #position-apply, #fault-apply, #fault-link, #fault-clear, #fault-pusher, #abort-takeoff, #transition-hover, #transition-cruise, #pilot-enable";
+    "#reset, #settings-open, #speed, #import-open, #target-controls input, #gust, [data-scenario], #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #flight-mode, [data-mode], #position-reference, #position-apply, #fault-apply, #fault-link, #fault-clear, #fault-pusher, #abort-takeoff, #transition-hover, #transition-cruise, #pilot-enable";
   document.querySelectorAll(selector).forEach((element) => {
     element.disabled = disabled;
   });
@@ -2673,6 +2706,8 @@ $("hil-start").onclick = async () => {
       "外部飛控模式未提供此工作區的感測器讀值。";
     drawLidar(null);
     scene?.setSensorScan(null);
+    scene?.setTerrain({ kind: "flat" });
+    scene?.setEnvironment({ preset: "lab", timeOfDay: 12, fog: 0, rain: 0 });
     scene?.setObstacles([]);
     scene?.setMission([]);
     scene?.setGates([]);

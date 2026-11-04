@@ -1507,3 +1507,15 @@ select:disabled {
 #scene-object-fields input {
   width: 7rem;
 }
+#terrain-heights {
+  display: block;
+  width: min(100%, 42rem);
+  min-height: 10rem;
+  padding: 0.6rem;
+  color: #d9e5e9;
+  background: #101c2d;
+  border: 1px solid #496175;
+  border-radius: 6px;
+  font: inherit;
+  line-height: 1.5;
+}

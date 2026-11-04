@@ -70,7 +70,8 @@
       <section id="mission-workspace" class="panel workspace-extra" hidden>
         <h2>任務規劃 <span>MISSION PLANNER</span></h2>
         <p>
-          點選地圖新增航點；北方朝上，東方朝右。<span id="map-extent"
+          點選地圖新增航點；北方朝上，東方朝右，航點高度使用基準面。<span
+            id="map-extent"
             >座標範圍 ±50 m。</span
           >
         </p>
@@ -199,6 +200,47 @@
           aria-label="場景俯視圖，可選取、放置與拖曳；下方欄位可使用鍵盤編輯"
           role="img"
         ></canvas>
+        <section aria-labelledby="terrain-title">
+          <h3 id="terrain-title">地形高度網格</h3>
+          <p>
+            高度為基準面公尺；邊界與跑道、家點保護區須為平地。障礙盒及訓練門仍使用基準面座標。
+          </p>
+          <div class="feature-actions">
+            <button id="terrain-flat">平地</button
+            ><button id="terrain-hill">山丘</button
+            ><button id="terrain-ridge">山脊</button
+            ><button id="terrain-valley">谷地</button>
+          </div>
+          <div class="feature-actions">
+            <label
+              >起點北 (m)<input
+                id="terrain-north"
+                type="number"
+                step="1" /></label
+            ><label
+              >起點東 (m)<input
+                id="terrain-east"
+                type="number"
+                step="1" /></label
+            ><label
+              >網格間距 (m)<input
+                id="terrain-cell"
+                type="number"
+                min="1"
+                max="50"
+                step="1"
+            /></label>
+          </div>
+          <label for="terrain-heights"
+            >高度矩陣（每行以空格分隔，2 至 65 列與欄）</label
+          ><textarea
+            id="terrain-heights"
+            maxlength="100000"
+            rows="9"
+            spellcheck="false"
+          ></textarea>
+          <p id="terrain-error" role="status"></p>
+        </section>
         <div class="scene-editor-grid">
           <div>
             <h3>場景物件</h3>
@@ -619,10 +661,20 @@
                   max="100"
                   value="3"
                   step="0.5" /></label
+              ><label
+                >高度參考<select id="position-reference">
+                  <option value="datum">基準面高度</option>
+                  <option value="agl">離地高度</option>
+                </select></label
               ><button id="position-apply">設定位置</button>
             </div>
+            <p>
+              調整姿態控制的目標高度會切回基準面高度；離地高度僅適用多旋翼或懸停中的
+              VTOL 位置模式。
+            </p>
             <p id="airframe-status">機型：等待狀態</p>
             <p id="flight-details">等待狀態</p>
+            <p id="ground-status">地表高度：等待狀態</p>
             <p id="flight-mission-status" aria-live="polite" hidden></p>
             <p id="wing-telemetry">空速與翼面狀態：—</p>
             <p id="wing-hint"></p>

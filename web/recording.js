@@ -3,14 +3,15 @@ import { DEFAULT_SENSOR_CONFIG, validateSensorConfig } from "./sensors.js";
 import { TRAINING_COURSES, resolveTrainingGates } from "./training.js";
 import { DEFAULT_SCENE, validateScene } from "./scene-data.js";
 import { AIRFRAMES, rotorCount } from "./rotor-geometry.js";
+import { createTerrain } from "./terrain.js";
 import {
   DEFAULT_GIMBAL_SETTINGS,
   validateGimbalSettings,
   validateGimbalState,
 } from "./gimbal.js";
 
-export const RECORDING_VERSION = 9;
-export const MODEL_VERSION = "0.6.0";
+export const RECORDING_VERSION = 10;
+export const MODEL_VERSION = "0.7.0";
 const MODES = ["attitude", "position", "mission", "rtl", "land", "takeoff"];
 const TAKEOFF_PHASES = [
   "idle",
@@ -82,12 +83,13 @@ export function validateSetup(value, config = {}) {
     throw new Error("Unknown setup field");
   const merged = { ...DEFAULT_SETUP, ...input };
   const gimbal = validateGimbalSettings(merged.gimbal);
-  const sim = createSimulation(validateConfig(object(config)), { gimbal });
+  const validatedConfig = validateConfig(object(config));
+  const scene = validateScene(merged.scene, validatedConfig.airframe);
+  const sim = createSimulation(validatedConfig, { gimbal, terrain: scene.terrain });
   if (!Array.isArray(merged.mission))
     throw new Error("Mission must be an array");
   const mission = Array.from(merged.mission, (point) => ({ ...object(point) }));
   if (mission.length) sim.setMission(mission);
-  const scene = validateScene(merged.scene, sim.snapshot().airframe);
   const mode = choice(merged.mode, MODES);
   sim.setMode(mode);
   return {
@@ -114,7 +116,7 @@ function targets(value, partial = false, automatic = false) {
     if (!partial || Object.hasOwn(value, key))
       result[key] = number(
         value[key],
-        automatic && key === "altitude" ? 0 : min,
+        automatic && key === "altitude" ? -50 : min,
         automatic && key === "altitude" ? 1e9 : max,
       );
   return result;
@@ -177,6 +179,7 @@ function sample(
   airframe,
   scene,
   gimbalSettings,
+  terrain,
 ) {
   object(value);
   if (
@@ -261,10 +264,32 @@ function sample(
     }) !== JSON.stringify(gimbalSettings)
   )
     throw new Error("Gimbal settings do not match command history");
+  const position = vector(value.position, 3), surface = terrain.sample(position[0], position[1]);
+  const ground = { heightM: surface.heightM, clearanceM: number(-position[2] - surface.heightM, -1e-6), normalNed: surface.normalNed.map((v) => v === 0 ? 0 : v) };
+  if (Object.hasOwn(value, "ground")) {
+    const supplied = object(value.ground);
+    if (Object.keys(supplied).sort().join(",") !== "clearanceM,heightM,normalNed" ||
+        Math.abs(number(supplied.heightM) - ground.heightM) > 1e-8 ||
+        Math.abs(number(supplied.clearanceM) - ground.clearanceM) > 1e-8 ||
+        vector(supplied.normalNed, 3).some((v, i) => Math.abs(v - ground.normalNed[i]) > 1e-8))
+      throw new Error("Ground pose does not match terrain history");
+  }
+  let reference = nav.altitudeReference, positionHeight = nav.positionAltitude;
+  if (Object.hasOwn(nav, "altitude")) {
+    if (!Array.isArray(nav.altitude) || nav.altitude.length !== 2 || Object.hasOwn(nav, "altitudeReference") || Object.hasOwn(nav, "positionAltitude"))
+      throw new Error("Invalid compact navigation altitude");
+    reference = ["datum", "agl"][count(nav.altitude[0], 1)];
+    positionHeight = nav.altitude[1];
+  }
+  const altitudeReference = choice(reference, ["datum", "agl"]), positionAltitude = number(positionHeight, -50);
+  if (altitudeReference === "agl" && (mode !== "position" || positionAltitude < 0 || positionAltitude > 500 || airframe === "fixedwing" ||
+      (airframe === "vtol" && (value.flight?.transition !== "hover" || value.flight?.transitionProgress !== 0))))
+    throw new Error("Invalid terrain-following state");
   return {
     airframe,
     time: number(value.time, 0, 1800.001),
-    position: vector(value.position, 3),
+    position,
+    ground,
     velocity: vector(value.velocity, 3),
     quaternion,
     gimbal,
@@ -291,6 +316,8 @@ function sample(
       completed: boolean(nav.completed),
       home,
       targetPosition: vector(nav.targetPosition, 2),
+      altitudeReference,
+      positionAltitude,
       fenceBreached: boolean(nav.fenceBreached),
       reason: choice(nav.reason, [
         "",
@@ -302,6 +329,7 @@ function sample(
         "link-loss",
         "obstacle-collision",
         "ground-impact",
+        "terrain-impact",
         "takeoff-aborted",
       ]),
     },
@@ -423,7 +451,7 @@ function event(input, sim) {
         throw new Error("Runway takeoff mode requires a fixed-wing airframe");
       break;
     case "position":
-      sim.setMode("attitude");
+      sim.setMode("position");
       sim.setPositionTarget(object(input.value));
       result.value = { ...input.value };
       break;
@@ -434,6 +462,7 @@ function event(input, sim) {
       break;
     case "scene":
       result.value = validateScene(input.value, sim.snapshot().airframe);
+      sim.setTerrain(result.value.terrain);
       break;
     case "fault":
       result.fault = choice(input.fault, ["motor", "link", "pusher"]);
@@ -456,8 +485,8 @@ function event(input, sim) {
   return result;
 }
 export function compactSnapshot(snapshot) {
-  const { waypoints, ...navigation } = object(snapshot.navigation);
-  const { airframe, attitude, gimbal, ...state } = snapshot;
+  const { waypoints, altitudeReference, positionAltitude, ...navigation } = object(snapshot.navigation);
+  const { airframe, attitude, ground, gimbal, ...state } = snapshot;
   const mask = (flags) =>
     GIMBAL_AXES.reduce((bits, axis, i) => bits | (Number(flags[axis]) << i), 0);
   return {
@@ -471,6 +500,7 @@ export function compactSnapshot(snapshot) {
     ],
     navigation: {
       ...navigation,
+      altitude: [["datum", "agl"].indexOf(altitudeReference), positionAltitude],
       waypointCount: waypoints?.length ?? navigation.waypointCount ?? 0,
     },
   };
@@ -610,7 +640,7 @@ export function validateRecording(value) {
   object(value);
   if (value.version !== RECORDING_VERSION)
     throw new Error(
-      "Unsupported recording version: version 9 required; legacy recordings are not supported",
+      "Unsupported recording version: version 10 required; legacy recordings are not supported",
     );
   if (
     value.format !== "flight-lab" ||
@@ -646,7 +676,7 @@ export function validateRecording(value) {
     value.sensorFrames.length !== value.samples.length
   )
     throw new Error("Sensor frames must match sample count");
-  const sim = createSimulation(config);
+  const sim = createSimulation(config, { gimbal: setup.gimbal, terrain: setup.scene.terrain });
   let lastEvent = -1;
   const events = Array.from(value.events, (input) => {
     const result = event(input, sim);
@@ -657,6 +687,7 @@ export function validateRecording(value) {
   let lastTime = -1,
     eventIndex = 0,
     activeScene = setup.scene,
+    activeTerrain = createTerrain(setup.scene.terrain),
     gimbalSettings = setup.gimbal,
     route = setup.mission,
     routeText = JSON.stringify(route);
@@ -669,8 +700,10 @@ export function validateRecording(value) {
       eventIndex < events.length &&
       events[eventIndex].time <= time + 1e-8
     ) {
-      if (events[eventIndex].type === "scene")
+      if (events[eventIndex].type === "scene") {
         activeScene = events[eventIndex].value;
+        activeTerrain = createTerrain(activeScene.terrain);
+      }
       if (events[eventIndex].type === "gimbal")
         gimbalSettings = events[eventIndex].value;
       if (events[eventIndex].type === "mission") {
@@ -687,6 +720,7 @@ export function validateRecording(value) {
       config.airframe,
       activeScene,
       gimbalSettings,
+      activeTerrain,
     );
     lastTime = time;
     return result;
@@ -868,6 +902,13 @@ export function recordingToCsv(record) {
     ...[5, 6, 7, 8].map((i) => `motor_${i}_normalized`),
     ...[5, 6, 7, 8].map((i) => `pwm_${i}_us`),
     ...[5, 6, 7, 8].map((i) => `motor_${i}_efficiency_fraction`),
+    "ground_height_m",
+    "ground_clearance_m",
+    "ground_normal_n",
+    "ground_normal_e",
+    "ground_normal_d",
+    "position_altitude_reference_code",
+    "position_altitude_m",
   ];
   const rows = samples.map((s, index) =>
     [
@@ -961,6 +1002,11 @@ export function recordingToCsv(record) {
       ...[4, 5, 6, 7].map((i) => s.motors[i] ?? ""),
       ...[4, 5, 6, 7].map((i) => s.pwm[i] ?? ""),
       ...[4, 5, 6, 7].map((i) => s.faults.motorEfficiency[i] ?? ""),
+      s.ground.heightM,
+      s.ground.clearanceM,
+      ...s.ground.normalNed,
+      ["datum", "agl"].indexOf(s.navigation.altitudeReference),
+      s.navigation.positionAltitude,
     ].join(","),
   );
   return [header.join(","), ...rows].join("\n");

@@ -1,4 +1,5 @@
 import { bodyToNedMatrix } from "./sim.js";
+import { createTerrain } from "./terrain.js";
 
 // Deterministic virtual observations only; independent of the flight controller.
 // References: https://microsoft.github.io/AirSim/sensors/ https://microsoft.github.io/AirSim/lidar/
@@ -124,12 +125,10 @@ const rotate = (r, v) =>
 const inverseRotate = (r, v) =>
   [0, 1, 2].map((i) => r[i] * v[0] + r[3 + i] * v[1] + r[6 + i] * v[2]);
 const radians = (degrees) => (degrees * Math.PI) / 180;
-function nearestRay(origin, direction, obstacles, min, max) {
-  let nearest = Infinity;
-  if (Math.abs(direction[2]) > 1e-12) {
-    const distance = -origin[2] / direction[2];
-    if (distance >= 0) nearest = distance;
-  }
+function nearestRay(origin, direction, obstacles, terrain, min, max) {
+  const length = Math.hypot(...direction);
+  direction = direction.map((v) => v / length);
+  let nearest = terrain.raycast(origin, direction, 0, max)?.distanceM ?? Infinity;
   for (const box of obstacles) {
     const { low, high } = box;
     let enter = -Infinity,
@@ -285,7 +284,8 @@ export function createSensorSuite(configuration = {}, seed = 42) {
     queues,
     deadlines,
     faults,
-    obstacles;
+    obstacles,
+    terrain;
   function random() {
     randomState = (Math.imul(1664525, randomState) + 1013904223) >>> 0;
     return (randomState + 0.5) / 4294967296;
@@ -330,6 +330,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
     time = 0;
     lastInputTime = -1;
     obstacles = [];
+    terrain = createTerrain();
     faults = Object.fromEntries(NAMES.map((name) => [name, false]));
     readings = Object.fromEntries(
       NAMES.map((name) => [name, invalid(name, 0, "startup")]),
@@ -412,6 +413,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
         input.position,
         rotate(matrix, [0, 0, 1]),
         obstacles,
+        terrain,
         config.rangefinderMinM,
         config.rangefinderMaxM,
       );
@@ -434,6 +436,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
           input.position,
           rotate(matrix, direction),
           obstacles,
+          terrain,
           config.lidarMinM,
           config.lidarMaxM,
         );
@@ -548,6 +551,10 @@ export function createSensorSuite(configuration = {}, seed = 42) {
       };
     });
   }
+  function setTerrain(value) {
+    const next = createTerrain(value);
+    terrain = next;
+  }
   function setFault(name, failed) {
     if (!NAMES.includes(name) || typeof failed !== "boolean")
       throw new Error("Invalid sensor fault");
@@ -561,5 +568,5 @@ export function createSensorSuite(configuration = {}, seed = 42) {
     return structuredClone({ time, ...readings, faults });
   }
   reset();
-  return { update, snapshot, reset, setObstacles, setFault };
+  return { update, snapshot, reset, setObstacles, setTerrain, setFault };
 }

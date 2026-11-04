@@ -1,3 +1,4 @@
+import { createTerrain } from "./terrain.js";
 import { validateGimbalSettings } from "./gimbal.js";
 import { validateScene } from "./scene-data.js";
 import { createSimulation, validateConfig, bodyToNedAngles } from "./sim.js";
@@ -21,7 +22,10 @@ const DATA_LIMIT = 96 * 1024 * 1024;
 let config = validateConfig();
 let setup = validateSetup(undefined, config);
 let initialSetup = structuredClone(setup);
-let sim = createSimulation(config, { gimbal: setup.gimbal });
+let sim = createSimulation(config, {
+  gimbal: setup.gimbal,
+  terrain: setup.scene.terrain,
+});
 let trainer = createTrainer(
   setup.scene.training,
   config.airframe,
@@ -32,6 +36,7 @@ let sensorSuite = createSensorSuite(
   setup.sensors,
   (config.seed ^ 0x9e3779b9) >>> 0,
 );
+sensorSuite.setTerrain(setup.scene.terrain);
 sensorSuite.setObstacles(setup.scene.obstacles);
 let sensorState = sensorSuite.update(sim.snapshot());
 let scenario = "hover";
@@ -122,7 +127,10 @@ function reset(nextConfig, nextScenario, nextSetup) {
       : nextSetup,
     validated,
   );
-  const next = createSimulation(validated, { gimbal: validatedSetup.gimbal });
+  const next = createSimulation(validated, {
+    gimbal: validatedSetup.gimbal,
+    terrain: validatedSetup.scene.terrain,
+  });
   next.setScenario(nextScenario);
   next.setObstacles(validatedSetup.scene.obstacles);
   if (validatedSetup.mission.length) next.setMission(validatedSetup.mission);
@@ -137,6 +145,7 @@ function reset(nextConfig, nextScenario, nextSetup) {
     validatedSetup.sensors,
     (validated.seed ^ 0x9e3779b9) >>> 0,
   );
+  nextSensors.setTerrain(validatedSetup.scene.terrain);
   nextSensors.setObstacles(validatedSetup.scene.obstacles);
   const nextSensorState = nextSensors.update(next.snapshot());
   config = validated;
@@ -378,8 +387,11 @@ onmessage = ({ data }) => {
         const nextTraining = changed
           ? nextTrainer.update(sim.snapshot())
           : training;
-        // Both consumers receive one canonical validated geometry at the same simulation boundary.
+        // Complete validation before the only dynamic rejection: terrain intersecting the aircraft.
+        createTerrain(nextScene.terrain);
+        sim.setTerrain(nextScene.terrain);
         sim.setObstacles(nextScene.obstacles);
+        sensorSuite.setTerrain(nextScene.terrain);
         sensorSuite.setObstacles(nextScene.obstacles);
         setup.scene = nextScene;
         trainer = nextTrainer;
@@ -400,6 +412,7 @@ onmessage = ({ data }) => {
           validated,
           (config.seed ^ 0x9e3779b9) >>> 0,
         );
+        next.setTerrain(setup.scene.terrain);
         next.setObstacles(setup.scene.obstacles);
         const state = next.update(sim.snapshot());
         sensorSuite = next;

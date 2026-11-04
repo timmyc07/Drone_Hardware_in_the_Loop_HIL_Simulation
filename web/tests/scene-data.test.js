@@ -56,7 +56,7 @@ test("scene boundary rejects unknown, missing, sparse and invalid geometry and a
   );
   const artifact = JSON.parse(sceneToJson(DEFAULT_SCENE));
   for (const patch of [
-    { version: 2 },
+    { version: 1 },
     { frame: "ENU" },
     { units: "cm" },
     { format: "other" },

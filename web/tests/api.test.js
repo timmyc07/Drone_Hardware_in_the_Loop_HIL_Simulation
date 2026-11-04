@@ -12,7 +12,7 @@ test("API sends the documented commands and copies input and output", async () =
     },
     () => () => {},
   );
-  assert.equal(api.version, "1.7");
+  assert.equal(api.version, "1.8");
   assert.ok(Object.isFrozen(api));
   const targets = { roll: 1 };
   const pending = api.setTargets(targets);
@@ -36,7 +36,12 @@ test("API sends the documented commands and copies input and output", async () =
   await api.abortTakeoff();
   await api.setTransition("cruise");
   await api.setPusherFault(0.5);
-  await api.setPositionTarget({ north: 1 });
+  await api.setPositionTarget({
+    north: 1,
+    east: 2,
+    altitude: 4,
+    altitudeReference: "agl",
+  });
   await api.setMission([{ north: 2 }]);
   await api.play();
   await api.pause();
@@ -62,7 +67,10 @@ test("API sends the documented commands and copies input and output", async () =
     { type: "abortTakeoff" },
     { type: "transition", value: "cruise" },
     { type: "fault", fault: "pusher", value: { efficiency: 0.5 } },
-    { type: "position", value: { north: 1 } },
+    {
+      type: "position",
+      value: { north: 1, east: 2, altitude: 4, altitudeReference: "agl" },
+    },
     { type: "mission", value: [{ north: 2 }] },
     { type: "play" },
     { type: "pause" },

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { createTerrain } from "./terrain.js";
 import { lidarPoints, MAX_LIDAR_POINTS } from "./sensors.js";
 import { getRotorLayout, MULTIROTOR_AIRFRAMES } from "./rotor-geometry.js";
 import { AIRFRAME_PRESETS, RUNWAY } from "./sim.js";
@@ -33,7 +34,7 @@ export function createScene(container) {
   grid.material.opacity = 0.48;
   scene.add(grid);
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(20000, 20000),
+    new THREE.BufferGeometry(),
     new THREE.MeshStandardMaterial({
       color: 0x1c2d36,
       roughness: 1,
@@ -42,9 +43,30 @@ export function createScene(container) {
       polygonOffsetUnits: 1,
     }),
   );
-  ground.rotation.x = -Math.PI / 2;
+
   ground.userData.cameraClass = 1;
   scene.add(ground);
+
+  let terrain = createTerrain();
+  function setTerrain(value) {
+    const next = createTerrain(value);
+    const mesh = next.mesh();
+    const positions = new Float32Array(mesh.positionsNed.length);
+    for (let i = 0; i < positions.length; i += 3) {
+      positions[i] = mesh.positionsNed[i + 1];
+      positions[i + 1] = -mesh.positionsNed[i + 2];
+      positions[i + 2] = -mesh.positionsNed[i];
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geometry.setIndex(mesh.indices);
+    geometry.computeVertexNormals();
+    ground.geometry.dispose();
+    ground.geometry = geometry;
+    terrain = next;
+    grid.visible = next.data.kind === "flat";
+  }
+  setTerrain();
 
   const material = (color, metalness = 0, roughness = 0.5) =>
     new THREE.MeshStandardMaterial({ color, metalness, roughness });
@@ -124,6 +146,8 @@ export function createScene(container) {
   }
   function multirotor(kind) {
     const quad = new THREE.Group();
+    // Keep the visual skids on the ground while the outer group remains at the physical CG.
+    quad.position.y = 0.181;
     drone.add(quad);
     box(quad, [0.29, 0.085, 0.34], [0, 0, 0], dark);
     box(quad, [0.23, 0.055, 0.27], [0, 0.065, 0], shell);
@@ -344,7 +368,9 @@ export function createScene(container) {
           material(0x28483d, 0, 1),
         );
         const angle = (i * Math.PI * 2) / 20;
-        tree.position.set(Math.cos(angle) * 18, 1.5, Math.sin(angle) * 18);
+        const x = Math.cos(angle) * 18,
+          z = Math.sin(angle) * 18;
+        tree.position.set(x, 1.5 + terrain.sample(-z, x).heightM, z);
         tree.userData.cameraClass = 3;
         environment.add(tree);
       }
@@ -543,6 +569,7 @@ export function createScene(container) {
       target.set(east, -down, -north);
       drone.position.copy(target);
       drone.quaternion.set(y, -z, -x, w).normalize();
+      projection.position.y = terrain.sample(north, east).heightM + 0.02;
       projection.position.x = east;
       projection.position.z = -north;
       if (snapshot.time < lastTime) count = 0;
@@ -640,6 +667,7 @@ export function createScene(container) {
     resetView,
     setSensorScan,
     setEnvironment,
+    setTerrain,
     setObstacles,
     setMission,
     setGates,

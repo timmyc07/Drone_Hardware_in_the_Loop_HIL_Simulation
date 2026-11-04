@@ -120,7 +120,7 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   const record = validateRecording(exported.recording);
   assert.equal(record.config.seed, 18);
   assert.equal(record.scenario, "step");
-  assert.equal(record.version, 9);
+  assert.equal(record.version, 10);
   assert.equal(record.sensorFrames.length, record.samples.length);
   assert.equal(record.sensorFrames[0].time, record.samples[0].time);
   assert.equal(record.setup.sensors.gpsNoiseM, 1.5);
@@ -186,6 +186,44 @@ test("worker runs, pauses, records simulation-time samples and exports validated
     worker.postMessage({ ...command, requestId });
     return response;
   };
+  const terrainHeights = Array(81).fill(0);
+  terrainHeights[4 * 9 + 7] = 8;
+  const hill = {
+    kind: "heightfield",
+    north: -80,
+    east: -80,
+    cellSize: 20,
+    rows: 9,
+    cols: 9,
+    heights: terrainHeights,
+  };
+  const beforeScene = (await call({ type: "inspect" })).value.setup.scene;
+  const terrainChange = await call({
+    type: "scene",
+    value: { ...beforeScene, terrain: hill },
+  });
+  assert.equal(terrainChange.ok, true);
+  assert.deepEqual(terrainChange.value.setup.scene.terrain, hill);
+  const invalidTerrain = { ...hill, heights: [...hill.heights] };
+  invalidTerrain.heights[0] = 1;
+  assert.equal(
+    (
+      await call({
+        type: "scene",
+        value: { ...beforeScene, terrain: invalidTerrain },
+      })
+    ).ok,
+    false,
+  );
+  assert.deepEqual((await call({ type: "inspectScene" })).value.terrain, hill);
+  assert.equal((await call({ type: "mode", value: "position" })).ok, true);
+  const agl = await call({
+    type: "position",
+    value: { north: 0, east: 0, altitude: 5, altitudeReference: "agl" },
+  });
+  assert.equal(agl.ok, true);
+  assert.equal(agl.value.snapshot.navigation.altitudeReference, "agl");
+  assert.equal(agl.value.snapshot.navigation.positionAltitude, 5);
   const gimbal = (await call({ type: "inspectGimbal" })).value;
   const settings = {
     mode: "body",
@@ -659,7 +697,7 @@ test(
     const exported = await call({ type: "apiExport" });
     assert.equal(exported.ok, true);
     const recording = validateRecording(exported.value);
-    assert.equal(recording.version, 9);
+    assert.equal(recording.version, 10);
     assert.ok(
       recording.events.some(
         (event) =>

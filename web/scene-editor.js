@@ -5,6 +5,7 @@ import {
   sceneToJson,
   SCENE_MAX_IMPORT_BYTES,
 } from "./scene-data.js";
+import { validateTerrain } from "./terrain.js";
 import { isCourseSupported } from "./training.js";
 
 const warehouse = [
@@ -32,6 +33,13 @@ export function createSceneEditor({
   const dirty = () => JSON.stringify(draft) !== JSON.stringify(applied);
   const items = (kind) =>
     kind === "obstacle" ? draft.obstacles : draft.customGates;
+  const terrainInputs = [
+    "terrain-north",
+    "terrain-east",
+    "terrain-cell",
+    "terrain-heights",
+  ];
+  const terrainPresets = ["flat", "hill", "ridge", "valley"];
   function updateStatus() {
     $("scene-dirty").textContent = readonly
       ? "唯讀：顯示目前場景，可匯出。"
@@ -51,6 +59,9 @@ export function createSceneEditor({
       "scene-import",
     ])
       $(id).disabled = readonly;
+    for (const id of terrainInputs)
+      $(id).disabled = readonly || draft.terrain.kind === "flat";
+    for (const name of terrainPresets) $("terrain-" + name).disabled = readonly;
     $("scene-apply").disabled = readonly || invalidInputs.size > 0;
     $("scene-export").disabled = !readonly && invalidInputs.size > 0;
   }
@@ -98,8 +109,25 @@ export function createSceneEditor({
     });
   }
   function render() {
+    const invalidTerrain = invalidInputs.has($("terrain-heights"));
     invalidInputs.clear();
+    if (invalidTerrain) invalidInputs.add($("terrain-heights"));
     $("scene-name").value = draft.name;
+    const terrain = draft.terrain;
+    if (!invalidTerrain) {
+      $("terrain-north").value = terrain.kind === "flat" ? "" : terrain.north;
+      $("terrain-east").value = terrain.kind === "flat" ? "" : terrain.east;
+      $("terrain-cell").value = terrain.kind === "flat" ? "" : terrain.cellSize;
+      $("terrain-heights").value =
+        terrain.kind === "flat"
+          ? ""
+          : Array.from({ length: terrain.rows }, (_, i) =>
+              terrain.heights
+                .slice(i * terrain.cols, (i + 1) * terrain.cols)
+                .join(" "),
+            ).join("\n");
+      $("terrain-error").textContent = "";
+    }
     $("scene-course").value = draft.training;
     for (const option of $("scene-course").options)
       option.disabled = !isCourseAvailable(option.value);
@@ -353,6 +381,7 @@ export function createSceneEditor({
         !(await confirm("匯入將取代尚未套用的場景草稿。確定繼續？"))
       )
         return;
+      invalidInputs.delete(terrainInvalid);
       draft = clone(value);
       selected = null;
       render();
@@ -360,6 +389,81 @@ export function createSceneEditor({
       notify(`無法匯入場景：${error.message}`);
     }
   };
+  for (const name of terrainPresets)
+    $("terrain-" + name).onclick = () => {
+      if (readonly) return;
+      invalidInputs.delete(terrainInvalid);
+      if (name === "flat") draft.terrain = { kind: "flat" };
+      else {
+        const heights = Array(81).fill(0);
+        for (let i = 1; i < 8; i++)
+          for (let j = 6; j < 8; j++) {
+            const weight =
+              Math.max(0, 1 - Math.abs(i - 4) / (name === "ridge" ? 4 : 3)) *
+              (j === 7 ? 1 : 0.5);
+            heights[i * 9 + j] = Number(
+              (
+                weight * (name === "valley" ? -8 : name === "ridge" ? 10 : 12)
+              ).toFixed(2),
+            );
+          }
+        draft.terrain = validateTerrain({
+          kind: "heightfield",
+          north: -80,
+          east: -80,
+          cellSize: 20,
+          rows: 9,
+          cols: 9,
+          heights,
+        });
+      }
+      render();
+    };
+  const terrainInvalid = $("terrain-heights");
+  function editTerrain() {
+    if (readonly || draft.terrain.kind === "flat") return;
+    try {
+      const text = $("terrain-heights").value.trim();
+      if (text.length > 100000) throw new Error("矩陣內容過長");
+      const rows = text.split(/\r?\n/).map((line) => line.trim().split(/\s+/));
+      if (
+        !text ||
+        rows.some(
+          (row) =>
+            row.length !== rows[0].length ||
+            row.some(
+              (value) => value === "" || !Number.isFinite(Number(value)),
+            ),
+        )
+      )
+        throw new Error("矩陣格式不正確");
+      const numbers = ["terrain-north", "terrain-east", "terrain-cell"].map(
+        (id) => {
+          const input = $(id);
+          if (!String(input.value).trim())
+            throw new Error("請填寫網格位置與間距");
+          return Number(input.value);
+        },
+      );
+      draft.terrain = validateTerrain({
+        kind: "heightfield",
+        north: numbers[0],
+        east: numbers[1],
+        cellSize: numbers[2],
+        rows: rows.length,
+        cols: rows[0].length,
+        heights: rows.flat().map(Number),
+      });
+      invalidInputs.delete(terrainInvalid);
+      $("terrain-error").textContent = "";
+      draw();
+    } catch (error) {
+      invalidInputs.add(terrainInvalid);
+      $("terrain-error").textContent = "地形無效：" + error.message;
+    }
+    updateStatus();
+  }
+  for (const id of terrainInputs) $(id).oninput = editTerrain;
   render();
   return {
     getApplied: () => clone(applied),
@@ -368,6 +472,7 @@ export function createSceneEditor({
         changed = JSON.stringify(value) !== JSON.stringify(applied);
       if (!changed && viewOnly === readonly) return;
       if (viewOnly && !readonly) savedDraft = clone(draft);
+      invalidInputs.delete(terrainInvalid);
       if (!viewOnly && readonly) {
         draft = savedDraft ?? clone(value);
         savedDraft = undefined;

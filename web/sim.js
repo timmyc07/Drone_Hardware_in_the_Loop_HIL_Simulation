@@ -1,3 +1,4 @@
+import { createTerrain } from "./terrain.js";
 import { getRotorLayout, rotorCount } from "./rotor-geometry.js";
 import { createGimbal, validateGimbalSettings } from "./gimbal.js";
 import {
@@ -192,11 +193,11 @@ export function createSimulation(configuration = {}, options = {}) {
     !options ||
     Object.getPrototypeOf(options) !== Object.prototype ||
     Object.keys(options).some(
-      (key) => !["controlSource", "gimbal"].includes(key),
+      (key) => !["controlSource", "gimbal", "terrain"].includes(key),
     )
   )
     throw new Error(
-      "Simulation options must contain only controlSource and gimbal",
+      "Simulation options must contain only controlSource, gimbal and terrain",
     );
   const controlSource = options.controlSource ?? "internal";
   if (!["internal", "external"].includes(controlSource))
@@ -207,7 +208,18 @@ export function createSimulation(configuration = {}, options = {}) {
       "External control supports only the default fixed camera mount",
     );
   const initialGimbal = validateGimbalSettings(options.gimbal);
-  let gimbal;
+  const initialTerrain = createTerrain(options.terrain).data;
+  if (external && initialTerrain.kind !== "flat")
+    throw new Error("External control supports only flat terrain");
+  let terrain = createTerrain(initialTerrain),
+    gimbal,
+    altitudeReference;
+  const flatGround = () => terrain.data.kind === "flat";
+  const groundAt = (s = state) =>
+    flatGround()
+      ? { heightM: 0, normalNed: [0, 0, -1] }
+      : terrain.sample(s[0], s[1]);
+  const groundDown = (s = state) => (flatGround() ? 0 : -groundAt(s).heightM);
   if (external && (config.airframe !== "quadrotor" || !config.startOnGround))
     throw new Error(
       "External control requires quadrotor and startOnGround=true",
@@ -350,6 +362,8 @@ export function createSimulation(configuration = {}, options = {}) {
         Math.sqrt(-2 * Math.log(random())) *
         Math.cos(2 * Math.PI * random());
   function reset() {
+    terrain = createTerrain(initialTerrain);
+    altitudeReference = "datum";
     externalInput = null;
     externalPending = false;
     externalTimeUs = 0;
@@ -485,7 +499,13 @@ export function createSimulation(configuration = {}, options = {}) {
       observed.altitude = 0;
       observed.attitude = [0, 0, 0];
       groundRolling = fixedWing;
-      target = { altitude: 0, roll: 0, pitch: 0, yawRate: 0, airspeed: 0 };
+      target = {
+        altitude: groundAt().heightM,
+        roll: 0,
+        pitch: 0,
+        yawRate: 0,
+        airspeed: 0,
+      };
       baseTarget = { ...target };
       positionTarget.altitude = 0;
     }
@@ -498,7 +518,7 @@ export function createSimulation(configuration = {}, options = {}) {
     if (
       crashed ||
       ((!armed || !launchAuthorized) &&
-        s[2] >= -0.001 &&
+        s[2] >= groundDown(s) - 0.001 &&
         (!fixedWing || Math.hypot(s[3], s[4]) < 0.03))
     )
       return Array(stateSize).fill(0);
@@ -596,6 +616,17 @@ export function createSimulation(configuration = {}, options = {}) {
           : inertia[2] * 8 * (desiredYawRate - s[12]);
       torque[2] += clamp(steeringMoment, -normal * 0.5, normal * 0.5);
     }
+    if (!flatGround() && !fixedWing && s[2] >= groundDown(s) - 1e-8) {
+      const normal = groundAt(s).normalNed;
+      const intoGround = acceleration.reduce(
+        (sum, v, i) => sum + v * normal[i],
+        0,
+      );
+      const leaving =
+        s.slice(3, 6).reduce((sum, v, i) => sum + v * normal[i], 0) > 1e-9;
+      if (intoGround < 0 && !leaving)
+        for (let i = 0; i < 3; i++) acceleration[i] -= intoGround * normal[i];
+    }
     const [p, q, rRate] = s.slice(10, 13),
       [w, x, y, z] = s.slice(6, 10);
     // Euler rigid-body equation includes omega cross J*omega.
@@ -624,7 +655,8 @@ export function createSimulation(configuration = {}, options = {}) {
       r = rotation(state.slice(6, 10));
     const specific = d.slice(3, 6);
     specific[2] -= G;
-    if (!armed && state[2] >= -0.001) specific.splice(0, 3, 0, 0, -G);
+    if (!armed && state[2] >= groundDown() - 0.001)
+      specific.splice(0, 3, 0, 0, -G);
     // Independent per-sample Gaussian sigma at noise=1: accel .1m/s², gyro .01rad/s,
     // ideal attitude .005rad, altitude/position .02m, velocity .02m/s. No estimator/EKF/GPS model.
     imu = {
@@ -669,7 +701,7 @@ export function createSimulation(configuration = {}, options = {}) {
       !armed ||
       crashed ||
       battery.soc <= 0 ||
-      (!launchAuthorized && state[2] >= -0.001)
+      (!launchAuthorized && state[2] >= groundDown() - 0.001)
     ) {
       commands.fill(0);
       pusherCommand = 0;
@@ -766,6 +798,8 @@ export function createSimulation(configuration = {}, options = {}) {
         "Cannot transition while disarmed or during a safety action",
       );
     if (value === transition) return;
+    if (value === "cruise" && altitudeReference === "agl")
+      throw new Error("Select datum altitude before cruise transition");
     if (value === "cruise" && -state[2] < 8)
       throw new Error("Climb to at least 8 meters before cruise transition");
     if (value === "cruise")
@@ -1144,8 +1178,11 @@ export function createSimulation(configuration = {}, options = {}) {
     }
     baseTarget = { ...baseTarget, ...values };
     target = { ...baseTarget };
-    if (Object.hasOwn(values, "altitude") && navigation.mode === "position")
-      positionTarget.altitude = values.altitude;
+    if (Object.hasOwn(values, "altitude")) {
+      altitudeReference = "datum";
+      if (navigation.mode === "position")
+        positionTarget.altitude = values.altitude;
+    }
   }
   function validateFields(value, fields, label) {
     if (!value || typeof value !== "object" || Array.isArray(value))
@@ -1182,7 +1219,30 @@ export function createSimulation(configuration = {}, options = {}) {
       throw new Error(
         "Select position mode before changing a navigation target; safety return/landing cannot be overridden",
       );
-    positionTarget = validatePoint(value);
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      throw new Error("Position target must be an object");
+    const reference = value.altitudeReference ?? "datum";
+    if (!["datum", "agl"].includes(reference))
+      throw new Error("Unknown altitude reference");
+    if (
+      reference === "agl" &&
+      (fixedWing ||
+        (hasWing && (transition !== "hover" || transitionProgress !== 0)) ||
+        navigation.mode !== "position")
+    )
+      throw new Error(
+        "AGL requires position mode on a multirotor or VTOL in hover",
+      );
+    const { altitudeReference: ignoredReference, ...point } = value;
+    const checked = validatePoint(point);
+    if (
+      reference === "agl" &&
+      terrain.sample(checked.north, checked.east).heightM + checked.altitude >
+        config.geofenceHeight
+    )
+      throw new Error("AGL target is above geofence height");
+    positionTarget = checked;
+    altitudeReference = reference;
     explicitPosition = true;
     navigation.targetPosition = [positionTarget.north, positionTarget.east];
   }
@@ -1203,6 +1263,7 @@ export function createSimulation(configuration = {}, options = {}) {
     }
   }
   function enterMode(mode, reason = "") {
+    if (mode !== "position") altitudeReference = "datum";
     navigation.mode = mode;
     navigation.reason = reason;
     navigation.completed = false;
@@ -1210,7 +1271,7 @@ export function createSimulation(configuration = {}, options = {}) {
     holdSince = null;
     if (mode === "attitude") {
       baseTarget = {
-        altitude: Math.max(0, -state[2]),
+        altitude: Math.max(groundAt().heightM, -state[2]),
         roll: 0,
         pitch: 0,
         yawRate: 0,
@@ -1223,7 +1284,10 @@ export function createSimulation(configuration = {}, options = {}) {
         positionTarget = {
           north: state[0],
           east: state[1],
-          altitude: Math.max(0, -state[2]),
+          altitude:
+            altitudeReference === "agl"
+              ? Math.max(0, -state[2] - groundAt().heightM)
+              : Math.max(groundAt().heightM, -state[2]),
         };
     } else if (mode === "mission") {
       navigation.index = 0;
@@ -1244,7 +1308,7 @@ export function createSimulation(configuration = {}, options = {}) {
       positionTarget = {
         north: state[0],
         east: state[1],
-        altitude: Math.max(0, -state[2]),
+        altitude: Math.max(groundAt().heightM, -state[2]),
       };
     }
     if (hasWing && (fixedWing || transition === "cruise")) {
@@ -1330,7 +1394,7 @@ export function createSimulation(configuration = {}, options = {}) {
       navigation.reason = "takeoff-aborted";
     }
     armed = false;
-    if (state[2] >= -0.001) launchAuthorized = false;
+    if (state[2] >= groundDown() - 0.001) launchAuthorized = false;
     commands.fill(0);
     pusherCommand = 0;
     surfaceCommands = [0, 0, 0];
@@ -1342,7 +1406,9 @@ export function createSimulation(configuration = {}, options = {}) {
         state[0] >= RUNWAY.startNorth - 1e-8 &&
         state[0] <= RUNWAY.endNorth + 1e-8 &&
         Math.abs(state[1]) <= RUNWAY.halfWidth,
-      weightOnWheels: fixedWing ? groundRolling : state[2] >= -0.001,
+      weightOnWheels: fixedWing
+        ? groundRolling
+        : state[2] >= groundDown() - 0.001,
       distanceRemainingM: Math.max(
         0,
         RUNWAY.endNorth - Math.max(RUNWAY.startNorth, state[0]),
@@ -1368,7 +1434,13 @@ export function createSimulation(configuration = {}, options = {}) {
       commands.fill(0);
       integrals.fill(0);
       navigation.reason = "takeoff-aborted";
-      target = { altitude: 0, roll: 0, pitch: 0, yawRate: 0, airspeed: 0 };
+      target = {
+        altitude: groundAt().heightM,
+        roll: 0,
+        pitch: 0,
+        yawRate: 0,
+        airspeed: 0,
+      };
       baseTarget = { ...target };
     } else if (reason === "pilot") {
       enterMode("position", "takeoff-aborted");
@@ -1510,12 +1582,16 @@ export function createSimulation(configuration = {}, options = {}) {
       return;
     }
     arm();
+    altitudeReference = "datum";
     launchAuthorized = true;
     if (hasWing) baseTarget.airspeed = config.cruiseAirspeed;
     positionTarget = {
       north: state[0],
       east: state[1],
-      altitude: hasWing ? 30 : 2,
+      altitude:
+        fixedWing || (hasWing && transition === "cruise")
+          ? 30
+          : groundAt().heightM + 2,
     };
     explicitPosition = true;
     enterMode("position");
@@ -1556,6 +1632,21 @@ export function createSimulation(configuration = {}, options = {}) {
       linkLost: false,
       pusherEfficiency: 1,
     };
+  }
+  function setTerrain(data) {
+    const next = createTerrain(data);
+    if (next.sample(state[0], state[1]).heightM > -state[2] + 1e-8)
+      throw new Error("Terrain update would intersect the aircraft");
+    if (
+      altitudeReference === "agl" &&
+      next.sample(positionTarget.north, positionTarget.east).heightM +
+        positionTarget.altitude >
+        config.geofenceHeight
+    )
+      throw new Error(
+        "Terrain update would raise the AGL target above geofence height",
+      );
+    terrain = next;
   }
   function setObstacles(boxes) {
     if (!Array.isArray(boxes) || boxes.length > 50)
@@ -1649,7 +1740,7 @@ export function createSimulation(configuration = {}, options = {}) {
       !armed ||
       crashed ||
       failed ||
-      (!launchAuthorized && state[2] >= -0.001)
+      (!launchAuthorized && state[2] >= groundDown() - 0.001)
     )
       return;
     if (fixedWing && navigation.mode === "takeoff") {
@@ -1726,7 +1817,10 @@ export function createSimulation(configuration = {}, options = {}) {
       (config.airframe !== "vtol" ||
         (transitionProgress < 0.02 && Math.hypot(...state.slice(3, 5)) < 1))
     )
-      positionTarget.altitude = Math.max(0, positionTarget.altitude - 0.5 * dt);
+      positionTarget.altitude = Math.max(
+        groundAt().heightM,
+        positionTarget.altitude - 0.5 * dt,
+      );
     const errors = [
       positionTarget.north - observed.position[0],
       positionTarget.east - observed.position[1],
@@ -1750,7 +1844,10 @@ export function createSimulation(configuration = {}, options = {}) {
       north = acceleration[0],
       east = acceleration[1];
     target = {
-      altitude: positionTarget.altitude,
+      altitude:
+        altitudeReference === "agl"
+          ? groundAt().heightM + positionTarget.altitude
+          : positionTarget.altitude,
       roll: Math.atan2(-Math.sin(yaw) * north + Math.cos(yaw) * east, G),
       pitch: -Math.atan2(Math.cos(yaw) * north + Math.sin(yaw) * east, G),
       yawRate: 0,
@@ -1849,8 +1946,17 @@ export function createSimulation(configuration = {}, options = {}) {
   function readSensors() {
     const acceleration = derivative(state).slice(3, 6);
     // Flat unilateral ground support cancels downward acceleration, including while armed.
-    if (state[2] >= -1e-9 && state[5] >= 0)
-      acceleration[2] = Math.min(0, acceleration[2]);
+    if (flatGround()) {
+      if (state[2] >= -1e-9 && state[5] >= 0)
+        acceleration[2] = Math.min(0, acceleration[2]);
+    } else if (state[2] >= groundDown() - 1e-9) {
+      const normal = groundAt().normalNed,
+        inward = acceleration.reduce((sum, v, i) => sum + v * normal[i], 0);
+      const leaving =
+        state.slice(3, 6).reduce((sum, v, i) => sum + v * normal[i], 0) > 1e-9;
+      if (inward < 0 && !leaving)
+        for (let i = 0; i < 3; i++) acceleration[i] -= inward * normal[i];
+    }
     acceleration[2] -= G;
     return {
       timeUs: external ? externalTimeUs : Math.round(time * 1e6),
@@ -1955,31 +2061,78 @@ export function createSimulation(configuration = {}, options = {}) {
       takeoffPhase = "climb";
       runwayBrake = 0;
     }
-    if (hasWing && !crashed && state[2] >= 0 && !groundRolling) {
-      if (
-        fixedWing &&
-        navigation.mode === "land" &&
-        state[5] < 1.6 &&
-        Math.abs(angles(state.slice(6, 10))[0]) < 0.25
-      ) {
-        groundRolling = true;
-        runwayBrake = 1;
-        state[2] = 0;
-        state[5] = 0;
-        for (let i = 10; i < stateSize; i++) state[i] = 0;
-      } else if (fixedWing || state[5] > 2.5) {
-        crashed = true;
-        navigation.reason = "ground-impact";
-        disarm();
+    const localGround = groundAt();
+    const runwayContact =
+      fixedWing &&
+      Math.abs(localGround.heightM) < 1e-9 &&
+      state[0] >= RUNWAY.startNorth &&
+      state[0] <= RUNWAY.endNorth &&
+      Math.abs(state[1]) <= RUNWAY.halfWidth;
+    if (!flatGround() && !crashed) {
+      const hit = terrain.sweep(previousPosition, state.slice(0, 3));
+      const penetrating = state[2] > -localGround.heightM + 1e-9;
+      if (hit || penetrating) {
+        const contact = hit ?? {
+          positionNed: [state[0], state[1], -localGround.heightM],
+          normalNed: localGround.normalNed,
+        };
+        const normal = contact.normalNed;
+        const inward = state
+          .slice(3, 6)
+          .reduce((sum, v, i) => sum + v * normal[i], 0);
+        const rotorLanding =
+          !fixedWing &&
+          (!hasWing || (transition === "hover" && transitionProgress < 0.02));
+        const gentle =
+          rotorLanding &&
+          normal[2] < -Math.cos(Math.PI / 12) &&
+          -inward < 2.5 &&
+          Math.hypot(state[3], state[4]) < 1.5 &&
+          Math.abs(angles(state.slice(6, 10))[0]) < 0.5 &&
+          Math.abs(angles(state.slice(6, 10))[1]) < 0.5;
+        if (!runwayContact) {
+          state.splice(0, 3, ...contact.positionNed);
+          if (!gentle) {
+            crashed = true;
+            navigation.reason = "terrain-impact";
+            disarm();
+            state.splice(3, 3, 0, 0, 0);
+            for (let i = 10; i < stateSize; i++) state[i] = 0;
+          } else {
+            if (inward < 0)
+              for (let i = 0; i < 3; i++) state[3 + i] -= inward * normal[i];
+            for (let i = 3; i < 6; i++) state[i] *= Math.exp(-8 * dt);
+          }
+        }
       }
     }
-    // shortcut: flat inelastic ground; conventional wing landing additionally models wheel rollout.
-    if (state[2] >= 0) {
-      state[2] = 0;
-      state[5] = Math.min(0, state[5]);
-      if (!groundRolling) {
-        state[3] *= Math.exp(-8 * dt);
-        state[4] *= Math.exp(-8 * dt);
+    if (flatGround() || runwayContact) {
+      if (hasWing && !crashed && state[2] >= 0 && !groundRolling) {
+        if (
+          fixedWing &&
+          navigation.mode === "land" &&
+          state[5] < 1.6 &&
+          Math.abs(angles(state.slice(6, 10))[0]) < 0.25
+        ) {
+          groundRolling = true;
+          runwayBrake = 1;
+          state[2] = 0;
+          state[5] = 0;
+          for (let i = 10; i < stateSize; i++) state[i] = 0;
+        } else if (fixedWing || state[5] > 2.5) {
+          crashed = true;
+          navigation.reason = "ground-impact";
+          disarm();
+        }
+      }
+      // shortcut: flat inelastic ground; conventional wing landing additionally models wheel rollout.
+      if (state[2] >= 0) {
+        state[2] = 0;
+        state[5] = Math.min(0, state[5]);
+        if (!groundRolling) {
+          state[3] *= Math.exp(-8 * dt);
+          state[4] *= Math.exp(-8 * dt);
+        }
       }
     }
     if (
@@ -1999,10 +2152,10 @@ export function createSimulation(configuration = {}, options = {}) {
       !crashed &&
       !fixedWing &&
       navigation.mode === "land" &&
-      state[2] > -0.12 &&
+      state[2] > groundDown() - 0.12 &&
       Math.abs(state[5]) < 0.6
     ) {
-      state[2] = 0;
+      state[2] = groundDown();
       state.splice(3, 3, 0, 0, 0);
       navigation.completed = true;
       disarm();
@@ -2019,14 +2172,20 @@ export function createSimulation(configuration = {}, options = {}) {
     if (
       crashed ||
       (!armed &&
-        state[2] >= -0.001 &&
+        state[2] >= groundDown() - 0.001 &&
         (!fixedWing || Math.hypot(state[3], state[4]) < 0.08))
     ) {
       state.splice(3, 3, 0, 0, 0);
       for (let i = 10; i < stateSize; i++) state[i] = 0;
     }
     if (navigation.mode === "land" && navigation.completed && !armed)
-      target = { altitude: 0, roll: 0, pitch: 0, yawRate: 0, airspeed: 0 };
+      target = {
+        altitude: groundAt().heightM,
+        roll: 0,
+        pitch: 0,
+        yawRate: 0,
+        airspeed: 0,
+      };
     usedWh = Math.min(
       config.batteryCapacityWh * config.batteryInitialSoc,
       usedWh + (batterySnapshot().power * dt) / 3600,
@@ -2055,9 +2214,16 @@ export function createSimulation(configuration = {}, options = {}) {
     return snapshot();
   }
   function snapshot() {
+    const surface = groundAt(),
+      clearance = -state[2] - surface.heightM;
     return {
       time,
       gimbal: gimbal.snapshot(),
+      ground: {
+        heightM: surface.heightM,
+        normalNed: [...surface.normalNed],
+        clearanceM: clearance === 0 ? 0 : clearance,
+      },
       ...(external
         ? {
             controlSource,
@@ -2106,6 +2272,8 @@ export function createSimulation(configuration = {}, options = {}) {
       },
       navigation: {
         ...navigation,
+        altitudeReference,
+        positionAltitude: positionTarget.altitude,
         waypoints: navigation.waypoints.map((v) => ({ ...v })),
         home: [...navigation.home],
         targetPosition: [...navigation.targetPosition],
@@ -2121,7 +2289,7 @@ export function createSimulation(configuration = {}, options = {}) {
         ? "crashed"
         : failed
           ? "failsafe"
-          : state[2] >= -0.001
+          : state[2] >= groundDown() - 0.001
             ? "landed"
             : steps
               ? "flying"
@@ -2137,6 +2305,7 @@ export function createSimulation(configuration = {}, options = {}) {
     };
   reset();
   return {
+    setTerrain: internalCommand(setTerrain),
     setGimbal: internalCommand((settings) => gimbal.set(settings)),
     setTargets: internalCommand(setTargets),
     setScenario,

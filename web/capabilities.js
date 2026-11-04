@@ -378,8 +378,9 @@ export const CAPABILITIES = [
     id: "terrain-follow",
     category: "控制與航行",
     title: "地形跟隨",
-    description: "依地形變化調整飛行高度。",
-    status: "planned",
+    description:
+      "內建多旋翼及懸停 VTOL 位置模式依局部地形真值跟隨；已驗證八旋翼飛行及重播，非感測器估測或避障。",
+    status: "partial",
     sources: [
       "https://www.simnet.aero/product-page/introduction-to-arducopter-auto-missions-with-mission-planner",
     ],
@@ -476,8 +477,8 @@ export const CAPABILITIES = [
     id: "global-terrain",
     category: "環境",
     title: "地理地形",
-    description: "以地理資料建立廣域地形。",
-    status: "planned",
+    description: "提供局部高度網格；不含地理資料、投影或廣域 GIS。",
+    status: "partial",
     sources: [
       "https://www.ga-asi.com/training-and-support-services/skyguardian-mission-trainer",
     ],
@@ -591,7 +592,7 @@ export const CAPABILITIES = [
     category: "感測與通訊",
     title: "光達",
     description:
-      "多層射線及 NED 點雲 CSV／PCD 匯出；僅平地與障礙盒，非完整場景或實機校準。",
+      "多層射線及 NED 點雲 CSV／PCD 匯出；涵蓋局部高度地形與障礙盒，非完整場景或實機校準。",
     status: "partial",
     sources: [
       "https://github.com/microsoft/AirSim/blob/main/docs/sensors.md",
@@ -788,7 +789,7 @@ export const CAPABILITIES = [
     id: "replay-json",
     category: "資料與整合",
     title: "JSON 重播",
-    description: "版本 9 JSON 保存完整場景、雲台狀態與事件；拒絕版本 1 至 8。",
+    description: "版本 10 JSON 保存完整場景、地形與事件；拒絕版本 1 至 9。",
     status: "partial",
     sources: [
       "https://www.liftoff-game.com/news/full-release-liftoff-micro-drones",
@@ -861,7 +862,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "程式控制 API",
     description:
-      "同頁 API 1.7 提供場景及雲台操作；外部 SITL 使用獨立本機服務。",
+      "同頁 API 1.8 提供場景、雲台與位置高度基準設定；外部 SITL 使用獨立本機服務。",
     status: "partial",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/apis.md"],
   },
