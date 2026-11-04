@@ -346,7 +346,8 @@ export const CAPABILITIES = [
     id: "waypoints",
     category: "控制與航行",
     title: "航點任務",
-    description: "可編輯並執行本地航點；非完整地面站任務協定。",
+    description:
+      "支援內建航點飛行，以及指定 ArduCopter 的任務上傳、讀回核對與 AUTO 起降；PX4 外部任務尚未支援。",
     status: "partial",
     sources: [
       "https://www.simnet.aero/product-page/introduction-to-arducopter-auto-missions-with-mission-planner",
@@ -817,7 +818,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "ArduPilot SITL",
     description:
-      "本機連接指定 ArduCopter 4.7.2 四旋翼閉環，已驗證起飛、懸停及降落；其他機型與實體 HIL 尚未支援。",
+      "本機連接指定 ArduCopter 4.7.2 四旋翼閉環，已驗證懸停、AUTO 航點與起降；其他機型與實體 HIL 尚未支援。",
     status: "partial",
     sources: [
       "https://ardupilot.org/dev/docs/sitl-simulator-software-in-the-loop.html",
@@ -839,10 +840,11 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "MAVLink 模擬介面",
     description:
-      "本機 PX4 SITL 使用 MAVLink 模擬感測器及執行器通訊；不提供通用地面站連接或實體 HIL。",
+      "支援指定 PX4 感測器及執行器通訊，以及 ArduCopter 任務讀寫；不提供通用地面站連接或實體 HIL。",
     status: "partial",
     sources: [
       "https://github.com/PX4/PX4-Autopilot/blob/main/docs/en/simulation/index.md",
+      "https://ardupilot.org/dev/docs/mavlink-mission-upload-download.html",
     ],
   },
   {

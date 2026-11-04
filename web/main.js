@@ -12,6 +12,8 @@ import {
   isCompanionOrigin,
   hilFlightReadiness,
   shouldFollowTakeoff,
+  externalMissionIndex,
+  externalMissionControls,
 } from "./hil-client.js";
 import { createFlightApi } from "./api.js";
 import {
@@ -1085,7 +1087,11 @@ function animate(now) {
   updatePilot(now);
   updateCameraLive(now);
   if (latest && rendering)
-    scene?.update(latest, running ? elapsed * Number($("speed").value) : 0);
+    scene?.update(
+      latest,
+      running ? elapsed * Number($("speed").value) : 0,
+      externalActive ? externalMissionIndex(hilState?.mission) : undefined,
+    );
   requestAnimationFrame(animate);
 }
 requestAnimationFrame(animate);
@@ -1108,8 +1114,13 @@ document.addEventListener("visibilitychange", () => {
 const mapExtent = () =>
   Math.min(
     500,
-    Math.max(1, config.geofenceRadius),
-    config.airframe === "quadrotor" ? 50 : 500,
+    Math.max(
+      1,
+      externalActive && hilState?.mission?.limits
+        ? hilState.mission.limits.radius
+        : config.geofenceRadius,
+    ),
+    externalActive ? 500 : config.airframe === "quadrotor" ? 50 : 500,
   );
 const squareMission = () => {
   const wing = config.airframe !== "quadrotor";
@@ -1126,6 +1137,11 @@ const squareMission = () => {
 };
 let waypoints = squareMission();
 const map = $("mission-map");
+let missionBusy = false;
+const invalidWaypointInputs = new Set();
+const missionEditable = () =>
+  !replay && (!externalActive || hilState?.controller?.kind === "ardupilot");
+let displayedExternalMission = "";
 function drawMission() {
   const extent = mapExtent();
   $("map-extent").textContent =
@@ -1166,10 +1182,11 @@ function drawMission() {
     ctx.fill();
     ctx.fillText(String(i + 1), x + 7, y - 5);
   });
-  scene?.setMission(externalActive ? [] : waypoints);
+  if (!externalActive) scene?.setMission(waypoints);
 }
 function renderWaypoints() {
   const list = $("waypoint-list");
+  invalidWaypointInputs.clear();
   list.replaceChildren();
   waypoints.forEach((point, index) => {
     const row = document.createElement("div");
@@ -1180,7 +1197,14 @@ function renderWaypoints() {
     for (const [key, label, min, max] of [
       ["north", "北", -mapExtent(), mapExtent()],
       ["east", "東", -mapExtent(), mapExtent()],
-      ["altitude", "高度", 0, 100],
+      [
+        "altitude",
+        "高度",
+        externalActive ? (hilState?.mission?.limits?.minAltitude ?? 1) : 0,
+        externalActive && hilState?.mission?.limits
+          ? hilState.mission.limits.height
+          : 100,
+      ],
       ["hold", "停留秒", 0, 60],
     ]) {
       const wrapper = document.createElement("label");
@@ -1189,18 +1213,43 @@ function renderWaypoints() {
       input.type = "number";
       input.min = min;
       input.max = max;
-      input.step = "0.1";
+      input.step = externalActive && key === "hold" ? "1" : "0.1";
       input.value = point[key];
-      input.disabled = !!replay || externalActive;
-      input.onchange = () => {
+      input.disabled = !missionEditable();
+      input.oninput = () => {
         const value = Number(input.value);
-        if (Number.isFinite(value) && value >= min && value <= max) {
+        if (
+          input.value.trim() !== "" &&
+          Number.isFinite(value) &&
+          value >=
+            (key === "north" || key === "east"
+              ? -mapExtent()
+              : key === "altitude" && externalActive
+                ? (hilState?.mission?.limits?.minAltitude ?? 1)
+                : min) &&
+          value <=
+            (key === "north" || key === "east"
+              ? mapExtent()
+              : key === "altitude" &&
+                  externalActive &&
+                  hilState?.mission?.limits
+                ? hilState.mission.limits.height
+                : max) &&
+          !(externalActive && key === "hold" && !Number.isInteger(value))
+        ) {
           point[key] = value;
+          invalidWaypointInputs.delete(input);
           drawMission();
-        } else {
+        } else invalidWaypointInputs.add(input);
+        updateMissionControls();
+      };
+      input.dataset.missionField = key;
+      input.onblur = input.onchange = () => {
+        if (invalidWaypointInputs.delete(input)) {
           input.value = point[key];
-          toast(`${label}超出範圍`);
+          toast(`${label}超出範圍，已還原。`);
         }
+        updateMissionControls();
       };
       wrapper.append(input);
       row.append(wrapper);
@@ -1208,7 +1257,7 @@ function renderWaypoints() {
     const remove = document.createElement("button");
     remove.type = "button";
     remove.textContent = "移除";
-    remove.disabled = !!replay || externalActive;
+    remove.disabled = !missionEditable();
     remove.onclick = () => {
       waypoints.splice(index, 1);
       renderWaypoints();
@@ -1217,9 +1266,15 @@ function renderWaypoints() {
     list.append(row);
   });
   drawMission();
+  updateMissionControls();
 }
 map.onclick = (event) => {
-  if (replay || externalActive || waypoints.length >= 50) return;
+  if (
+    !missionEditable() ||
+    invalidWaypointInputs.size ||
+    waypoints.length >= 50
+  )
+    return;
   const rect = map.getBoundingClientRect();
   waypoints.push({
     north:
@@ -1250,14 +1305,130 @@ $("waypoint-square").onclick = () => {
   waypoints = squareMission();
   renderWaypoints();
 };
-$("mission-export").onclick = () =>
+$("mission-export").onclick = () => {
+  if (invalidWaypointInputs.size) return toast("請先修正航點數值。");
   download(JSON.stringify(waypoints, null, 2), "json", "application/json");
-function applyMission(start) {
+};
+function updateMissionControls() {
+  const editable = missionEditable();
+  document
+    .querySelectorAll("#waypoint-list input, #waypoint-list button")
+    .forEach((element) => {
+      if (element.tagName === "INPUT") {
+        const field = element.dataset.missionField;
+        if (field === "north" || field === "east") {
+          element.min = -mapExtent();
+          element.max = mapExtent();
+        } else if (field === "altitude") {
+          element.min = externalActive
+            ? (hilState?.mission?.limits?.minAltitude ?? 1)
+            : 0;
+          element.max =
+            externalActive && hilState?.mission?.limits
+              ? hilState.mission.limits.height
+              : 100;
+        }
+        if (field === "hold") element.step = externalActive ? "1" : "0.1";
+      }
+      element.disabled =
+        !editable ||
+        (element.tagName === "BUTTON" && invalidWaypointInputs.size > 0);
+    });
+  $("waypoint-add").disabled = !editable || invalidWaypointInputs.size > 0;
+  $("waypoint-square").disabled = !editable || invalidWaypointInputs.size > 0;
+  $("mission-export").disabled = invalidWaypointInputs.size > 0;
+  const controls = externalMissionControls(
+    hilState,
+    waypoints,
+    invalidWaypointInputs.size > 0,
+    missionBusy,
+  );
+  $("mission-apply").disabled = externalActive
+    ? !controls.upload
+    : !editable || invalidWaypointInputs.size > 0;
+  $("mission-start").disabled = externalActive
+    ? !controls.start
+    : !editable || invalidWaypointInputs.size > 0;
+  $("mission-apply").textContent = externalActive ? "上傳任務" : "套用任務";
+  $("mission-help").textContent = externalActive
+    ? controls.editable
+      ? "草稿與飛控已確認航線分開；地面未解鎖且飛控準備完成後可上傳。停留秒數須為整數；上傳後須確認路線一致才能開始。"
+      : "PX4 外部飛控目前尚不支援航點任務。"
+    : config.airframe === "fixedwing"
+      ? "固定翼請先完成跑道起飛，再開始航點任務；套用任務會切換至任務模式。"
+      : "開始任務會由地面起飛並啟動模擬；套用任務只切換任務模式。";
+  const m = hilState?.mission;
+  const phases = {
+    empty: "尚無任務",
+    uploading: "上傳中",
+    verifying: "核對中",
+    ready: "已核對",
+    running: "執行中",
+    completed: "已完成",
+    interrupted: "已中止",
+    error: "錯誤",
+  };
+  const missionStatus =
+    externalActive && controls.editable && m
+      ? `${phases[m.phase] || "等待狀態"}${m.homeReady === true ? "" : " · 等待飛控定位及家點確認"} · 目前航點 ${externalMissionIndex(m) === null ? "—" : externalMissionIndex(m) + 1} / ${m.points?.length ?? 0} · 飛控回報到達 ${m.reachedSeqs?.filter((seq) => seq >= 2 && seq < (m.points?.length ?? 0) + 2).length ?? 0} 點${m.error ? ` · ${m.error}` : ""}`
+      : "";
+  $("mission-status").textContent = missionStatus;
+  $("flight-mission-status").textContent = missionStatus
+    ? `飛控任務：${missionStatus}`
+    : "";
+  $("flight-mission-status").hidden = !missionStatus;
+}
+async function applyMission(start) {
+  if (invalidWaypointInputs.size) return toast("請先修正航點數值。");
+  if (externalActive) {
+    const controls = externalMissionControls(
+      hilState,
+      waypoints,
+      false,
+      missionBusy,
+    );
+    if (!(start ? controls.start : controls.upload))
+      return toast("任務尚未符合操作條件。");
+    missionBusy = true;
+    updateMissionControls();
+    try {
+      await hilClient.request(
+        start ? "command" : "mission",
+        start ? "mission" : structuredClone(waypoints),
+      );
+      toast(
+        start
+          ? "任務開始命令已送出，請觀察飛控回報。"
+          : "任務上傳請求完成，請確認飛控核對狀態。",
+      );
+    } catch (error) {
+      toast(`任務操作失敗：${error.message}`);
+    } finally {
+      missionBusy = false;
+      updateMissionControls();
+    }
+    return;
+  }
   if (!waypoints.length) return toast("請先新增航點。");
-  worker.postMessage({ type: "mission", value: waypoints });
-  worker.postMessage({ type: "mode", value: "mission" });
-  $("flight-mode").value = "mission";
-  if (start) worker.postMessage({ type: "play" });
+  try {
+    if (
+      start &&
+      latest?.runway.weightOnWheels &&
+      config.airframe === "fixedwing"
+    )
+      throw new Error("請先完成跑道起飛，再開始航點任務。");
+    await requestApi({ type: "mission", value: structuredClone(waypoints) });
+    if (start && latest?.runway.weightOnWheels)
+      await requestApi({ type: "takeoff" });
+    await requestApi({ type: "mode", value: "mission" });
+    $("flight-mode").value = "mission";
+    if (start) {
+      focusFlightView();
+      await requestApi({ type: "play" });
+    }
+  } catch (error) {
+    toast(`無法${start ? "開始" : "套用"}任務：${error.message}`);
+  }
 }
 $("mission-apply").onclick = () => applyMission(false);
 $("mission-start").onclick = () => applyMission(true);
@@ -2145,7 +2316,7 @@ let hilFollowed = false;
 function setExternalControls(disabled) {
   $("hil-type").disabled = disabled;
   const selector =
-    "#reset, #settings-open, #speed, #import-open, #target-controls input, #gust, [data-scenario], #mission-workspace input, #mission-workspace button:not(#mission-export), #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #flight-mode, [data-mode], #position-apply, #fault-apply, #fault-link, #fault-clear, #fault-pusher, #abort-takeoff, #transition-hover, #transition-cruise, #pilot-enable";
+    "#reset, #settings-open, #speed, #import-open, #target-controls input, #gust, [data-scenario], #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #flight-mode, [data-mode], #position-apply, #fault-apply, #fault-link, #fault-clear, #fault-pusher, #abort-takeoff, #transition-hover, #transition-cruise, #pilot-enable";
   document.querySelectorAll(selector).forEach((element) => {
     element.disabled = disabled;
   });
@@ -2160,7 +2331,7 @@ function setExternalControls(disabled) {
       (hilState?.phase !== "running" ||
         (unready && ["arm", "takeoff"].includes(button.dataset.command)));
   });
-  renderWaypoints();
+  updateMissionControls();
   updateLidarExportButtons();
   $("play").disabled =
     disabled &&
@@ -2221,6 +2392,15 @@ function presentHilState(state) {
         .join("\n")
     : "";
   if (!externalActive) return;
+  const confirmed =
+    state.controller?.kind === "ardupilot" && state.mission?.verified
+      ? state.mission.points
+      : [];
+  const missionKey = JSON.stringify(confirmed);
+  if (missionKey !== displayedExternalMission) {
+    scene?.setMission(confirmed);
+    displayedExternalMission = missionKey;
+  }
   if (state.snapshot?.controlSource === "external") {
     const grounded = state.snapshot.runway.weightOnWheels;
     if (shouldFollowTakeoff(hilPreviousGrounded, grounded, hilFollowed)) {
@@ -2329,9 +2509,19 @@ $("hil-start").onclick = async () => {
       timing,
       config,
       scenario,
+      waypoints: structuredClone(waypoints),
     };
+    waypoints =
+      reattach && existing.mission?.points
+        ? structuredClone(existing.mission.points)
+        : structuredClone(waypoints);
+    displayedExternalMission = "";
     clearCameraPreview();
     externalActive = true;
+    hilState = reattach
+      ? existing
+      : { phase: "starting", controller: { kind: controller } };
+    renderWaypoints();
     hilPreviousGrounded = undefined;
     hilFollowed = false;
     sceneEditor?.setScene(sceneEditor.getApplied(), true);
@@ -2401,7 +2591,8 @@ async function returnInternal(stop = true) {
   sensors = current.sensors;
   if (current.setup) {
     showReplayEvent("scene", current.setup.scene);
-    showReplayEvent("mission", current.setup.mission);
+    waypoints = internalSaved.waypoints;
+    renderWaypoints();
   }
   setExternalControls(false);
   setPlaying(false);

@@ -40,3 +40,5 @@ node companion/replay.js /absolute/path/to/ardupilot-recording.json
 單次原生測試在 126.056 秒模擬時間內完成起飛、60.026 秒懸停及降落自動上鎖，懸停高度 RMSE 約 0.00179 m、最大水平位移約 0.30074 m；126,056 筆執行器輸出中無無效封包或序號不一致，MAVLink CRC 錯誤為 0。獨立重播核對 126,056 筆輸入（含 1,007 啟動步數）與 2,523 個樣本，位置、姿態及馬達最大誤差均為 0。詳見[精簡驗證資料](validation/ardupilot-copter-4.7.2.json)；這些結果限於測試條件，並非實機性能保證。
 
 Context7 沒有 Copter 4.7.2 的精確版本索引，協定以該版本的官方 tag 原始碼核對。更多來源及修補細節見 [ArduPilot 修補說明](../companion/patches/README.md)。
+
+本機 ArduCopter 航點任務及真實 SITL 測試見 [ArduPilot 航點任務](ArduPilot_航點任務.md)；PX4 外部航點任務尚未支援。

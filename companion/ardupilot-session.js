@@ -21,6 +21,7 @@ import {
   commandMessage,
   autopilotIdentity,
 } from "./ardupilot-protocol.js";
+import { ArduPilotMission } from "./ardupilot-mission.js";
 const MAX_BYTES = 96 * 1024 * 1024;
 export class ArduPilotSession extends EventEmitter {
   constructor() {
@@ -30,6 +31,10 @@ export class ArduPilotSession extends EventEmitter {
     this.sequence = 0;
     this.bytes = 0;
     this.pendingAcks = new Map();
+    this.telemetryEpoch = 0;
+    this.heartbeatEpoch = -1;
+    this.armingAckEpoch = -1;
+    this.missionManager = new ArduPilotMission(this);
     this.controller = {
       kind: "ardupilot",
       version: null,
@@ -64,6 +69,7 @@ export class ArduPilotSession extends EventEmitter {
       phase: this.phase,
       clock: { stepUs: 1000 },
       snapshot: this.sim?.snapshot() ?? null,
+      mission: this.missionManager.snapshot(),
       controller: { ...this.controller },
       stats: {
         ...this.stats,
@@ -83,6 +89,7 @@ export class ArduPilotSession extends EventEmitter {
   }
   fail(error) {
     if (["fault", "stopped"].includes(this.phase)) return;
+    this.missionManager.abort(String(error.message ?? error));
     this.phase = "fault";
     this.log(error.message ?? error);
     clearTimeout(this.nextTick);
@@ -117,6 +124,11 @@ export class ArduPilotSession extends EventEmitter {
       );
     await stat(defaults);
     this.config = validated;
+    this.missionManager.state.limits = {
+      radius: validated.geofenceRadius,
+      height: validated.geofenceHeight,
+      minAltitude: 1,
+    };
     this.sim = createSimulation(validated, { controlSource: "external" });
     this.send = mavlinkEncoder();
     this.directory = await mkdtemp(
@@ -298,6 +310,7 @@ export class ArduPilotSession extends EventEmitter {
               mavlinkVersion: 3,
             }),
           );
+          this.missionManager.poll();
           if (!this.controller.verified)
             this.writeMavlink(commandMessage(512, [148]));
           if (!this.controller.parametersVerified)
@@ -367,13 +380,25 @@ export class ArduPilotSession extends EventEmitter {
     this.telemetry.write(this.send(message));
   }
   onTelemetry(id, message) {
+    this.telemetryEpoch++;
+    this.missionManager.handle(id, message);
     if (id === 0) {
       this.controller.armed = Boolean(message.baseMode & 128);
       this.controller.armedKnown = true;
       this.controller.flightMode =
-        { 0: "STABILIZE", 4: "GUIDED", 9: "LAND" }[message.customMode] ??
-        String(message.customMode);
+        { 0: "STABILIZE", 3: "AUTO", 4: "GUIDED", 9: "LAND" }[
+          message.customMode
+        ] ?? String(message.customMode);
       this.lastHeartbeat = Date.now();
+      this.heartbeatEpoch = this.telemetryEpoch;
+      if (
+        !this.missionManager.startingFlight &&
+        this.controller.flightMode !== "AUTO"
+      )
+        this.missionManager.interrupt(
+          `Autopilot mode changed to ${this.controller.flightMode}`,
+        );
+      this.missionManager.update();
     } else if (id === 148) {
       const identity = autopilotIdentity(message);
       Object.assign(this.controller, identity);
@@ -399,6 +424,11 @@ export class ArduPilotSession extends EventEmitter {
       if (!pending) return;
       const previousSize = JSON.stringify(pending.log).length;
       pending.log.ackResult = message.result;
+      if (
+        message.command === common.MavCmd.COMPONENT_ARM_DISARM &&
+        message.result === 0
+      )
+        this.armingAckEpoch = this.telemetryEpoch;
       this.bytes += JSON.stringify(pending.log).length - previousSize;
       if (message.result === 5) return;
       this.pendingAcks.delete(message.command);
@@ -495,6 +525,7 @@ export class ArduPilotSession extends EventEmitter {
     this.lastPacket = packet;
     this.lastActuator = Date.now();
     this.stats.actuatorPackets++;
+    this.missionManager.update();
     this.cachedReply = physicsJson(this.sim.readSensors(), snapshot.battery);
     this.record.actuators.push(entry);
     this.bytes += Buffer.byteLength(JSON.stringify(entry)) + 1;
@@ -565,11 +596,21 @@ export class ArduPilotSession extends EventEmitter {
       }
     });
   }
+  async uploadMission(points) {
+    return this.missionManager.upload(points);
+  }
   async command(action) {
     if (
-      !["arm", "takeoff", "land", "disarm", "pause", "resume", "stop"].includes(
-        action,
-      )
+      ![
+        "arm",
+        "takeoff",
+        "land",
+        "disarm",
+        "pause",
+        "resume",
+        "stop",
+        "mission",
+      ].includes(action)
     )
       throw new Error("Unknown ArduPilot action");
     if (action === "stop") {
@@ -578,7 +619,11 @@ export class ArduPilotSession extends EventEmitter {
     }
     if (this.record?.events.length >= 100000)
       throw new Error("Session event limit reached");
+    if (this.missionManager.transfer && !["stop", "pause"].includes(action))
+      throw new Error("Mission transfer is in progress");
     if (action === "pause") {
+      if (this.missionManager.transfer)
+        this.missionManager.abort("Mission transfer interrupted by pause");
       if (this.phase !== "running") throw new Error("Session is not running");
       this.phase = "paused";
       clearTimeout(this.nextTick);
@@ -602,7 +647,10 @@ export class ArduPilotSession extends EventEmitter {
       if (this.commandBusy)
         throw new Error("A flight command is already pending");
       this.commandBusy = true;
+      if (["arm", "land", "disarm", "takeoff"].includes(action))
+        this.missionManager.interrupt(`User requested ${action}`);
       try {
+        if (action === "mission") await this.missionManager.start();
         if (action === "arm" || action === "takeoff") {
           await this.sendCommand(176, [1, 4]);
           if (!this.controller.armed) await this.sendCommand(400, [1, 0]);
@@ -644,6 +692,7 @@ export class ArduPilotSession extends EventEmitter {
   async close() {
     if (this.closePromise) return this.closePromise;
     this.closePromise = (async () => {
+      this.missionManager.abort("Session stopped");
       this.phase = "stopped";
       for (const timer of [this.publisher, this.heartbeatTimer, this.watchdog])
         clearInterval(timer);

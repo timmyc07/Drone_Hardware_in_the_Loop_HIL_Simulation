@@ -162,6 +162,7 @@ function replayPlant(record, bootstrap, mapInput) {
         "resume",
         "stop",
         "gust",
+        ...(record.format === "flight-lab-ardupilot" ? ["mission"] : []),
       ].includes(event.action)
     )
       throw new Error("Invalid SITL recording event");

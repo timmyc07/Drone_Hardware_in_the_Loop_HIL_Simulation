@@ -106,7 +106,7 @@ export function createHilClient({
       const timer = setTimeout(() => {
         pending.delete(id);
         reject(new Error("本機服務回應逾時。"));
-      }, 20000);
+      }, 25000);
       pending.set(id, { resolve, reject, timer });
       try {
         socket.send(
@@ -158,4 +158,67 @@ export function shouldFollowTakeoff(
   alreadyFollowed,
 ) {
   return previousGrounded === true && grounded === false && !alreadyFollowed;
+}
+
+export function externalMissionIndex(mission) {
+  const seq = mission?.currentSeq;
+  return Number.isInteger(seq) &&
+    seq >= 2 &&
+    seq < (mission.points?.length ?? 0) + 2
+    ? seq - 2
+    : null;
+}
+
+export function externalMissionControls(
+  state,
+  points,
+  invalid = false,
+  busy = false,
+) {
+  const mission = state?.mission;
+  const editable = state?.controller?.kind === "ardupilot";
+  const valid =
+    !invalid &&
+    points.length > 0 &&
+    points.length <= 50 &&
+    points.every(
+      (p) =>
+        ["north", "east", "altitude", "hold"].every((key) =>
+          Number.isFinite(p[key]),
+        ) &&
+        p.altitude >= (mission?.limits?.minAltitude ?? 1) &&
+        Number.isInteger(p.hold) &&
+        p.hold >= 0 &&
+        p.hold <= 60 &&
+        (!mission?.limits ||
+          (Math.hypot(p.north, p.east) <= mission.limits.radius &&
+            p.altitude <= mission.limits.height)),
+    );
+  const ready =
+    editable &&
+    state.phase === "running" &&
+    mission?.homeReady === true &&
+    mission.readyToUpload === true &&
+    !busy &&
+    !["uploading", "verifying"].includes(mission?.phase) &&
+    !hilFlightReadiness(state).length &&
+    state.controller.armed === false &&
+    state.snapshot?.runway?.weightOnWheels === true;
+  return {
+    editable,
+    upload: !!(ready && valid),
+    start: !!(
+      ready &&
+      valid &&
+      mission?.verified === true &&
+      mission.phase === "ready" &&
+      Array.isArray(mission.points) &&
+      points.length === mission.points.length &&
+      points.every((p, i) =>
+        ["north", "east", "altitude", "hold"].every(
+          (key) => p[key] === mission.points[i][key],
+        ),
+      )
+    ),
+  };
 }

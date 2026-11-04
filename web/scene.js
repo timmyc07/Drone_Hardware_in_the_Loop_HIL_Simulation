@@ -517,7 +517,7 @@ export function createScene(container) {
   const cameraRenderer = createCameraRenderer(renderer, scene);
   return {
     captureCamera: cameraRenderer.captureCamera,
-    update(snapshot, wallDt) {
+    update(snapshot, wallDt, missionIndex) {
       const nextAirframe = Object.hasOwn(airframes, snapshot.airframe)
         ? snapshot.airframe
         : "quadrotor";
@@ -584,7 +584,12 @@ export function createScene(container) {
       const markers = mission.children.filter((item) => item.userData.waypoint);
       markers.forEach((item, i) =>
         item.material.color.setHex(
-          i === snapshot.navigation?.index ? 0xffffff : 0xffbf78,
+          i ===
+            (missionIndex === undefined
+              ? snapshot.navigation?.index
+              : missionIndex)
+            ? 0xffffff
+            : 0xffbf78,
         ),
       );
       gates.children.forEach((item, i) =>

@@ -81,7 +81,7 @@ test("request timeouts and invalid bootstrap are rejected", async () => {
   let expire;
   try {
     globalThis.setTimeout = (fn, delay) => {
-      assert.equal(delay, 20000);
+      assert.equal(delay, 25000);
       expire = fn;
       return 0;
     };
@@ -135,4 +135,111 @@ test("follow view switches only on an unfollowed ground-to-air transition", () =
   assert.equal(shouldFollowTakeoff(true, false, true), false);
   assert.equal(shouldFollowTakeoff(false, false, false), false);
   assert.equal(shouldFollowTakeoff(undefined, false, false), false);
+});
+
+test("ArduPilot mission gates upload and start on verified matching route", async () => {
+  const { externalMissionControls, externalMissionIndex } =
+    await import("../hil-client.js");
+  const points = [{ north: 5, east: 0, altitude: 3, hold: 1 }];
+  const state = {
+    phase: "running",
+    controller: {
+      kind: "ardupilot",
+      verified: true,
+      parametersVerified: true,
+      armedKnown: true,
+      armed: false,
+    },
+    snapshot: { runway: { weightOnWheels: true } },
+    mission: {
+      phase: "ready",
+      homeReady: true,
+      readyToUpload: true,
+      verified: true,
+      points,
+      limits: { radius: 50, height: 20, minAltitude: 1 },
+      currentSeq: 2,
+    },
+  };
+  assert.equal(externalMissionControls(state, points).upload, true);
+  assert.equal(externalMissionControls(state, points).start, true);
+  assert.equal(
+    externalMissionControls(
+      { ...state, mission: { ...state.mission, readyToUpload: false } },
+      points,
+    ).start,
+    false,
+  );
+  assert.equal(
+    externalMissionControls(state, [{ ...points[0], altitude: 0 }]).upload,
+    false,
+  );
+  assert.equal(
+    externalMissionControls(
+      { ...state, mission: { ...state.mission, homeReady: false } },
+      points,
+    ).upload,
+    false,
+  );
+  assert.equal(
+    externalMissionControls(
+      { ...state, mission: { ...state.mission, homeReady: false } },
+      points,
+    ).start,
+    false,
+  );
+  assert.equal(externalMissionIndex(state.mission), 0);
+  assert.equal(externalMissionIndex({ ...state.mission, currentSeq: 1 }), null);
+  assert.equal(externalMissionIndex({ ...state.mission, currentSeq: 3 }), null);
+  assert.equal(
+    externalMissionControls(state, [{ ...points[0], hold: 1.5 }]).upload,
+    false,
+  );
+  assert.equal(
+    externalMissionControls(state, [{ ...points[0], north: 51 }]).upload,
+    false,
+  );
+  assert.equal(
+    externalMissionControls(state, [{ ...points[0], north: 6 }]).start,
+    false,
+  );
+  assert.equal(externalMissionControls(state, points, true).upload, false);
+  assert.equal(
+    externalMissionControls(
+      { ...state, controller: { ...state.controller, armed: true } },
+      points,
+    ).start,
+    false,
+  );
+  assert.equal(
+    externalMissionControls(
+      {
+        ...state,
+        controller: { ...state.controller, parametersVerified: false },
+      },
+      points,
+    ).start,
+    false,
+  );
+  assert.equal(
+    externalMissionControls(
+      { ...state, snapshot: { runway: { weightOnWheels: false } } },
+      points,
+    ).start,
+    false,
+  );
+  assert.equal(
+    externalMissionControls(
+      { ...state, controller: { ...state.controller, armed: true } },
+      points,
+    ).upload,
+    false,
+  );
+  assert.equal(
+    externalMissionControls(
+      { ...state, mission: { ...state.mission, phase: "interrupted" } },
+      points,
+    ).start,
+    false,
+  );
 });

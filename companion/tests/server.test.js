@@ -28,50 +28,181 @@ class FakeSession extends EventEmitter {
   }
 }
 
-test("controller selection rejects live switches and preserves the previous record on failed replacement", { timeout: 5000 }, async (t) => {
-  const sessions = [];
-  class SelectedSession extends EventEmitter {
-    constructor(kind) {
-      super(); this.kind = kind; this.phase = "idle";
-      this.record = { kind, number: sessions.length }; sessions.push(this);
+test(
+  "mission upload is ArduPilot-only and malformed payloads never reach the controller",
+  { timeout: 5000 },
+  async (t) => {
+    const sessions = [];
+    class MissionSession extends FakeSession {
+      constructor(kind) {
+        super();
+        this.kind = kind;
+        sessions.push(this);
+      }
+      state() {
+        return { phase: "idle", controller: { kind: this.kind } };
+      }
+      async uploadMission(points) {
+        this.actions.push(["mission", points]);
+        return { verified: true, points };
+      }
     }
-    state() { return { phase: this.phase, controller: { kind: this.kind } }; }
-    async start({ binaryPath }) {
-      if (binaryPath === "invalid") throw Error("invalid binary");
-      this.phase = "running"; return this.state();
+    const app = await startCompanion({
+      port: 0,
+      sessionFactory: (kind) => new MissionSession(kind),
+    });
+    t.after(() => app.close());
+    const { port } = app.address,
+      host = `127.0.0.1:${port}`;
+    const token = JSON.parse((await http(port, "/api/bootstrap")).data).token;
+    const ws = await wsOpen(
+      `ws://${host}/bridge?token=${token}`,
+      `http://${host}`,
+    );
+    t.after(() => ws.terminate());
+    let sequence = 0;
+    const rpc = (type, value) =>
+      new Promise((resolve) => {
+        const id = ++sequence;
+        const receive = (data) => {
+          const message = JSON.parse(data);
+          if (message.type !== "reply" || message.id !== id) return;
+          ws.off("message", receive);
+          resolve(message);
+        };
+        ws.on("message", receive);
+        ws.send(JSON.stringify({ id, type, value }));
+      });
+    const points = [{ north: 3, east: -2, altitude: 3, hold: 1 }];
+    assert.equal((await rpc("mission", points)).ok, false);
+    assert.equal((await rpc("command", "mission")).ok, false);
+    assert.equal(
+      (
+        await rpc("start", {
+          controller: "ardupilot",
+          binaryPath: "valid",
+          config: {},
+        })
+      ).ok,
+      true,
+    );
+    const ardupilot = sessions.at(-1),
+      previousCalls = ardupilot.actions.length;
+    for (const invalid of [
+      [],
+      Array(51).fill(points[0]),
+      {},
+      [null],
+      [{ ...points[0], arbitrary: 0 }],
+      [{ north: 0, east: 0, altitude: 2 }],
+      [{ ...points[0], north: "3" }],
+      [{ ...points[0], altitude: null }],
+    ])
+      assert.equal((await rpc("mission", invalid)).ok, false);
+    assert.equal(ardupilot.actions.length, previousCalls);
+    assert.deepEqual((await rpc("mission", points)).value, {
+      verified: true,
+      points,
+    });
+    assert.deepEqual(ardupilot.actions.at(-1), ["mission", points]);
+    assert.equal((await rpc("command", "mission")).ok, true);
+    assert.equal(ardupilot.actions.at(-1), "mission");
+  },
+);
+
+test(
+  "controller selection rejects live switches and preserves the previous record on failed replacement",
+  { timeout: 5000 },
+  async (t) => {
+    const sessions = [];
+    class SelectedSession extends EventEmitter {
+      constructor(kind) {
+        super();
+        this.kind = kind;
+        this.phase = "idle";
+        this.record = { kind, number: sessions.length };
+        sessions.push(this);
+      }
+      state() {
+        return { phase: this.phase, controller: { kind: this.kind } };
+      }
+      async start({ binaryPath }) {
+        if (binaryPath === "invalid") throw Error("invalid binary");
+        this.phase = "running";
+        return this.state();
+      }
+      async command(action) {
+        if (action === "stop") this.phase = "stopped";
+        return this.state();
+      }
+      exportRecording() {
+        return this.record;
+      }
+      async close() {
+        this.closed = true;
+      }
     }
-    async command(action) { if (action === "stop") this.phase = "stopped"; return this.state(); }
-    exportRecording() { return this.record; }
-    async close() { this.closed = true; }
-  }
-  const app = await startCompanion({ port: 0, sessionFactory: kind => new SelectedSession(kind) });
-  t.after(() => app.close());
-  const { port } = app.address, host = `127.0.0.1:${port}`, origin = `http://${host}`;
-  const token = JSON.parse((await http(port, "/api/bootstrap")).data).token;
-  const ws = await wsOpen(`ws://${host}/bridge?token=${token}`, origin);
-  t.after(() => ws.terminate());
-  let id = 0; const received = [];
-  ws.on("message", data => received.push(JSON.parse(data)));
-  async function start(controller, binaryPath = "valid") {
-    const requestId = ++id;
-    ws.send(JSON.stringify({ id: requestId, type: "start", value: { controller, binaryPath, config: {} } }));
-    while (!received.some(reply => reply.type === "reply" && reply.id === requestId)) await new Promise(resolve => setTimeout(resolve, 5));
-    return received.find(reply => reply.type === "reply" && reply.id === requestId);
-  }
-  assert.equal((await start("ardupilot")).value.controller.kind, "ardupilot");
-  assert.equal(sessions[0].closed, true);
-  assert.equal((await start("other")).ok, false);
-  assert.equal((await start("px4")).ok, false);
-  assert.equal(sessions.length, 2);
-  const stopId = ++id;
-  ws.send(JSON.stringify({ id: stopId, type: "command", value: "stop" }));
-  while (!received.some(reply => reply.type === "reply" && reply.id === stopId)) await new Promise(resolve => setTimeout(resolve, 5));
-  assert.equal((await start("px4", "invalid")).ok, false);
-  assert.equal(sessions[2].closed, true);
-  assert.deepEqual(JSON.parse((await http(port, "/api/recording", { "x-flight-token": token })).data), { kind: "ardupilot", number: 1 });
-  assert.equal((await start("px4")).value.controller.kind, "px4");
-  assert.deepEqual(JSON.parse((await http(port, "/api/recording", { "x-flight-token": token })).data), { kind: "px4", number: 3 });
-});
+    const app = await startCompanion({
+      port: 0,
+      sessionFactory: (kind) => new SelectedSession(kind),
+    });
+    t.after(() => app.close());
+    const { port } = app.address,
+      host = `127.0.0.1:${port}`,
+      origin = `http://${host}`;
+    const token = JSON.parse((await http(port, "/api/bootstrap")).data).token;
+    const ws = await wsOpen(`ws://${host}/bridge?token=${token}`, origin);
+    t.after(() => ws.terminate());
+    let id = 0;
+    const received = [];
+    ws.on("message", (data) => received.push(JSON.parse(data)));
+    async function start(controller, binaryPath = "valid") {
+      const requestId = ++id;
+      ws.send(
+        JSON.stringify({
+          id: requestId,
+          type: "start",
+          value: { controller, binaryPath, config: {} },
+        }),
+      );
+      while (
+        !received.some(
+          (reply) => reply.type === "reply" && reply.id === requestId,
+        )
+      )
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      return received.find(
+        (reply) => reply.type === "reply" && reply.id === requestId,
+      );
+    }
+    assert.equal((await start("ardupilot")).value.controller.kind, "ardupilot");
+    assert.equal(sessions[0].closed, true);
+    assert.equal((await start("other")).ok, false);
+    assert.equal((await start("px4")).ok, false);
+    assert.equal(sessions.length, 2);
+    const stopId = ++id;
+    ws.send(JSON.stringify({ id: stopId, type: "command", value: "stop" }));
+    while (
+      !received.some((reply) => reply.type === "reply" && reply.id === stopId)
+    )
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal((await start("px4", "invalid")).ok, false);
+    assert.equal(sessions[2].closed, true);
+    assert.deepEqual(
+      JSON.parse(
+        (await http(port, "/api/recording", { "x-flight-token": token })).data,
+      ),
+      { kind: "ardupilot", number: 1 },
+    );
+    assert.equal((await start("px4")).value.controller.kind, "px4");
+    assert.deepEqual(
+      JSON.parse(
+        (await http(port, "/api/recording", { "x-flight-token": token })).data,
+      ),
+      { kind: "px4", number: 3 },
+    );
+  },
+);
 const http = (port, path, headers = {}) =>
   new Promise((resolve, reject) => {
     const req = request({ host: "127.0.0.1", port, path, headers }, (res) => {

@@ -89,7 +89,10 @@
           ><button id="mission-apply" class="primary">套用任務</button
           ><button id="mission-start" class="primary">開始任務</button>
         </div>
-        <p>套用任務會切換至任務模式；開始任務會同時啟動模擬。</p>
+        <p id="mission-help">
+          套用任務會切換至任務模式；開始任務會同時啟動模擬。
+        </p>
+        <p id="mission-status" aria-live="polite"></p>
       </section>
       <section id="training-workspace" class="panel workspace-extra" hidden>
         <h2>訓練場 <span>PRACTICE</span></h2>
@@ -583,6 +586,7 @@
             </div>
             <p id="airframe-status">機型：等待狀態</p>
             <p id="flight-details">等待狀態</p>
+            <p id="flight-mission-status" aria-live="polite" hidden></p>
             <p id="wing-telemetry">空速與翼面狀態：—</p>
             <p id="wing-hint"></p>
             <p id="runway-status">跑道狀態：—</p>

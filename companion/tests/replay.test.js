@@ -90,6 +90,7 @@ test("SITL replay rejects corrupted provenance, clocks, motor maps and trajector
     (r) => (r.samples[0].position[0] = 1),
     (r) => (r.samples[1].time += 0.001),
     (r) => (r.events[0].time += 0.001),
+    (r) => (r.events[0].action = "mission"),
     (r) => (r.finalSnapshot.motors[0] = 0.5),
     (r) => (r.finalSnapshot.armed = !r.finalSnapshot.armed),
   ];
@@ -121,7 +122,7 @@ function ardupilotFixture() {
     bootstrapTicks: 12,
     actuators: [],
     samples: [sim.snapshot()],
-    events: [],
+    events: [{ time: 0, action: "mission" }],
   };
   for (let i = 0; i < 800; i++) {
     if (i === 200) {

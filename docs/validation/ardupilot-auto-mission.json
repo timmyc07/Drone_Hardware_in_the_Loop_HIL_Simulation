@@ -1,0 +1,167 @@
+{
+  "passed": true,
+  "firmware": {
+    "version": "4.7.2",
+    "reportedGitHash": "fb773567",
+    "expectedSourceSha": "fb773567896014da007bca58358704d4a0d8516f",
+    "sourceSha": null,
+    "verification": "version and eight-character git-prefix self-report; not full-SHA attestation"
+  },
+  "waypoints": [
+    {
+      "north": 8,
+      "east": 0,
+      "altitude": 3,
+      "hold": 1
+    },
+    {
+      "north": 8,
+      "east": 8,
+      "altitude": 3,
+      "hold": 1
+    },
+    {
+      "north": 0,
+      "east": 8,
+      "altitude": 3,
+      "hold": 1
+    },
+    {
+      "north": 0,
+      "east": 0,
+      "altitude": 3,
+      "hold": 1
+    }
+  ],
+  "simulationSeconds": 94.078,
+  "wallSeconds": 134.634,
+  "reachedUserSequences": [
+    2,
+    3,
+    4,
+    5
+  ],
+  "landSelectedSequence": 6,
+  "landSelectedAt": 82.677,
+  "groundAt": 93.738,
+  "disarmedAt": 94.043,
+  "mavlinkCrcErrors": 0,
+  "frameMismatches": 0,
+  "replay": {
+    "acceptedInputs": 94078,
+    "bootstrapTicksIncluded": 1007,
+    "samples": 1883,
+    "maxPositionErrorM": 0,
+    "maxQuaternionError": 0,
+    "maxMotorError": 0
+  },
+  "limitations": "One software simulation test; no physical HIL or calibration claim.",
+  "simulationOnly": true,
+  "completionEvidence": {
+    "policy": "all-user-reached+final-land-selected+auto-flight+source-ground+disarmed",
+    "armedAt": 43.51599999998928,
+    "airborneAt": 47.857999999979164,
+    "landSelected": {
+      "seq": 6,
+      "time": 82.67700000003072
+    },
+    "ground": {
+      "landedState": 1,
+      "time": 93.73800000008353
+    },
+    "disarmedAt": 94.04300000008499
+  },
+  "finalMission": {
+    "phase": "completed",
+    "currentSeq": 1,
+    "landedState": 1
+  },
+  "holdEvidence": [
+    {
+      "seq": 2,
+      "sourceReachedTime": 58.129999999955224,
+      "truthSampleCount": 19,
+      "truthWindowSeconds": 0.8999999999979025,
+      "maxHorizontalErrorM": 0.07890245338102049
+    },
+    {
+      "seq": 3,
+      "sourceReachedTime": 66.20399999995206,
+      "truthSampleCount": 19,
+      "truthWindowSeconds": 0.9000000000042974,
+      "maxHorizontalErrorM": 0.04499951519420678
+    },
+    {
+      "seq": 4,
+      "sourceReachedTime": 74.36399999999102,
+      "truthSampleCount": 19,
+      "truthWindowSeconds": 0.9000000000042974,
+      "maxHorizontalErrorM": 0.04888775463146509
+    },
+    {
+      "seq": 5,
+      "sourceReachedTime": 82.54200000003007,
+      "truthSampleCount": 19,
+      "truthWindowSeconds": 0.9000000000042974,
+      "maxHorizontalErrorM": 0.0495450087677591
+    }
+  ],
+  "browserValidation": {
+    "passed": true,
+    "completedAt": 114.05000000018052,
+    "completionEvidence": {
+      "policy": "all-user-reached+final-land-selected+auto-flight+source-ground+disarmed",
+      "armedAt": 64.095999999942,
+      "airborneAt": 68.44199999996275,
+      "landSelected": {
+        "seq": 6,
+        "time": 103.62900000013076
+      },
+      "ground": {
+        "landedState": 1,
+        "time": 113.91500000017987
+      },
+      "disarmedAt": 114.05000000018052
+    },
+    "currentSequences": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      1
+    ],
+    "reachedSequences": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "acceptedInputs": 170860,
+    "replaySamples": 3419,
+    "replayMaxErrors": {
+      "positionM": 0,
+      "quaternion": 0,
+      "motor": 0
+    },
+    "fractionalHoldRejected": true,
+    "changedDraftBlocksStart": true,
+    "editingFocusRetained": true,
+    "internalExperimentPreserved": {
+      "time": 39.41000000000171,
+      "appliedFirstWaypoint": {
+        "north": 6.5,
+        "east": 0,
+        "altitude": 3,
+        "hold": 0.5
+      },
+      "draftFirstWaypoint": {
+        "north": 7.5,
+        "east": 0,
+        "altitude": 3,
+        "hold": 0.5
+      }
+    }
+  }
+}
