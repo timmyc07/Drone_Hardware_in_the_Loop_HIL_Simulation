@@ -347,7 +347,7 @@ export const CAPABILITIES = [
     category: "控制與航行",
     title: "航點任務",
     description:
-      "支援內建航點飛行，以及指定 ArduCopter 的任務上傳、讀回核對與 AUTO 起降；PX4 外部任務尚未支援。",
+      "支援內建航點及指定 ArduCopter／PX4 四旋翼的任務上傳、讀回核對與自動起降。",
     status: "partial",
     sources: [
       "https://www.simnet.aero/product-page/introduction-to-arducopter-auto-missions-with-mission-planner",

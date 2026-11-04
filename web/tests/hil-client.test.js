@@ -127,7 +127,16 @@ test("ArduPilot readiness requires identity, parameters and heartbeat without ch
     }),
     [],
   );
-  assert.deepEqual(hilFlightReadiness({ controller: { kind: "px4" } }), []);
+  assert.deepEqual(
+    hilFlightReadiness({ controller: { kind: "px4", verified: true } }),
+    [],
+  );
+  assert.deepEqual(
+    hilFlightReadiness({
+      controller: { kind: "px4", verified: true, armedKnown: false },
+    }),
+    ["心跳"],
+  );
 });
 
 test("follow view switches only on an unfollowed ground-to-air transition", () => {
@@ -157,7 +166,13 @@ test("ArduPilot mission gates upload and start on verified matching route", asyn
       readyToUpload: true,
       verified: true,
       points,
-      limits: { radius: 50, height: 20, minAltitude: 1 },
+      limits: {
+        radius: 50,
+        height: 20,
+        minAltitude: 1,
+        holdRequiresInteger: true,
+      },
+      waypointStartSeq: 2,
       currentSeq: 2,
     },
   };
@@ -240,6 +255,95 @@ test("ArduPilot mission gates upload and start on verified matching route", asyn
       { ...state, mission: { ...state.mission, phase: "interrupted" } },
       points,
     ).start,
+    false,
+  );
+});
+
+test("PX4 and ArduPilot mission sequences and hold rules use reported contract", async () => {
+  const {
+    externalMissionControls,
+    externalMissionIndex,
+    externalMissionReachedCount,
+  } = await import("../hil-client.js");
+  const points = [
+    { north: 5, east: 0, altitude: 3, hold: 0.5 },
+    { north: 6, east: 0, altitude: 3, hold: 0 },
+  ];
+  const mission = {
+    phase: "ready",
+    homeReady: true,
+    readyToUpload: true,
+    verified: true,
+    points,
+    waypointStartSeq: 1,
+    currentSeq: 1,
+    reachedSeqs: [0, 1, 1, 2, 3],
+    limits: {
+      radius: 50,
+      height: 20,
+      minAltitude: 1,
+      holdRequiresInteger: false,
+    },
+  };
+  const state = {
+    phase: "running",
+    controller: { kind: "px4", armed: false, verified: true },
+    snapshot: { runway: { weightOnWheels: true } },
+    mission,
+  };
+  assert.equal(externalMissionControls(state, points).upload, true);
+  assert.equal(externalMissionControls(state, points).start, true);
+  assert.equal(externalMissionIndex(mission), 0);
+  assert.equal(externalMissionIndex({ ...mission, currentSeq: 2 }), 1);
+  assert.equal(externalMissionIndex({ ...mission, currentSeq: 0 }), null);
+  assert.equal(externalMissionIndex({ ...mission, currentSeq: 3 }), null);
+  assert.equal(externalMissionReachedCount(mission), 2);
+  assert.equal(
+    externalMissionIndex({ ...mission, waypointStartSeq: undefined }),
+    null,
+  );
+  assert.equal(
+    externalMissionReachedCount({ ...mission, waypointStartSeq: undefined }),
+    null,
+  );
+  const ap = {
+    ...mission,
+    waypointStartSeq: 2,
+    currentSeq: 2,
+    reachedSeqs: [0, 1, 2, 2, 3, 4],
+    limits: { ...mission.limits, holdRequiresInteger: true },
+  };
+  assert.equal(externalMissionIndex(ap), 0);
+  assert.equal(externalMissionIndex({ ...ap, currentSeq: 1 }), null);
+  assert.equal(externalMissionIndex({ ...ap, currentSeq: 4 }), null);
+  assert.equal(externalMissionReachedCount(ap), 2);
+  assert.equal(
+    externalMissionControls(
+      {
+        ...state,
+        controller: {
+          kind: "ardupilot",
+          armed: false,
+          verified: true,
+          parametersVerified: true,
+          armedKnown: true,
+        },
+        mission: ap,
+      },
+      points,
+    ).upload,
+    false,
+  );
+  assert.equal(
+    externalMissionControls(
+      { ...state, mission: { ...mission, readyToUpload: false } },
+      points,
+    ).start,
+    false,
+  );
+  assert.equal(
+    externalMissionControls(state, [{ ...points[0], north: 6 }, points[1]])
+      .start,
     false,
   );
 });

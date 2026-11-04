@@ -1,4 +1,3 @@
-import { common, MavLinkProtocolV2 } from "node-mavlink";
 export const ARDUPILOT_SOURCE_SHA = "fb773567896014da007bca58358704d4a0d8516f";
 export const ARDUPILOT_VERSION = "4.7.2";
 export const ARDUPILOT_DT = 0.001;
@@ -92,30 +91,6 @@ export function physicsJson(truth, battery) {
     data.battery = { voltage: battery.voltage, current: battery.current };
   }
   return Buffer.from("\n" + JSON.stringify(data) + "\n");
-}
-export function mavlinkEncoder() {
-  const protocol = new MavLinkProtocolV2(255, 190);
-  let sequence = 0;
-  return (message) => protocol.serialize(message, sequence++ % 256);
-}
-export function commandMessage(command, params = []) {
-  if (
-    !Number.isInteger(command) ||
-    command < 0 ||
-    command > 65535 ||
-    !Array.isArray(params) ||
-    params.length > 7 ||
-    !Array.from(params).every(Number.isFinite)
-  )
-    throw new Error("Invalid MAVLink command");
-  const message = Object.assign(new common.CommandLong(), {
-    targetSystem: 1,
-    targetComponent: 1,
-    command,
-    confirmation: 0,
-  });
-  for (let i = 1; i <= 7; i++) message[`_param${i}`] = params[i - 1] ?? 0;
-  return message;
 }
 export function autopilotIdentity(message) {
   const number = message.flightSwVersion;

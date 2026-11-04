@@ -1,5 +1,9 @@
 import { EventEmitter } from "node:events";
 import net from "node:net";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { Px4Gcs } from "./px4-gcs.js";
+import { Px4Mission } from "./px4-mission.js";
 import { spawn } from "node:child_process";
 import {
   mkdtemp,
@@ -12,8 +16,8 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createSimulation, validateConfig } from "../web/sim.js";
+import { packetReader } from "./mavlink.js";
 import {
-  packetReader,
   mapActuators,
   sensorMessages,
   encoder,
@@ -32,6 +36,7 @@ export class Px4Session extends EventEmitter {
       sensorPackets: 0,
       actuatorPackets: 0,
       crcErrors: 0,
+      gcsCrcErrors: 0,
       timestampMismatches: 0,
       lastTimestampDeltaUs: 0,
       lastActuatorAgeMs: null,
@@ -56,6 +61,7 @@ export class Px4Session extends EventEmitter {
       clock: { stepUs: Math.round(DT * 1e6) },
       snapshot: this.sim?.snapshot() ?? null,
       controller: { ...this.controller },
+      mission: this.missionManager?.snapshot() ?? null,
       stats: {
         ...this.stats,
         lastActuatorAgeMs: this.lastActuator
@@ -94,6 +100,7 @@ export class Px4Session extends EventEmitter {
   fail(error) {
     if (["stopped", "fault"].includes(this.phase)) return;
     this.phase = "fault";
+    this.missionManager?.abort(String(error.message ?? error));
     this.log(String(error.message ?? error));
     this.publish();
   }
@@ -125,6 +132,13 @@ export class Px4Session extends EventEmitter {
       throw new Error("Expected PX4 executable");
     const rootfs = path.dirname(path.dirname(binary));
     await stat(path.join(rootfs, "etc/init.d-posix/rcS"));
+    this.controller.binarySha256 = createHash("sha256")
+      .update(await readFile(binary))
+      .digest("hex");
+    this.controller.expectedLocalPatchSha256 =
+      "a66390ec624cb83a7e6ae2a4971634418e84629618e668b957466d12e1ec6674";
+    this.controller.identityEvidence =
+      "console self-reported base SHA; local binary digest and reviewed patch recorded separately";
     this.config = validated;
     this.origin = { ...origin };
     this.sim = createSimulation(validated, { controlSource: "external" });
@@ -142,7 +156,8 @@ export class Px4Session extends EventEmitter {
         gps: "ideal synthetic 3D fix, 10 satellites, eph=1m epv=1.5m",
         magnetometer: "PX4 v1.17.0 WMM-2020 lookup field at declared origin",
         motorCommand: "normalized speed; THR_MDL_FAC=1",
-        manualControl: "COM_RC_IN_MODE=4 (no RC, console autonomous commands)",
+        manualControl:
+          "COM_RC_IN_MODE=4 (no RC; owned console actions and constrained GCS missions)",
         sensorNoise: {
           algorithm:
             "xorshift32(timeUs+1+seed+axis*2654435761), uniform variance normalized",
@@ -155,7 +170,8 @@ export class Px4Session extends EventEmitter {
           purpose:
             "minimal sensor variation floor avoids constant-value stuck detection; regenerate from exact tick including bootstrap",
         },
-        transport: "loopback TCP; console-only commands",
+        transport:
+          "loopback TCP HIL and explicit-loopback UDP MAVLink mission channel; basic actions use owned console",
       },
       actuators: [],
       samples: [this.sim.snapshot()],
@@ -166,18 +182,31 @@ export class Px4Session extends EventEmitter {
     await mkdir(wrappers);
     await writeFile(
       path.join(wrappers, "px4-rc.mavlink"),
-      "# GCS UDP deliberately disabled; stop optional loopback DDS client.\nuxrce_dds_client stop\n",
+      "# rcS starts DDS before this hook; stop it before starting the sole GCS channel.\nuxrce_dds_client stop\nmavlink start -u 14560 -o 14561 -t 127.0.0.1 -m onboard -r 20000\n",
     );
     this.phase = "starting";
     this.send = encoder();
+    this.gcs = new Px4Gcs(this);
+    this.missionManager = new Px4Mission(this);
+    try {
+      await this.gcs.start();
+    } catch (error) {
+      await this.close();
+      throw error;
+    }
     this.server = net.createServer((socket) => this.connect(socket));
-    await new Promise((resolve, reject) => {
-      this.server.once("error", (error) => {
-        this.fail(error);
-        reject(error);
+    try {
+      await new Promise((resolve, reject) => {
+        this.server.once("error", (error) => {
+          this.fail(error);
+          reject(error);
+        });
+        this.server.listen(4560, "127.0.0.1", resolve);
       });
-      this.server.listen(4560, "127.0.0.1", resolve);
-    });
+    } catch (error) {
+      await this.close();
+      throw error;
+    }
     const environment = Object.fromEntries(
       Object.entries(process.env).filter(([key]) => !key.startsWith("PX4_")),
     );
@@ -326,6 +355,7 @@ export class Px4Session extends EventEmitter {
     this.sim.applyExternalActuators(accepted);
     const snapshot = this.sim.stepExternal(DT);
     this.controller.armed = input.armed;
+    this.missionManager?.update();
     this.phase = "running";
     const entry = { ...accepted, ...input };
     const size = Buffer.byteLength(JSON.stringify(entry)) + 1;
@@ -350,17 +380,42 @@ export class Px4Session extends EventEmitter {
       if (this.phase === "running") this.sendSensors();
     }, 4);
   }
-  command(action) {
+  uploadMission(points) {
+    return this.missionManager.upload(points);
+  }
+  async command(action) {
     if (
-      !["arm", "takeoff", "land", "disarm", "pause", "resume", "stop"].includes(
-        action,
-      )
+      ![
+        "arm",
+        "takeoff",
+        "land",
+        "disarm",
+        "pause",
+        "resume",
+        "stop",
+        "mission",
+      ].includes(action)
     )
       throw new Error("Unknown PX4 session action");
     if (action !== "stop" && this.record?.events.length >= 100000)
       throw new Error("PX4 session event limit reached");
     if (action === "stop") return this.close().then(() => ({ sent: true }));
-    if (action === "pause") {
+    if (
+      (this.missionManager?.transfer.active ||
+        this.missionManager?.uploading) &&
+      action !== "stop"
+    )
+      throw new Error("Mission transfer in progress");
+    if (this.commandBusy) throw new Error("PX4 command busy");
+    if (action === "mission") {
+      if (this.commandBusy) throw new Error("PX4 command busy");
+      this.commandBusy = true;
+      try {
+        await this.missionManager.start();
+      } finally {
+        this.commandBusy = false;
+      }
+    } else if (action === "pause") {
       if (this.phase !== "running") throw new Error("Session is not running");
       this.phase = "paused";
       clearTimeout(this.nextTick);
@@ -381,6 +436,9 @@ export class Px4Session extends EventEmitter {
         throw new Error("PX4 firmware identity is not verified");
       if (this.phase !== "running")
         throw new Error("PX4 session is not running");
+      this.missionManager?.interrupt(`Manual ${action} command`);
+      if (["arm", "takeoff", "disarm"].includes(action))
+        this.armingAckEpoch = this.heartbeatEpoch ?? 0;
       this.child.stdin.write(`commander ${action}\n`);
     }
     const event = { time: this.sim.snapshot().time, action };
@@ -390,7 +448,9 @@ export class Px4Session extends EventEmitter {
     return {
       sent: true,
       confirmation:
-        "Observe PX4 armed bit and physical flight; console write is not an acknowledgement",
+        action === "mission"
+          ? "PX4 MISSION_START accepted; AUTO_MISSION heartbeat and HIL armed output observed"
+          : "Observe PX4 armed bit and physical flight; console write is not an acknowledgement",
     };
   }
   exportRecording() {
@@ -402,6 +462,8 @@ export class Px4Session extends EventEmitter {
     else samples.push(finalSnapshot);
     return structuredClone({
       ...this.record,
+      firmware: { ...this.controller },
+      mission: this.missionManager?.snapshot() ?? null,
       samples,
       stats: this.stats,
       phase: this.phase,
@@ -412,6 +474,8 @@ export class Px4Session extends EventEmitter {
     if (this.closePromise) return this.closePromise;
     this.closePromise = (async () => {
       this.phase = "stopped";
+      this.missionManager?.abort("Session stopped");
+      await this.gcs?.close();
       for (const timer of [this.watchdog, this.publisher, this.bootstrap])
         clearInterval(timer);
       clearTimeout(this.nextTick);

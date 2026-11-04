@@ -14,3 +14,11 @@ git apply /absolute/path/to/companion/patches/ardupilot-loopback.patch
 ```
 
 The macOS arm64 test build's patched executable SHA-256 is `a56f45f38e1fb78af5ae5cf5770d01a6a1d1a630308854a2867fe6ac9b67945c`. It identifies that build, not every valid build on another machine. Live socket inspection confirmed two loopback UDP endpoints and a loopback MAVLink TCP connection. A firmware version or short Git hash self-report does not prove that this patch is present; the build and socket validation must also be retained. Flight validation is documented separately.
+
+## PX4 SITL explicit loopback patch
+
+`px4-loopback.patch` modifies PX4 v1.17.0 base commit `d6f12ad1c4f70ad3230afd7d86e971421e02fef4`. Its BSD-3-Clause license is retained in `LICENSE.px4`; no native executable is bundled. With explicit `mavlink start -t 127.0.0.1`, the UDP receiving socket also binds to `127.0.0.1`. Other targets and default behavior are unchanged. Apply with `git apply --check` and `git apply` to that exact checkout before building.
+
+Patch SHA-256: `a66390ec624cb83a7e6ae2a4971634418e84629618e668b957466d12e1ec6674`.
+The macOS arm64 native test build SHA-256: `04634c9d42ecc77842257dd85f96013206eb009063768931d5102c3c97303b4a`.
+These are build provenance, not cryptographic firmware attestation. PX4's console still self-reports its base source SHA. After startup, live socket inspection confirmed only TCP `127.0.0.1` to the owned HIL listener on 4560 and UDP `127.0.0.1:14560` for missions. The startup hook stops DDS after rcS starts it; the inspected running process had no DDS socket. Node's mission endpoint binds `127.0.0.1:14561`. The session enables no broadcast, forwarding or FTP flag.

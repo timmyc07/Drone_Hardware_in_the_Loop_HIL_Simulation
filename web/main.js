@@ -13,6 +13,7 @@ import {
   hilFlightReadiness,
   shouldFollowTakeoff,
   externalMissionIndex,
+  externalMissionReachedCount,
   externalMissionControls,
 } from "./hil-client.js";
 import { createFlightApi } from "./api.js";
@@ -1140,7 +1141,9 @@ const map = $("mission-map");
 let missionBusy = false;
 const invalidWaypointInputs = new Set();
 const missionEditable = () =>
-  !replay && (!externalActive || hilState?.controller?.kind === "ardupilot");
+  !replay &&
+  (!externalActive ||
+    ["ardupilot", "px4"].includes(hilState?.controller?.kind));
 let displayedExternalMission = "";
 function drawMission() {
   const extent = mapExtent();
@@ -1213,7 +1216,12 @@ function renderWaypoints() {
       input.type = "number";
       input.min = min;
       input.max = max;
-      input.step = externalActive && key === "hold" ? "1" : "0.1";
+      input.step =
+        externalActive &&
+        key === "hold" &&
+        hilState?.mission?.limits?.holdRequiresInteger === true
+          ? "1"
+          : "0.1";
       input.value = point[key];
       input.disabled = !missionEditable();
       input.oninput = () => {
@@ -1235,7 +1243,12 @@ function renderWaypoints() {
                   hilState?.mission?.limits
                 ? hilState.mission.limits.height
                 : max) &&
-          !(externalActive && key === "hold" && !Number.isInteger(value))
+          !(
+            externalActive &&
+            key === "hold" &&
+            hilState?.mission?.limits?.holdRequiresInteger === true &&
+            !Number.isInteger(value)
+          )
         ) {
           point[key] = value;
           invalidWaypointInputs.delete(input);
@@ -1328,7 +1341,12 @@ function updateMissionControls() {
               ? hilState.mission.limits.height
               : 100;
         }
-        if (field === "hold") element.step = externalActive ? "1" : "0.1";
+        if (field === "hold")
+          element.step =
+            externalActive &&
+            hilState?.mission?.limits?.holdRequiresInteger === true
+              ? "1"
+              : "0.1";
       }
       element.disabled =
         !editable ||
@@ -1352,8 +1370,8 @@ function updateMissionControls() {
   $("mission-apply").textContent = externalActive ? "上傳任務" : "套用任務";
   $("mission-help").textContent = externalActive
     ? controls.editable
-      ? "草稿與飛控已確認航線分開；地面未解鎖且飛控準備完成後可上傳。停留秒數須為整數；上傳後須確認路線一致才能開始。"
-      : "PX4 外部飛控目前尚不支援航點任務。"
+      ? `草稿與飛控已確認航線分開；本機飛控準備完成且地面未解鎖後可上傳。上傳後須確認路線一致才能開始。${hilState?.mission?.limits?.holdRequiresInteger === true ? "停留秒數須為整數。" : ""}`
+      : "等待支援的本機飛控任務狀態。"
     : config.airframe === "fixedwing"
       ? "固定翼請先完成跑道起飛，再開始航點任務；套用任務會切換至任務模式。"
       : "開始任務會由地面起飛並啟動模擬；套用任務只切換任務模式。";
@@ -1370,7 +1388,7 @@ function updateMissionControls() {
   };
   const missionStatus =
     externalActive && controls.editable && m
-      ? `${phases[m.phase] || "等待狀態"}${m.homeReady === true ? "" : " · 等待飛控定位及家點確認"} · 目前航點 ${externalMissionIndex(m) === null ? "—" : externalMissionIndex(m) + 1} / ${m.points?.length ?? 0} · 飛控回報到達 ${m.reachedSeqs?.filter((seq) => seq >= 2 && seq < (m.points?.length ?? 0) + 2).length ?? 0} 點${m.error ? ` · ${m.error}` : ""}`
+      ? `${phases[m.phase] || "等待狀態"}${m.homeReady === true ? "" : " · 等待飛控定位及家點確認"} · 目前航點 ${externalMissionIndex(m) === null ? "—" : externalMissionIndex(m) + 1} / ${m.points?.length ?? 0} · 飛控回報到達 ${externalMissionReachedCount(m) ?? "—"} 點${m.error ? ` · ${m.error}` : ""}`
       : "";
   $("mission-status").textContent = missionStatus;
   $("flight-mission-status").textContent = missionStatus
@@ -2373,7 +2391,7 @@ function presentHilState(state) {
   const c = state.controller;
   const missing = hilFlightReadiness(state);
   $("hil-readiness").textContent =
-    c?.kind === "ardupilot"
+    ["ardupilot", "px4"].includes(c?.kind)
       ? missing.length
         ? `準備未完成：等待${missing.join("、")}確認。`
         : "身分、參數及心跳已確認；健康檢查可能仍需暖機，請留意飛控訊息。"
@@ -2383,7 +2401,7 @@ function presentHilState(state) {
     : "飛控尚未就緒";
   const stats = state.stats;
   $("hil-stats").textContent = stats
-    ? `感測封包 ${stats.sensorPackets ?? 0} · 馬達封包 ${stats.actuatorPackets ?? 0} · ${c?.kind === "ardupilot" ? `JSON 格式錯誤 ${stats.invalidActuatorPackets ?? 0} · 序號錯配 ${stats.frameMismatches ?? 0}` : `CRC 錯誤 ${stats.crcErrors ?? 0}`} · 馬達資料齡期 ${stats.lastActuatorAgeMs == null ? "—" : `${Number(stats.lastActuatorAgeMs).toFixed(0)} ms`}`
+    ? `感測封包 ${stats.sensorPackets ?? 0} · 馬達封包 ${stats.actuatorPackets ?? 0} · ${c?.kind === "ardupilot" ? `JSON 格式錯誤 ${stats.invalidActuatorPackets ?? 0} · 序號錯配 ${stats.frameMismatches ?? 0}` : `HIL CRC 錯誤 ${stats.crcErrors ?? 0} · 任務 CRC 錯誤 ${stats.gcsCrcErrors ?? 0}`} · 馬達資料齡期 ${stats.lastActuatorAgeMs == null ? "—" : `${Number(stats.lastActuatorAgeMs).toFixed(0)} ms`}`
     : "";
   $("hil-logs").textContent = Array.isArray(state.logs)
     ? state.logs
@@ -2393,7 +2411,8 @@ function presentHilState(state) {
     : "";
   if (!externalActive) return;
   const confirmed =
-    state.controller?.kind === "ardupilot" && state.mission?.verified
+    ["ardupilot", "px4"].includes(state.controller?.kind) &&
+    state.mission?.verified
       ? state.mission.points
       : [];
   const missionKey = JSON.stringify(confirmed);

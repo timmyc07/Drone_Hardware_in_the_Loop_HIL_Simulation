@@ -26,7 +26,7 @@ function fixture() {
     bootstrapTicks: 2,
     actuators: [],
     samples: [sim.snapshot()],
-    events: [],
+    events: [{ time: 0, action: "mission" }],
   };
   let sequence = 0;
   for (let i = 0; i < 2; i++) {
@@ -90,7 +90,7 @@ test("SITL replay rejects corrupted provenance, clocks, motor maps and trajector
     (r) => (r.samples[0].position[0] = 1),
     (r) => (r.samples[1].time += 0.001),
     (r) => (r.events[0].time += 0.001),
-    (r) => (r.events[0].action = "mission"),
+    (r) => (r.events[0].action = "unsupported"),
     (r) => (r.finalSnapshot.motors[0] = 0.5),
     (r) => (r.finalSnapshot.armed = !r.finalSnapshot.armed),
   ];

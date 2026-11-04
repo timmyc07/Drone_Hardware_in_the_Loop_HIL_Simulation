@@ -1,0 +1,15 @@
+diff --git a/src/modules/mavlink/mavlink_main.cpp b/src/modules/mavlink/mavlink_main.cpp
+index 0312a0b..f243954 100644
+--- a/src/modules/mavlink/mavlink_main.cpp
++++ b/src/modules/mavlink/mavlink_main.cpp
+@@ -989,6 +989,10 @@ void Mavlink::init_udp()
+ 
+ 	_myaddr.sin_family = AF_INET;
+ 	_myaddr.sin_addr.s_addr = htonl(INADDR_ANY);
++	// An explicit loopback partner must not expose the receiving socket on other interfaces.
++	if (_src_addr_initialized && _src_addr.sin_addr.s_addr == htonl(INADDR_LOOPBACK)) {
++		_myaddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
++	}
+ 	_myaddr.sin_port = htons(_network_port);
+ 
+ 	if ((_socket_fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {

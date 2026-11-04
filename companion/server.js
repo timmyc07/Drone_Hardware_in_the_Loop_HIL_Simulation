@@ -232,7 +232,6 @@ export async function startCompanion({ port = 8787, sessionFactory } = {}) {
             } else if (
               command.type === "mission" &&
               keys(command, ["id", "type", "value"]) &&
-              controller === "ardupilot" &&
               typeof session.uploadMission === "function" &&
               Array.isArray(command.value) &&
               command.value.length >= 1 &&
@@ -247,7 +246,7 @@ export async function startCompanion({ port = 8787, sessionFactory } = {}) {
             } else if (
               command.type === "command" &&
               keys(command, ["id", "type", "value"]) &&
-              ([
+              [
                 "arm",
                 "takeoff",
                 "land",
@@ -255,8 +254,8 @@ export async function startCompanion({ port = 8787, sessionFactory } = {}) {
                 "pause",
                 "resume",
                 "stop",
-              ].includes(command.value) ||
-                (command.value === "mission" && controller === "ardupilot"))
+                "mission",
+              ].includes(command.value)
             )
               value = await session.command(command.value);
             else throw Error("Invalid command");

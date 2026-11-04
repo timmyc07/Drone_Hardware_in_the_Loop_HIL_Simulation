@@ -41,4 +41,4 @@ node companion/replay.js /absolute/path/to/ardupilot-recording.json
 
 Context7 沒有 Copter 4.7.2 的精確版本索引，協定以該版本的官方 tag 原始碼核對。更多來源及修補細節見 [ArduPilot 修補說明](../companion/patches/README.md)。
 
-本機 ArduCopter 航點任務及真實 SITL 測試見 [ArduPilot 航點任務](ArduPilot_航點任務.md)；PX4 外部航點任務尚未支援。
+本機 ArduCopter 航點任務及真實 SITL 測試見 [ArduPilot 航點任務](ArduPilot_航點任務.md)；PX4 外部航點任務已通過兩圈原生 SITL 與獨立重播驗證。

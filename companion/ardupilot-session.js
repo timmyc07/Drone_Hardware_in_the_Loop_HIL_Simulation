@@ -8,7 +8,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { common, minimal } from "node-mavlink";
-import { packetReader } from "./px4-protocol.js";
+import { packetReader, mavlinkEncoder, commandMessage } from "./mavlink.js";
 import { createSimulation, validateConfig } from "../web/sim.js";
 import {
   ARDUPILOT_SOURCE_SHA,
@@ -17,8 +17,6 @@ import {
   decodeServoPacket,
   mapServoSpeeds,
   physicsJson,
-  mavlinkEncoder,
-  commandMessage,
   autopilotIdentity,
 } from "./ardupilot-protocol.js";
 import { ArduPilotMission } from "./ardupilot-mission.js";
@@ -619,10 +617,13 @@ export class ArduPilotSession extends EventEmitter {
     }
     if (this.record?.events.length >= 100000)
       throw new Error("Session event limit reached");
-    if (this.missionManager.transfer && !["stop", "pause"].includes(action))
+    if (
+      this.missionManager.transfer.active &&
+      !["stop", "pause"].includes(action)
+    )
       throw new Error("Mission transfer is in progress");
     if (action === "pause") {
-      if (this.missionManager.transfer)
+      if (this.missionManager.transfer.active)
         this.missionManager.abort("Mission transfer interrupted by pause");
       if (this.phase !== "running") throw new Error("Session is not running");
       this.phase = "paused";

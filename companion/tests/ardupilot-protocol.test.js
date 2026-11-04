@@ -6,11 +6,9 @@ import {
   decodeServoPacket,
   mapServoSpeeds,
   physicsJson,
-  commandMessage,
-  mavlinkEncoder,
   autopilotIdentity,
 } from "../ardupilot-protocol.js";
-import { packetReader } from "../px4-protocol.js";
+import { packetReader, commandMessage, mavlinkEncoder } from "../mavlink.js";
 import { ArduPilotSession } from "../ardupilot-session.js";
 import { createSimulation } from "../../web/sim.js";
 function wire(frame = 0, rate = 1000) {

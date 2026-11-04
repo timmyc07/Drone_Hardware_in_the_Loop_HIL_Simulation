@@ -29,7 +29,7 @@ class FakeSession extends EventEmitter {
 }
 
 test(
-  "mission upload is ArduPilot-only and malformed payloads never reach the controller",
+  "mission uploads reach the selected controller and malformed payloads never reach either",
   { timeout: 5000 },
   async (t) => {
     const sessions = [];
@@ -74,39 +74,41 @@ test(
         ws.send(JSON.stringify({ id, type, value }));
       });
     const points = [{ north: 3, east: -2, altitude: 3, hold: 1 }];
+    for (const controller of ["px4", "ardupilot"]) {
+      assert.equal(
+        (
+          await rpc("start", {
+            controller,
+            binaryPath: "valid",
+            config: {},
+          })
+        ).ok,
+        true,
+      );
+      const selected = sessions.at(-1),
+        previousCalls = selected.actions.length;
+      for (const invalid of [
+        [],
+        Array(51).fill(points[0]),
+        {},
+        [null],
+        [{ ...points[0], arbitrary: 0 }],
+        [{ north: 0, east: 0, altitude: 2 }],
+        [{ ...points[0], north: "3" }],
+        [{ ...points[0], altitude: null }],
+      ])
+        assert.equal((await rpc("mission", invalid)).ok, false);
+      assert.equal(selected.actions.length, previousCalls);
+      assert.deepEqual((await rpc("mission", points)).value, {
+        verified: true,
+        points,
+      });
+      assert.deepEqual(selected.actions.at(-1), ["mission", points]);
+      assert.equal((await rpc("command", "mission")).ok, true);
+      assert.equal(selected.actions.at(-1), "mission");
+    }
+    sessions.at(-1).uploadMission = undefined;
     assert.equal((await rpc("mission", points)).ok, false);
-    assert.equal((await rpc("command", "mission")).ok, false);
-    assert.equal(
-      (
-        await rpc("start", {
-          controller: "ardupilot",
-          binaryPath: "valid",
-          config: {},
-        })
-      ).ok,
-      true,
-    );
-    const ardupilot = sessions.at(-1),
-      previousCalls = ardupilot.actions.length;
-    for (const invalid of [
-      [],
-      Array(51).fill(points[0]),
-      {},
-      [null],
-      [{ ...points[0], arbitrary: 0 }],
-      [{ north: 0, east: 0, altitude: 2 }],
-      [{ ...points[0], north: "3" }],
-      [{ ...points[0], altitude: null }],
-    ])
-      assert.equal((await rpc("mission", invalid)).ok, false);
-    assert.equal(ardupilot.actions.length, previousCalls);
-    assert.deepEqual((await rpc("mission", points)).value, {
-      verified: true,
-      points,
-    });
-    assert.deepEqual(ardupilot.actions.at(-1), ["mission", points]);
-    assert.equal((await rpc("command", "mission")).ok, true);
-    assert.equal(ardupilot.actions.at(-1), "mission");
   },
 );
 

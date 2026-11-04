@@ -1,0 +1,65 @@
+{
+  "passed": true,
+  "firmware": {
+    "version": "1.17.0",
+    "selfReportedBaseSha": "d6f12ad1c4f70ad3230afd7d86e971421e02fef4",
+    "patchSha256": "a66390ec624cb83a7e6ae2a4971634418e84629618e668b957466d12e1ec6674",
+    "binarySha256": "04634c9d42ecc77842257dd85f96013206eb009063768931d5102c3c97303b4a",
+    "verification": "self-report and separate local digests; not cryptographic source attestation"
+  },
+  "firstFlight": {
+    "simulationSeconds": 48.652,
+    "wallSeconds": 63.516,
+    "actuatorInputs": 12149,
+    "samples": 973
+  },
+  "secondFlight": {
+    "completeAtSimulationSeconds": 86.228,
+    "stableGroundAtSimulationSeconds": 86.616,
+    "missionId": 1490243462,
+    "reachedSequences": [0, 1, 2, 3, 4, 5]
+  },
+  "recordingSha256": {
+    "first": "49a320cff4e432c2f25ea0008eb97e2c51f5856f0887f9522dacdbabdf88303b",
+    "twoFlights": "f640f99bc2fc049ddeaf49e11678f4d6ad87bae83c984d3ac3e3e42ba1fe00a4"
+  },
+  "replay": {
+    "bootstrapTicks": 14,
+    "acceptedInputs": 21649,
+    "samples": 1733,
+    "simulationSeconds": 86.652,
+    "maxPositionErrorM": 0,
+    "maxQuaternionError": 0,
+    "maxMotorError": 0
+  },
+  "limitations": "One two-flight software simulation test; no physical HIL or calibration claim.",
+  "browser": {
+    "recordingSha256": "e0e077411bed7740cd4535434d9c744a2cf911a2de92c24976716d068aacb4e3",
+    "firstWaypointHoldSeconds": 0.5,
+    "reachedSequences": [0, 1, 2, 3, 4],
+    "completeAtSimulationSeconds": 63.088,
+    "stableGroundAtSimulationSeconds": 63.644,
+    "draftChangeDisabledStart": true,
+    "draftRestoreEnabledStart": true,
+    "returnToInternal": {
+      "simulationSeconds": 4.08,
+      "samples": 82,
+      "draftFirstNorthM": 7.5,
+      "draftFirstHoldSeconds": 0.5,
+      "appliedFirstNorthM": 6.5,
+      "flightDisplacementNorthM": 6.5
+    },
+    "replay": {
+      "bootstrapTicks": 19,
+      "acceptedInputs": 17200,
+      "samples": 1378,
+      "simulationSeconds": 68.876,
+      "maxPositionErrorM": 0,
+      "maxQuaternionError": 0,
+      "maxMotorError": 0,
+      "hilCrcErrors": 0,
+      "gcsCrcErrors": 0,
+      "timestampMismatches": 0
+    }
+  }
+}

@@ -119,22 +119,25 @@ test("mission upload answers40/51 with INT payload and requires verified downloa
   const duplicate = fixture();
   await duplicate.mission.upload(points);
   duplicate.mission.state.phase = "verifying";
-  duplicate.mission.downloaded = duplicate.mission.downloaded.slice(0, 1);
+  duplicate.mission.transfer.downloaded =
+    duplicate.mission.transfer.downloaded.slice(0, 1);
+  duplicate.mission.transfer.phase = "verifying";
+  duplicate.mission.transfer.active = true;
   let requested;
   duplicate.s.writeMavlink = (message) => {
     requested = message.seq;
   };
   let rejected = false;
-  duplicate.mission.transfer = {
-    resolve() {},
-    reject() {
-      rejected = true;
-    },
+  duplicate.mission.transfer.reject = () => {
+    rejected = true;
   };
-  duplicate.mission.handle(73, { ...duplicate.mission.downloaded[0] });
+  duplicate.mission.handle(73, { ...duplicate.mission.transfer.downloaded[0] });
   assert.equal(rejected, false);
   assert.equal(requested, 1);
-  duplicate.mission.handle(73, { ...duplicate.mission.downloaded[0], x: 0 });
+  duplicate.mission.handle(73, {
+    ...duplicate.mission.transfer.downloaded[0],
+    x: 0,
+  });
   assert.equal(rejected, true);
   assert.equal(duplicate.mission.state.verified, false);
   const float = fixture();

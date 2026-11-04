@@ -1,5 +1,6 @@
 import { common } from "node-mavlink";
-import { commandMessage } from "./ardupilot-protocol.js";
+import { commandMessage } from "./mavlink.js";
+import { MissionTransfer } from "./mission-transfer.js";
 const { MavCmd, MavFrame, MavMissionType, MavLandedState } = common;
 export const MISSION_ORIGIN = Object.freeze({
   latitude: 25.033,
@@ -164,12 +165,14 @@ export class ArduPilotMission {
     this.session = session;
     this.state = {
       phase: "empty",
+      waypointStartSeq: 2,
       points: [],
       origin: { ...MISSION_ORIGIN },
       limits: {
         radius: session.config?.geofenceRadius ?? 500,
         height: session.config?.geofenceHeight ?? 100,
         minAltitude: 1,
+        holdRequiresInteger: true,
       },
       currentSeq: null,
       reachedSeqs: [],
@@ -179,13 +182,24 @@ export class ArduPilotMission {
     this.home = null;
     this.gpsFix = 0;
     this.flightEvidence = {};
+    this.transfer = new MissionTransfer({
+      send: (message) => this.session.writeMavlink(message),
+      verifyItem: (actual, expected) =>
+        verifyMissionItem(actual, expected, this.home),
+      diagnostic: (type, value) => this.diagnostic(type, value),
+      onPhase: (phase, error) => {
+        this.state.phase = phase;
+        this.state.error = error ?? null;
+        this.state.verified = phase === "ready";
+      },
+    });
   }
   snapshot() {
     return structuredClone({
       ...this.state,
       homeReady: Boolean(this.home) && this.gpsFix >= 3,
       readyToUpload:
-        this.readiness() && !this.transfer && !this.session.commandBusy,
+        this.readiness() && !this.transfer.active && !this.session.commandBusy,
     });
   }
   readiness() {
@@ -235,28 +249,11 @@ export class ArduPilotMission {
     }
   }
   abort(reason) {
-    if (this.transfer) {
-      const transfer = this.transfer;
-      this.transfer = null;
-      clearTimeout(this.deadline);
-      clearInterval(this.retry);
-      this.state.phase = "error";
-      this.state.error = reason;
-      this.state.verified = false;
-      try {
-        this.diagnostic("error", { reason });
-      } catch {
-      } finally {
-        transfer.reject(new Error(reason));
-      }
-    } else this.interrupt(reason);
-  }
-  send(message) {
-    this.lastMessage = message;
-    this.session.writeMavlink(message);
+    if (this.transfer.active) this.transfer.abort(reason);
+    else this.interrupt(reason);
   }
   async upload(points) {
-    if (!this.readiness() || this.transfer || this.session.commandBusy)
+    if (!this.readiness() || this.transfer.active || this.session.commandBusy)
       throw new Error(
         "Mission upload requires a running, verified, GPS/home-ready, disarmed ground session",
       );
@@ -272,6 +269,7 @@ export class ArduPilotMission {
         radius: this.session.config.geofenceRadius,
         height: this.session.config.geofenceHeight,
         minAltitude: 1,
+        holdRequiresInteger: true,
       },
       currentSeq: null,
       reachedSeqs: [],
@@ -285,36 +283,8 @@ export class ArduPilotMission {
       items: this.items,
       home: this.home,
     });
-    this.requested = new Set();
-    this.nextRequest = 0;
-    this.downloaded = [];
-    return new Promise((resolve, reject) => {
-      this.transfer = { resolve, reject };
-      this.deadline = setTimeout(
-        () => this.abort("Mission upload/download wall deadline exceeded"),
-        15000,
-      );
-      this.retry = setInterval(() => {
-        if (this.transfer && this.lastMessage)
-          try {
-            this.session.writeMavlink(this.lastMessage);
-          } catch (error) {
-            this.abort(error.message);
-          }
-      }, 1000);
-      try {
-        this.send(
-          Object.assign(new common.MissionCount(), {
-            targetSystem: 1,
-            targetComponent: 1,
-            count: this.items.length,
-            missionType: 0,
-          }),
-        );
-      } catch (error) {
-        this.abort(error.message);
-      }
-    });
+    await this.transfer.upload(this.items);
+    return this.snapshot();
   }
   handle(id, message) {
     if (id === 245) {
@@ -371,113 +341,7 @@ export class ArduPilotMission {
       this.gpsFix = message.fixType;
       return;
     }
-    if (this.transfer && [39, 40, 44, 47, 51, 73].includes(id)) {
-      try {
-        if (
-          message.missionType !== 0 ||
-          message.targetSystem !== 255 ||
-          ![0, 190].includes(message.targetComponent)
-        )
-          throw new Error("Unexpected mission transfer target/type");
-        if (id === 39)
-          throw new Error("Float MISSION_ITEM download is not accepted");
-        if (this.state.phase === "uploading") {
-          if (id === 40 || id === 51) {
-            const seq = message.seq;
-            if (
-              !Number.isInteger(seq) ||
-              seq < 0 ||
-              seq >= this.items.length ||
-              seq > this.nextRequest ||
-              seq < this.nextRequest - 1
-            )
-              throw new Error("Unexpected mission request sequence");
-            this.diagnostic("uploadRequest", { messageId: id, seq });
-            this.requested.add(seq);
-            this.nextRequest = Math.max(this.nextRequest, seq + 1);
-            this.send(
-              Object.assign(new common.MissionItemInt(), {
-                ...this.items[seq],
-                targetSystem: 1,
-                targetComponent: 1,
-              }),
-            );
-          } else if (id === 47) {
-            this.diagnostic("uploadAck", { result: message.type });
-            if (message.type !== 0 || this.requested.size !== this.items.length)
-              throw new Error("Mission upload ACK failed or incomplete");
-            this.state.phase = "verifying";
-            this.send(
-              Object.assign(new common.MissionRequestList(), {
-                targetSystem: 1,
-                targetComponent: 1,
-                missionType: 0,
-              }),
-            );
-          }
-        } else if (this.state.phase === "verifying") {
-          if (id === 44) {
-            if (message.count !== this.items.length)
-              throw new Error("Downloaded mission count differs");
-            if (!this.downloaded.length) this.requestItem(0);
-          } else if (id === 73) {
-            if (
-              Number.isInteger(message.seq) &&
-              message.seq >= 0 &&
-              message.seq < this.downloaded.length
-            ) {
-              const prior = this.downloaded[message.seq];
-              if (
-                family(message.frame) !== family(prior.frame) ||
-                [
-                  "command",
-                  "autocontinue",
-                  "x",
-                  "y",
-                  "z",
-                  "param1",
-                  "param2",
-                  "param3",
-                  "param4",
-                ].some((key) => message[key] !== prior[key])
-              )
-                throw new Error("Changed duplicate mission item");
-              this.requestItem(this.downloaded.length);
-              return;
-            }
-            if (message.seq !== this.downloaded.length)
-              throw new Error("Unexpected downloaded mission sequence");
-            this.diagnostic("downloadItem", {
-              item: { ...message },
-              expected: this.items[message.seq],
-            });
-            verifyMissionItem(message, this.items[message.seq], this.home);
-            this.downloaded.push({ ...message });
-            if (this.downloaded.length === this.items.length) {
-              this.session.writeMavlink(
-                Object.assign(new common.MissionAck(), {
-                  targetSystem: 1,
-                  targetComponent: 1,
-                  type: 0,
-                  missionType: 0,
-                }),
-              );
-              this.diagnostic("verified", { items: this.downloaded });
-              const transfer = this.transfer;
-              this.transfer = null;
-              clearTimeout(this.deadline);
-              clearInterval(this.retry);
-              this.state.phase = "ready";
-              this.state.verified = true;
-              transfer.resolve(this.snapshot());
-            } else this.requestItem(this.downloaded.length);
-          }
-        }
-      } catch (error) {
-        this.abort(error.message);
-      }
-      return;
-    }
+    if (this.transfer.handle(id, message)) return;
     if (
       this.state.verified &&
       ["ready", "running", "completed"].includes(this.state.phase)
@@ -528,16 +392,6 @@ export class ArduPilotMission {
         }
       }
     }
-  }
-  requestItem(seq) {
-    this.send(
-      Object.assign(new common.MissionRequestInt(), {
-        targetSystem: 1,
-        targetComponent: 1,
-        seq,
-        missionType: 0,
-      }),
-    );
   }
   async start() {
     if (

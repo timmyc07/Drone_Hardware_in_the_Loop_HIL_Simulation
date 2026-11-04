@@ -143,8 +143,19 @@ export function createHilClient({
 }
 
 export function hilFlightReadiness(state) {
-  if (state?.controller?.kind !== "ardupilot") return [];
+  if (!["ardupilot", "px4"].includes(state?.controller?.kind)) return [];
   const controller = state.controller;
+  if (controller.kind === "px4")
+    return [
+      ...(!controller.verified ? ["飛控身分"] : []),
+      ...(Object.hasOwn(controller, "parametersVerified") &&
+      !controller.parametersVerified
+        ? ["參數"]
+        : []),
+      ...(Object.hasOwn(controller, "armedKnown") && !controller.armedKnown
+        ? ["心跳"]
+        : []),
+    ];
   return [
     ...(!controller.verified ? ["飛控身分"] : []),
     ...(!controller.parametersVerified ? ["參數"] : []),
@@ -160,13 +171,35 @@ export function shouldFollowTakeoff(
   return previousGrounded === true && grounded === false && !alreadyFollowed;
 }
 
-export function externalMissionIndex(mission) {
-  const seq = mission?.currentSeq;
-  return Number.isInteger(seq) &&
-    seq >= 2 &&
-    seq < (mission.points?.length ?? 0) + 2
-    ? seq - 2
+function missionSequenceIndex(mission, seq) {
+  const start = mission?.waypointStartSeq;
+  return Number.isSafeInteger(start) &&
+    start >= 0 &&
+    Array.isArray(mission?.points) &&
+    Number.isSafeInteger(seq) &&
+    seq >= start &&
+    seq < start + mission.points.length
+    ? seq - start
     : null;
+}
+
+export function externalMissionIndex(mission) {
+  return missionSequenceIndex(mission, mission?.currentSeq);
+}
+
+export function externalMissionReachedCount(mission) {
+  if (
+    !Number.isSafeInteger(mission?.waypointStartSeq) ||
+    mission.waypointStartSeq < 0 ||
+    !Array.isArray(mission?.points) ||
+    !Array.isArray(mission?.reachedSeqs)
+  )
+    return null;
+  return new Set(
+    mission.reachedSeqs
+      .map((seq) => missionSequenceIndex(mission, seq))
+      .filter((index) => index !== null),
+  ).size;
 }
 
 export function externalMissionControls(
@@ -176,18 +209,20 @@ export function externalMissionControls(
   busy = false,
 ) {
   const mission = state?.mission;
-  const editable = state?.controller?.kind === "ardupilot";
+  const editable = ["ardupilot", "px4"].includes(state?.controller?.kind);
   const valid =
     !invalid &&
     points.length > 0 &&
     points.length <= 50 &&
+    typeof mission?.limits?.holdRequiresInteger === "boolean" &&
     points.every(
       (p) =>
         ["north", "east", "altitude", "hold"].every((key) =>
           Number.isFinite(p[key]),
         ) &&
         p.altitude >= (mission?.limits?.minAltitude ?? 1) &&
-        Number.isInteger(p.hold) &&
+        (mission?.limits?.holdRequiresInteger !== true ||
+          Number.isInteger(p.hold)) &&
         p.hold >= 0 &&
         p.hold <= 60 &&
         (!mission?.limits ||

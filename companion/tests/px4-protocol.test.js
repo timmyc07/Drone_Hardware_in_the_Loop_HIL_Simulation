@@ -2,12 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
 import { common } from "node-mavlink";
-import {
-  mapActuators,
-  sensorMessages,
-  encoder,
-  packetReader,
-} from "../px4-protocol.js";
+import { mapActuators, sensorMessages, encoder } from "../px4-protocol.js";
+import { packetReader } from "../mavlink.js";
 import { Px4Session } from "../px4-session.js";
 import { createSimulation } from "../../web/sim.js";
 
@@ -92,11 +88,11 @@ test("MAVLink 2 fragmented packets validate CRC and corrupted data is rejected",
   source.destroy();
   streams.forEach((stream) => stream.destroy());
 });
-test("session firmware verification and command allowlist are explicit", () => {
+test("session firmware verification and command allowlist are explicit", async () => {
   const session = new Px4Session();
   assert.equal(session.state().controller.verified, false);
-  assert.throws(() => session.command("arm"), /verified/);
-  assert.throws(() => session.command("shell"), /Unknown/);
+  await assert.rejects(session.command("arm"), /verified/);
+  await assert.rejects(session.command("shell"), /Unknown/);
   session.record = { firmware: {} };
   session.log("PX4 git-hash: d6f12ad1c4f70ad3230afd7d86e971421e02fef4");
   assert.equal(session.state().controller.verified, true);

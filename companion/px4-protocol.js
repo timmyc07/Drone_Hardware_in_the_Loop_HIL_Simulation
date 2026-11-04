@@ -1,36 +1,8 @@
 import { magneticFieldNed } from "./px4-wmm.js";
-import {
-  common,
-  minimal,
-  standard,
-  MavLinkPacketSplitter,
-  MavLinkPacketParser,
-  MavLinkProtocolV2,
-} from "node-mavlink";
+import { common, MavLinkProtocolV2 } from "node-mavlink";
 import { bodyToNedMatrix } from "../web/sim.js";
 // Pinned PX4 v1.17.0 10016_none_iris: outputs FR, RL, FL, RR; positive KM gives positive body yaw.
 export const OUTPUT_MAP = [0, 3, 1, 2];
-export const REGISTRY = {
-  ...minimal.REGISTRY,
-  ...standard.REGISTRY,
-  ...common.REGISTRY,
-};
-export function packetReader(socket, onPacket, onCrcError) {
-  const magicNumbers = Object.fromEntries(
-    Object.values(REGISTRY).map((Type) => [Type.MSG_ID, Type.MAGIC_NUMBER]),
-  );
-  const splitter = new MavLinkPacketSplitter({}, { magicNumbers, onCrcError });
-  const parser = new MavLinkPacketParser();
-  socket
-    .pipe(splitter)
-    .pipe(parser)
-    .on("data", (packet) => {
-      const Type = REGISTRY[packet.header.msgid];
-      if (Type)
-        onPacket(packet.header, packet.protocol.data(packet.payload, Type));
-    });
-  return [splitter, parser];
-}
 export function mapActuators(message) {
   if (
     typeof message.timeUsec !== "bigint" ||
@@ -129,14 +101,11 @@ export function sensorMessages(truth, origin = DEFAULT_ORIGIN, seed = 42) {
     fieldsUpdated: 7167,
     id: 0,
   });
-  const latitude =
-    origin.latitude + ((truth.positionNed[0] / 6378137) * 180) / Math.PI;
-  const longitude =
-    origin.longitude +
-    ((truth.positionNed[1] /
-      (6378137 * Math.cos((origin.latitude * Math.PI) / 180))) *
-      180) /
-      Math.PI;
+  const { latitude, longitude } = projectNed(
+    truth.positionNed[0],
+    truth.positionNed[1],
+    origin,
+  );
   const [vn, ve, vd] = truth.velocityNed;
   if (
     Math.abs(latitude) > 90 ||
@@ -176,4 +145,15 @@ export function encoder() {
   const protocol = new MavLinkProtocolV2(1, 200);
   let sequence = 0;
   return (message) => protocol.serialize(message, sequence++ % 256);
+}
+
+export function projectNed(north, east, origin = DEFAULT_ORIGIN) {
+  if (![north, east].every(Number.isFinite))
+    throw new Error("Invalid NED coordinates");
+  const latitude = origin.latitude + ((north / 6378137) * 180) / Math.PI;
+  const longitude =
+    origin.longitude +
+    ((east / (6378137 * Math.cos((origin.latitude * Math.PI) / 180))) * 180) /
+      Math.PI;
+  return { latitude, longitude };
 }
