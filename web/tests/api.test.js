@@ -12,7 +12,7 @@ test("API sends the documented commands and copies input and output", async () =
     },
     () => () => {},
   );
-  assert.equal(api.version, "1.4");
+  assert.equal(api.version, "1.5");
   assert.ok(Object.isFrozen(api));
   const targets = { roll: 1 };
   const pending = api.setTargets(targets);
@@ -22,6 +22,8 @@ test("API sends the documented commands and copies input and output", async () =
   assert.deepEqual(response.snapshot.position, [1, 2, 3]);
   await api.getState();
   await api.getSensors();
+  await api.getScene();
+  await api.setScene({ name: "場景" });
   await api.exportLidarPointCloud();
   await api.exportLidarPointCloud("csv");
   await api.getCameraConfig();
@@ -44,6 +46,8 @@ test("API sends the documented commands and copies input and output", async () =
     { type: "targets", value: { roll: 1 } },
     { type: "inspect" },
     { type: "inspectSensors" },
+    { type: "inspectScene" },
+    { type: "scene", value: { name: "場景" } },
     { type: "pointCloudExport", value: "pcd" },
     { type: "pointCloudExport", value: "csv" },
     { type: "getCameraConfig" },

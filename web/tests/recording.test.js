@@ -1,3 +1,4 @@
+import { DEFAULT_SCENE } from "../scene-data.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createSimulation, validateConfig } from "../sim.js";
@@ -47,7 +48,7 @@ function record(airframe = "quadrotor", overrides = {}) {
     sensorFrames: [sensors.update(first), sensors.update(last)],
   };
 }
-test("v6 round trip preserves multi-layer scans and exports 127 telemetry CSV columns", () => {
+test("v7 round trip preserves multi-layer scans and exports 127 telemetry CSV columns", () => {
   const input = record(),
     result = validateRecording(JSON.parse(JSON.stringify(input)));
   assert.deepEqual(result, JSON.parse(JSON.stringify(input)));
@@ -168,9 +169,7 @@ test("rejects unordered/future/sparse events and validates every new event type"
   for (const [type, value] of [
     ["mode", "position"],
     ["position", { north: 1, east: 2, altitude: 2 }],
-    ["obstacles", []],
-    ["training", "hover"],
-    ["environment", { preset: "field", timeOfDay: 18, fog: 0.2, rain: 0.5 }],
+    ["scene", DEFAULT_SCENE],
     ["render", false],
   ])
     input.events.push({ time: 0, type, value });
@@ -194,7 +193,11 @@ test("rejects unordered/future/sparse events and validates every new event type"
 });
 test("setup defaults only missing fields and validates nested trust boundaries", () => {
   assert.equal(validateSetup(undefined).mode, "attitude");
-  assert.equal(validateSetup({ training: "hover" }).training, "hover");
+  assert.equal(
+    validateSetup({ scene: { ...DEFAULT_SCENE, training: "hover" } }).scene
+      .training,
+    "hover",
+  );
   for (const setup of [
     null,
     [],
@@ -240,7 +243,7 @@ test("large fifty-point routes are stored once and rehydrated by shared referenc
 test("gate training nextGate is validated against the selected course", () => {
   const input = record(),
     trainer = createTrainer("gates");
-  input.setup.training = "gates";
+  input.setup.scene.training = "gates";
   input.samples = input.samples.map((snapshot) => ({
     ...snapshot,
     training: trainer.update(snapshot),
@@ -298,7 +301,7 @@ test("sensor frames require exact parallel times and reject future/regressing ac
   for (const version of [1, 2, 3, 4, 5]) {
     const legacy = record();
     legacy.version = version;
-    assert.throws(() => validateRecording(legacy), /version 6 required/);
+    assert.throws(() => validateRecording(legacy), /version 7 required/);
   }
 });
 test("no-return and startup measurements retain explicit nulls and produce empty CSV sensor cells", () => {
@@ -380,7 +383,7 @@ test("sensor config/fault history validates different lidar dimensions and prese
   assert.throws(() => validateRecording(config));
 });
 
-test("all airframes preserve propulsion, surfaces and flight data in schema 6 JSON and CSV", () => {
+test("all airframes preserve propulsion, surfaces and flight data in schema 7 JSON and CSV", () => {
   for (const airframe of ["quadrotor", "fixedwing", "vtol"]) {
     const input = record(airframe);
     if (airframe !== "quadrotor")
@@ -425,7 +428,7 @@ test("all airframes preserve propulsion, surfaces and flight data in schema 6 JS
   }
 });
 
-test("schema 6 rejects mismatched airframes, malformed flight state and invalid transition or propulsion faults", () => {
+test("schema 7 rejects mismatched airframes, malformed flight state and invalid transition or propulsion faults", () => {
   const mutations = [
     (r) => (r.samples[0].airframe = "fixedwing"),
     (r) => delete r.samples[0].flight,
@@ -453,7 +456,7 @@ test("schema 6 rejects mismatched airframes, malformed flight state and invalid 
     assert.throws(() => validateRecording(input));
   }
   const wing = record("fixedwing");
-  wing.setup.training = "hover";
+  wing.setup.scene.training = "hover";
   assert.throws(() => validateRecording(wing), /not supported/);
   const vtol = record("vtol");
   vtol.events.push({ time: 0, type: "transition", value: "invalid" });
@@ -465,7 +468,7 @@ test("ground-start runway takeoff and abort history round trip with exact phase 
   const sim = createSimulation(input.config),
     trainer = createTrainer("runway", "fixedwing"),
     sensors = createSensorSuite();
-  input.setup.training = "runway";
+  input.setup.scene.training = "runway";
   input.samples = [];
   input.sensorFrames = [];
   const capture = () => {
@@ -532,4 +535,47 @@ test("runway schema rejects missing fields, invalid booleans, phase enums and ab
     mutate(input);
     assert.throws(() => validateRecording(input));
   }
+});
+
+test("scene epochs select immutable custom gate sources and reject forged totals, next gates and completion", () => {
+  const input = record();
+  const first = { north: 3, east: 0, altitude: 2, yaw: 0, radius: 1 };
+  const second = { ...first, north: 7 };
+  input.setup.scene = {
+    ...DEFAULT_SCENE,
+    training: "custom",
+    customGates: [first],
+  };
+  const changed = {
+    ...DEFAULT_SCENE,
+    name: "第二課程",
+    training: "custom",
+    customGates: [second],
+  };
+  input.events = [
+    { time: input.samples[1].time, type: "scene", value: changed },
+  ];
+  input.samples[0].training = createTrainer("custom", "quadrotor", [
+    first,
+  ]).update(input.samples[0]);
+  input.samples[1].training = createTrainer("custom", "quadrotor", [
+    second,
+  ]).update(input.samples[1]);
+  const valid = validateRecording(input);
+  assert.equal(valid.samples[0].training.nextGate.north, 3);
+  assert.equal(valid.samples[1].training.nextGate.north, 7);
+  for (const mutate of [
+    (r) => (r.samples[1].training.total = 2),
+    (r) => (r.samples[1].training.nextGate.north = 3),
+    (r) => (r.samples[1].training.complete = true),
+    (r) => (r.events[0].type = "training"),
+    (r) => (r.setup.obstacles = []),
+    (r) => (r.setup.scene.training = "free"),
+  ]) {
+    const bad = structuredClone(input);
+    mutate(bad);
+    assert.throws(() => validateRecording(bad));
+  }
+  for (const version of [1, 2, 3, 4, 5, 6])
+    assert.throws(() => validateRecording({ ...input, version }), /version 7/);
 });

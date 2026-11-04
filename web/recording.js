@@ -1,8 +1,9 @@
 import { createSimulation, validateConfig } from "./sim.js";
 import { DEFAULT_SENSOR_CONFIG, validateSensorConfig } from "./sensors.js";
-import { TRAINING_COURSES, isCourseSupported } from "./training.js";
+import { TRAINING_COURSES, resolveTrainingGates } from "./training.js";
+import { DEFAULT_SCENE, validateScene } from "./scene-data.js";
 
-export const RECORDING_VERSION = 6;
+export const RECORDING_VERSION = 7;
 export const MODEL_VERSION = "0.5.0";
 const AIRFRAMES = ["quadrotor", "fixedwing", "vtol"];
 const MODES = ["attitude", "position", "mission", "rtl", "land", "takeoff"];
@@ -24,14 +25,12 @@ const ABORT_REASONS = [
   "insufficient-airspeed",
   "safety",
 ];
-const COURSES = Object.keys(TRAINING_COURSES);
+const COURSES = [...Object.keys(TRAINING_COURSES), "custom"];
 export const DEFAULT_SETUP = Object.freeze({
   sensors: DEFAULT_SENSOR_CONFIG,
   mode: "attitude",
   mission: Object.freeze([]),
-  obstacles: Object.freeze([]),
-  training: "free",
-  environment: Object.freeze({ preset: "lab", timeOfDay: 12, fog: 0, rain: 0 }),
+  scene: DEFAULT_SCENE,
 });
 const object = (value) => {
   if (
@@ -66,35 +65,27 @@ const vector = (value, length, min = -1e9, max = 1e9) => {
     throw new Error("Invalid vector");
   return Array.from(value, (item) => number(item, min, max));
 };
-export function validateEnvironment(value) {
-  object(value);
-  return {
-    preset: choice(value.preset, ["lab", "field", "warehouse"]),
-    timeOfDay: number(value.timeOfDay, 0, 24),
-    fog: number(value.fog, 0, 1),
-    rain: number(value.rain, 0, 1),
-  };
-}
 export function validateSetup(value, config = {}) {
   const input = value === undefined ? DEFAULT_SETUP : object(value);
+  if (
+    Object.keys(input).some(
+      (key) => !["mode", "mission", "sensors", "scene"].includes(key),
+    )
+  )
+    throw new Error("Unknown setup field");
   const merged = { ...DEFAULT_SETUP, ...input };
   const sim = createSimulation(validateConfig(object(config)));
   if (!Array.isArray(merged.mission))
     throw new Error("Mission must be an array");
   const mission = Array.from(merged.mission, (point) => ({ ...object(point) }));
   if (mission.length) sim.setMission(mission);
-  sim.setObstacles(merged.obstacles);
-  const obstacles = Array.from(merged.obstacles, (box) => ({ ...object(box) }));
+  const scene = validateScene(merged.scene, sim.snapshot().airframe);
   const mode = choice(merged.mode, MODES);
   sim.setMode(mode);
-  if (!isCourseSupported(merged.training, sim.snapshot().airframe))
-    throw new Error("Training course is not supported by this airframe");
   return {
     mode,
     mission,
-    obstacles,
-    training: choice(merged.training, COURSES),
-    environment: validateEnvironment(merged.environment),
+    scene,
     sensors: validateSensorConfig(merged.sensors),
   };
 }
@@ -119,16 +110,29 @@ function targets(value, partial = false, automatic = false) {
       );
   return result;
 }
-function training(value, airframe) {
+function training(value, airframe, scene) {
   object(value);
   const course = choice(value.course, COURSES),
-    total = TRAINING_COURSES[course].gates.length;
-  if (!isCourseSupported(course, airframe))
-    throw new Error("Training course is not supported by this airframe");
+    gates = resolveTrainingGates(scene, airframe),
+    total = gates.length;
+  if (course !== scene.training)
+    throw new Error("Training course does not match active scene");
   if (count(value.total, 50) !== total)
     throw new Error("Invalid training gate total");
   const passed = count(value.passed, total);
-  const expectedGate = TRAINING_COURSES[course].gates[passed] ?? null;
+  if (gates.length && boolean(value.complete) !== (passed === total))
+    throw new Error("Training completion disagrees with gate progress");
+  if (!gates.length) {
+    const hold = number(value.holdSeconds, 0),
+      complete = boolean(value.complete);
+    if (
+      course === "free"
+        ? complete || hold !== 0 || value.score !== 0
+        : complete !== hold >= (course === "hover" ? 10 : 2)
+    )
+      throw new Error("Training completion disagrees with course progress");
+  }
+  const expectedGate = gates[passed] ?? null;
   let nextGate = null;
   if (expectedGate) {
     const gate = object(value.nextGate);
@@ -156,7 +160,7 @@ function training(value, airframe) {
     reason: choice(value.reason, ["", "crashed", "takeoff-aborted"]),
   };
 }
-function sample(value, route, routeText, routeCache, airframe) {
+function sample(value, route, routeText, routeCache, airframe, scene) {
   object(value);
   if (choice(value.airframe, AIRFRAMES) !== airframe)
     throw new Error("Snapshot airframe does not match configuration");
@@ -265,7 +269,7 @@ function sample(value, route, routeText, routeCache, airframe) {
     controlSurfaces: surfaces(value.controlSurfaces),
     flight: flight(value.flight),
     runway: runway(value.runway),
-    training: training(value.training, airframe),
+    training: training(value.training, airframe, scene),
   };
 }
 function runway(value) {
@@ -365,23 +369,14 @@ function event(input, sim) {
       result.value = Array.from(input.value, (point) => ({ ...object(point) }));
       sim.setMission(result.value);
       break;
-    case "obstacles":
-      if (!Array.isArray(input.value))
-        throw new Error("Invalid obstacle event");
-      result.value = Array.from(input.value, (box) => ({ ...object(box) }));
-      sim.setObstacles(result.value);
+    case "scene":
+      result.value = validateScene(input.value, sim.snapshot().airframe);
       break;
     case "fault":
       result.fault = choice(input.fault, ["motor", "link", "pusher"]);
       sim.injectFault(result.fault, object(input.value));
       result.value = { ...input.value };
       sim.clearFaults();
-      break;
-    case "training":
-      result.value = choice(input.value, COURSES);
-      break;
-    case "environment":
-      result.value = validateEnvironment(input.value);
       break;
     case "render":
       result.value = boolean(input.value);
@@ -542,7 +537,7 @@ export function validateRecording(value) {
   object(value);
   if (value.version !== RECORDING_VERSION)
     throw new Error(
-      "Unsupported recording version: version 6 required; legacy recordings are not supported",
+      "Unsupported recording version: version 7 required; legacy recordings are not supported",
     );
   if (
     value.format !== "flight-lab" ||
@@ -587,6 +582,7 @@ export function validateRecording(value) {
   });
   let lastTime = -1,
     eventIndex = 0,
+    activeScene = setup.scene,
     route = setup.mission,
     routeText = JSON.stringify(route);
   const routeCache = new WeakMap();
@@ -598,13 +594,22 @@ export function validateRecording(value) {
       eventIndex < events.length &&
       events[eventIndex].time <= time + 1e-8
     ) {
+      if (events[eventIndex].type === "scene")
+        activeScene = events[eventIndex].value;
       if (events[eventIndex].type === "mission") {
         route = events[eventIndex].value;
         routeText = JSON.stringify(route);
       }
       eventIndex++;
     }
-    const result = sample(input, route, routeText, routeCache, config.airframe);
+    const result = sample(
+      input,
+      route,
+      routeText,
+      routeCache,
+      config.airframe,
+      activeScene,
+    );
     lastTime = time;
     return result;
   });

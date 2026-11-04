@@ -22,7 +22,13 @@ import {
   CAMERA_CLASSES,
 } from "./camera.js";
 import { DEFAULT_SENSOR_CONFIG, validateSensorConfig } from "./sensors.js";
-import { TRAINING_COURSES, isCourseSupported } from "./training.js";
+import {
+  TRAINING_COURSES,
+  isCourseSupported,
+  resolveTrainingGates,
+} from "./training.js";
+import { createSceneEditor } from "./scene-editor.js";
+import { validateScene } from "./scene-data.js";
 import { CAPABILITIES, SOURCES } from "./capabilities.js";
 
 const $ = (id) => document.getElementById(id);
@@ -63,6 +69,9 @@ let replayIndex = 0;
 let replayEventIndex = 0;
 let rendering = true;
 let scene;
+let sceneEditor;
+let lastRenderedSceneKey = "";
+let lastRenderedSceneReadonly = false;
 let toastTimer;
 let sampleCount = 0;
 let storageLimited = false;
@@ -638,6 +647,7 @@ $("import-file").onchange = async (event) => {
     timing = {};
     document.body.classList.add("replay");
     setReplayControls(true);
+    $("play").disabled = false;
     document
       .querySelectorAll("#target-controls input, #gust")
       .forEach((element) => {
@@ -718,12 +728,14 @@ worker.onmessage = ({ data }) => {
       item.setAttribute("aria-pressed", String(active));
     });
     history = [];
-    if (data.setup)
-      for (const key of ["environment", "obstacles", "mission", "training"])
-        showReplayEvent(key, data.setup[key]);
+    if (data.setup) {
+      showReplayEvent("scene", data.setup.scene);
+      showReplayEvent("mission", data.setup.mission);
+    }
     scene?.update(latest, 0);
     scene?.resetView();
   }
+  if (data.setup?.scene) renderScene(data.setup.scene, false);
   history.push(...data.samples);
   while (history.length > 400) history.shift();
   if (data.message === "reset") storageLimited = false;
@@ -954,7 +966,7 @@ function updateTelemetry() {
     training && !isCourseSupported(training.course, kind)
       ? "此練習不適用目前機型，請選擇其他練習。"
       : training
-        ? `${TRAINING_COURSES[training.course]?.title || training.course} · ${training.elapsed.toFixed(1)} 秒 · 通過 ${training.passed}/${training.total} · 分數 ${training.score} ${training.complete ? "· 完成" : ""} ${reasons[training.reason] || ""}`
+        ? `${training.course === "custom" ? "自訂賽道" : TRAINING_COURSES[training.course]?.title || training.course} · ${training.elapsed.toFixed(1)} 秒 · 通過 ${training.passed}/${training.total} · 分數 ${training.score} ${training.complete ? "· 完成" : ""} ${reasons[training.reason] || ""}`
         : "尚未開始";
   if (s.status === "failsafe") {
     $("runtime-status").textContent = "斷訊保護";
@@ -1233,30 +1245,28 @@ function applyMission(start) {
 }
 $("mission-apply").onclick = () => applyMission(false);
 $("mission-start").onclick = () => applyMission(true);
-const warehouseBoxes = [
-  { north: 12, east: 3, width: 2, depth: 3, height: 3 },
-  { north: 12, east: -5, width: 3, depth: 2, height: 2 },
-  { north: -8, east: 7, width: 3, depth: 2, height: 2.5 },
-  { north: -8, east: -7, width: 2, depth: 3, height: 3 },
-];
-function applyEnvironment() {
-  const value = {
-    preset: $("environment-preset").value,
-    timeOfDay: Number($("environment-time").value),
-    fog: Number($("environment-fog").value),
-    rain: Number($("environment-rain").value),
-  };
-  if (
-    !Number.isFinite(value.timeOfDay) ||
-    value.timeOfDay < 0 ||
-    value.timeOfDay > 24
-  )
-    return toast("時間須介於 0 至 24 時。");
-  const boxes = value.preset === "warehouse" ? warehouseBoxes : [];
-  scene?.setEnvironment(value);
-  scene?.setObstacles(boxes);
-  worker.postMessage({ type: "environment", value });
-  worker.postMessage({ type: "obstacles", value: boxes });
+let sceneWriteBusy = false;
+async function applyScene(value) {
+  if (sceneWriteBusy) throw new Error("場景正在套用，請稍候。");
+  const valid = validateScene(value, config.airframe);
+  sceneWriteBusy = true;
+  try {
+    const state = await requestApi({ type: "scene", value: valid });
+    renderScene(state.setup.scene, false);
+    return state.setup.scene;
+  } finally {
+    sceneWriteBusy = false;
+  }
+}
+async function applySceneSetting(change) {
+  try {
+    const value = sceneEditor.getApplied();
+    change(value);
+    await applyScene(value);
+  } catch (error) {
+    showSceneControls(sceneEditor.getApplied());
+    toast(`無法套用場景：${error.message}`);
+  }
 }
 for (const id of [
   "environment-preset",
@@ -1264,13 +1274,19 @@ for (const id of [
   "environment-fog",
   "environment-rain",
 ])
-  $(id).onchange = applyEnvironment;
-$("training-select").onchange = () => {
-  const value = $("training-select").value;
-  $("training-runway-hint").hidden = value !== "runway";
-  scene?.setGates(TRAINING_COURSES[value].gates);
-  worker.postMessage({ type: "training", value });
-};
+  $(id).onchange = () =>
+    applySceneSetting((value) => {
+      value.environment = {
+        preset: $("environment-preset").value,
+        timeOfDay: Number($("environment-time").value),
+        fog: Number($("environment-fog").value),
+        rain: Number($("environment-rain").value),
+      };
+    });
+$("training-select").onchange = () =>
+  applySceneSetting((value) => {
+    value.training = $("training-select").value;
+  });
 $("flight-mode").onchange = (event) =>
   worker.postMessage({ type: "mode", value: event.target.value });
 document.querySelectorAll("[data-command]").forEach(
@@ -1358,7 +1374,14 @@ for (const button of document.querySelectorAll("[data-workspace]"))
       item.classList.toggle("active", item === button);
       item.setAttribute("aria-pressed", String(item === button));
     }
-    for (const name of ["mission", "training", "sensors", "hil", "catalog"])
+    for (const name of [
+      "mission",
+      "training",
+      "scene",
+      "sensors",
+      "hil",
+      "catalog",
+    ])
       $(`${name}-workspace`).hidden = button.dataset.workspace !== name;
     document.querySelector(".workspace").hidden =
       button.dataset.workspace === "catalog";
@@ -1530,31 +1553,42 @@ function setReplayControls(disabled) {
 renderWaypoints();
 renderCatalog();
 
+function showSceneControls(value) {
+  $("environment-preset").value = value.environment.preset;
+  $("environment-time").value = value.environment.timeOfDay;
+  $("environment-fog").value = value.environment.fog;
+  $("environment-rain").value = value.environment.rain;
+  $("training-select").value = value.training;
+  $("training-runway-hint").hidden = value.training !== "runway";
+}
+function renderScene(value, viewOnly) {
+  if (!value) return;
+  const key = `${config.airframe}:${JSON.stringify(value)}`;
+  if (key === lastRenderedSceneKey && viewOnly === lastRenderedSceneReadonly)
+    return;
+  lastRenderedSceneKey = key;
+  lastRenderedSceneReadonly = viewOnly;
+  sceneEditor?.setScene(value, viewOnly);
+  showSceneControls(value);
+  scene?.setEnvironment(value.environment);
+  scene?.setObstacles(value.obstacles);
+  scene?.setGates(resolveTrainingGates(value, config.airframe));
+}
 function showReplayEvent(type, value) {
-  if (type === "environment") {
-    scene?.setEnvironment(value);
-    $("environment-preset").value = value.preset;
-    $("environment-time").value = value.timeOfDay;
-    $("environment-fog").value = value.fog;
-    $("environment-rain").value = value.rain;
-  } else if (type === "obstacles") scene?.setObstacles(value);
+  if (type === "scene") renderScene(value, !!replay || externalActive);
   else if (type === "mission") {
     waypoints = structuredClone(value);
     renderWaypoints();
-  } else if (type === "sensorConfig" || type === "sensors") {
+  } else if (type === "sensorConfig" || type === "sensors")
     sensorConfig = value;
-  } else if (type === "training") {
-    $("training-select").value = value;
-    $("training-runway-hint").hidden = value !== "runway";
-    scene?.setGates(TRAINING_COURSES[value].gates);
-  }
 }
 function restoreReplayPresentation() {
   replayEventIndex = 0;
-  sensorConfig = replay.setup.sensors || { ...DEFAULT_SENSOR_CONFIG };
-  for (const key of ["environment", "obstacles", "mission", "training"])
-    showReplayEvent(key, replay.setup[key]);
+  sensorConfig = replay.setup.sensors;
+  showReplayEvent("scene", replay.setup.scene);
+  showReplayEvent("mission", replay.setup.mission);
 }
+
 function applyReplayEvents(time) {
   while (
     replayEventIndex < replay.events.length &&
@@ -2239,6 +2273,8 @@ $("hil-start").onclick = async () => {
     };
     clearCameraPreview();
     externalActive = true;
+    sceneEditor?.setScene(sceneEditor.getApplied(), true);
+    lastRenderedSceneKey = "";
     hilOwned = true;
     history = [];
     sensors = undefined;
@@ -2298,9 +2334,10 @@ async function returnInternal(stop = true) {
   timing = internalSaved.timing;
   latest = current.snapshot;
   sensors = current.sensors;
-  if (current.setup)
-    for (const key of ["environment", "obstacles", "mission", "training"])
-      showReplayEvent(key, current.setup[key]);
+  if (current.setup) {
+    showReplayEvent("scene", current.setup.scene);
+    showReplayEvent("mission", current.setup.mission);
+  }
   setExternalControls(false);
   setPlaying(false);
   updateTelemetry();
@@ -2332,3 +2369,14 @@ for (const button of document.querySelectorAll("[data-hil-command]"))
   button.disabled = true;
 $("hil-return").disabled = true;
 $("hil-export").disabled = true;
+
+sceneEditor = createSceneEditor({
+  getAirframe: () => config.airframe,
+  apply: async (value) => {
+    const applied = await applyScene(value);
+    sceneEditor.markApplied(applied, value);
+  },
+  confirm: confirmAction,
+  download,
+  notify: toast,
+});

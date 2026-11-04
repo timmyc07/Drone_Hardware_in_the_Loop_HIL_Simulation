@@ -62,6 +62,7 @@
         <button class="active" data-workspace="flight">飛行實驗</button
         ><button data-workspace="mission">任務規劃</button
         ><button data-workspace="training">訓練場</button
+        ><button data-workspace="scene">場景編輯</button
         ><button data-workspace="sensors">感測器</button
         ><button data-workspace="hil">飛控介接</button
         ><button data-workspace="catalog">功能全覽</button>
@@ -102,6 +103,7 @@
             <option value="landing">降落</option>
             <option value="circuit">巡航航線</option>
             <option value="runway">跑道起降循環</option>
+            <option value="custom">自訂訓練門</option>
           </select></label
         >
         <p id="training-status">尚未開始</p>
@@ -150,6 +152,81 @@
             value="0"
         /></label>
         <p>雨與霧僅影響畫面；風向與亂流可在管理參數中設定。</p>
+      </section>
+      <section id="scene-workspace" class="panel workspace-extra" hidden>
+        <h2>場景與賽道編輯 <span>SCENE EDITOR</span></h2>
+        <p>障礙盒會影響碰撞與測距；訓練門僅作評分標記，不會阻擋光達。</p>
+        <p id="scene-dirty" role="status">已套用</p>
+        <label>場景名稱 <input id="scene-name" maxlength="80" /></label>
+        <label
+          >訓練課程
+          <select id="scene-course">
+            <option value="free">自由飛行</option>
+            <option value="hover">懸停</option>
+            <option value="gates">四門航線</option>
+            <option value="landing">降落</option>
+            <option value="circuit">巡航航線</option>
+            <option value="runway">跑道起降</option>
+            <option value="custom">自訂訓練門</option>
+          </select></label
+        >
+        <label
+          >地圖範圍
+          <select id="scene-map-range">
+            <option value="10">±10 m</option>
+            <option value="25">±25 m</option>
+            <option value="50" selected>±50 m</option>
+            <option value="100">±100 m</option>
+            <option value="250">±250 m</option>
+            <option value="500">±500 m</option>
+          </select></label
+        >
+        <label
+          >地圖放置
+          <select id="scene-tool">
+            <option value="select">選取／拖曳</option>
+            <option value="obstacle">新增障礙盒</option>
+            <option value="gate">新增訓練門</option>
+          </select></label
+        >
+        <canvas
+          id="scene-map"
+          width="600"
+          height="420"
+          aria-label="場景俯視圖，可選取、放置與拖曳；下方欄位可使用鍵盤編輯"
+          role="img"
+        ></canvas>
+        <div class="scene-editor-grid">
+          <div>
+            <h3>場景物件</h3>
+            <div id="scene-object-list"></div>
+            <div class="feature-actions">
+              <button id="scene-add-obstacle">新增障礙</button
+              ><button id="scene-add-gate">新增門</button
+              ><button id="scene-template">載入倉庫障礙範本</button>
+            </div>
+          </div>
+          <div>
+            <h3>選取物件</h3>
+            <div id="scene-object-fields"></div>
+            <div class="feature-actions">
+              <button id="scene-remove">移除</button
+              ><button id="scene-up">門往前</button
+              ><button id="scene-down">門往後</button>
+            </div>
+          </div>
+        </div>
+        <div class="feature-actions">
+          <button id="scene-apply" class="primary">套用場景</button
+          ><button id="scene-export">匯出場景 JSON</button
+          ><button id="scene-import">匯入場景 JSON</button
+          ><input
+            id="scene-import-file"
+            type="file"
+            accept=".json,application/json"
+            hidden
+          />
+        </div>
       </section>
       <section id="sensors-workspace" class="panel workspace-extra" hidden>
         <h2>感測器工作台 <span>VIRTUAL SENSORS</span></h2>

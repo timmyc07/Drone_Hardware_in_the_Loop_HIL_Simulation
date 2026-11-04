@@ -1473,3 +1473,37 @@ select:disabled {
 #hil-binary {
   width: min(36rem, 100%);
 }
+#scene-map {
+  display: block;
+  width: min(100%, 600px);
+  height: auto;
+  background: #101c2d;
+  border: 1px solid #496175;
+  margin: 1rem 0;
+  touch-action: none;
+}
+.scene-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+#scene-object-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+#scene-object-list button.active {
+  border-color: #6fe1c9;
+  color: #8af0dc;
+}
+#scene-object-fields label {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+}
+#scene-object-fields input {
+  width: 7rem;
+}

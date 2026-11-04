@@ -196,6 +196,21 @@ export const SOURCES = [
     kind: "官方文件",
   },
   {
+    name: "AirSim 場景物件 API",
+    url: "https://github.com/microsoft/AirSim/blob/main/PythonClient/airsim/client.py",
+    kind: "開源文件",
+  },
+  {
+    name: "Webots 場景編輯",
+    url: "https://github.com/cyberbotics/webots/blob/master/docs/guide/the-user-interface.md",
+    kind: "開源文件",
+  },
+  {
+    name: "FPV Web",
+    url: "https://github.com/rachmataditiya/fpv-web",
+    kind: "開源專案",
+  },
+  {
     name: "JSBSim",
     url: "https://github.com/JSBSim-Team/jsbsim",
     kind: "開源專案",
@@ -439,9 +454,10 @@ export const CAPABILITIES = [
     id: "custom-map",
     category: "環境",
     title: "自訂地圖",
-    description: "建置或選擇訓練場景。",
-    status: "planned",
+    description: "可編輯並保存本機障礙盒與環境，非完整 GIS 或任意網格。",
+    status: "partial",
     sources: [
+      "https://github.com/cyberbotics/webots/blob/master/docs/guide/the-user-interface.md",
       "https://srizfly.com/wp-content/uploads/2024/10/SRIZFLY-SESP-U1-Drone-Simulator-TDS-24Q3.pdf",
     ],
   },
@@ -468,9 +484,10 @@ export const CAPABILITIES = [
     id: "track-builder",
     category: "環境",
     title: "賽道編輯",
-    description: "自行放置與編輯賽道元素。",
-    status: "planned",
+    description: "可編輯、排序並保存本機自訂航門與場景；非社群或多人服務。",
+    status: "partial",
     sources: [
+      "https://github.com/rachmataditiya/fpv-web",
       "https://www.liftoff-game.com/news/full-release-liftoff-micro-drones",
       "https://www.velocidrone.com/features",
     ],
@@ -768,7 +785,8 @@ export const CAPABILITIES = [
     id: "replay-json",
     category: "資料與整合",
     title: "JSON 重播",
-    description: "版本 6 JSON 保存機型、感測器影格及事件；拒絕版本 1 至 5。",
+    description:
+      "版本 7 JSON 保存完整場景與事件；拒絕版本 1 至 6，整合驗證中。",
     status: "partial",
     sources: [
       "https://www.liftoff-game.com/news/full-release-liftoff-micro-drones",
@@ -839,7 +857,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "程式控制 API",
     description:
-      "同頁 API 1.4 提供相機設定、擷取及 NED 光達點雲匯出；網路與 PX4 介接由獨立本機服務提供。",
+      "同頁 API 1.5 提供完整場景讀取與原子套用；PX4 使用獨立本機服務。",
     status: "partial",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/apis.md"],
   },

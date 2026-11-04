@@ -1,3 +1,4 @@
+import { DEFAULT_SCENE } from "../scene-data.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Worker } from "node:worker_threads";
@@ -84,14 +85,21 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   reply = next(
     (d) => d.type === "state" && d.snapshot.training.course === "hover",
   );
-  worker.postMessage({ type: "training", value: "hover" });
+  worker.postMessage({
+    type: "scene",
+    value: { ...DEFAULT_SCENE, training: "hover" },
+  });
   await reply;
   reply = next(
-    (d) => d.type === "state" && d.setup.environment.preset === "field",
+    (d) => d.type === "state" && d.setup.scene.environment.preset === "field",
   );
   worker.postMessage({
-    type: "environment",
-    value: { preset: "field", timeOfDay: 18, fog: 0.2, rain: 0.1 },
+    type: "scene",
+    value: {
+      ...DEFAULT_SCENE,
+      training: "hover",
+      environment: { preset: "field", timeOfDay: 18, fog: 0.2, rain: 0.1 },
+    },
   });
   await reply;
   worker.postMessage({ type: "render", value: false });
@@ -109,7 +117,7 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   const record = validateRecording(exported.recording);
   assert.equal(record.config.seed, 18);
   assert.equal(record.scenario, "step");
-  assert.equal(record.version, 6);
+  assert.equal(record.version, 7);
   assert.equal(record.sensorFrames.length, record.samples.length);
   assert.equal(record.sensorFrames[0].time, record.samples[0].time);
   assert.equal(record.setup.sensors.gpsNoiseM, 1.5);
@@ -126,7 +134,7 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   assert.ok(record.samples.at(-1).battery.usedWh > 0);
   assert.ok(
     record.events.some(
-      (e) => e.type === "environment" && e.value.preset === "field",
+      (e) => e.type === "scene" && e.value.environment.preset === "field",
     ),
   );
   assert.equal(record.samples[0].time, 0);
@@ -165,7 +173,7 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   const reset = await reply;
   assert.equal(reset.snapshot.navigation.mode, "attitude");
   assert.equal(reset.snapshot.navigation.waypoints.length, 0);
-  assert.equal(reset.setup.environment.preset, "field");
+  assert.equal(reset.setup.scene.environment.preset, "field");
   let requestSerial = 100;
   const call = async (command) => {
     const requestId = ++requestSerial;
@@ -196,7 +204,7 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   });
   assert.equal(wing.ok, true);
   assert.equal(wing.value.snapshot.airframe, "fixedwing");
-  assert.equal(wing.value.setup.training, "free");
+  assert.equal(wing.value.setup.scene.training, "free");
   assert.ok(wing.value.snapshot.flight.airspeedMps > 10);
   assert.equal(
     (await call({ type: "targets", value: { airspeed: 16 } })).value.snapshot
@@ -241,7 +249,7 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   const ground = await call({
     type: "reset",
     config: { airframe: "fixedwing", startOnGround: true },
-    setup: { training: "runway" },
+    setup: { scene: { ...DEFAULT_SCENE, training: "runway" } },
   });
   assert.equal(ground.ok, true);
   assert.equal(ground.value.snapshot.armed, false);
@@ -269,7 +277,7 @@ test("worker runs, pauses, records simulation-time samples and exports validated
     (await call({ type: "apiExport" })).value,
   );
   assert.equal(groundRecord.config.startOnGround, true);
-  assert.equal(groundRecord.setup.training, "runway");
+  assert.equal(groundRecord.setup.scene.training, "runway");
   assert.equal(groundRecord.samples.at(-1).runway.abortReason, "pilot");
   assert.equal(groundRecord.events.at(-1).type, "abortTakeoff");
   assert.equal(Object.hasOwn(groundRecord.events.at(-1), "value"), false);
@@ -334,7 +342,10 @@ test("3D scans and recorded trajectories are identical with rendering enabled or
           latency: 0.1,
           dropout: 0.1,
         },
-        obstacles: [{ north: 5, east: 0, width: 2, depth: 8, height: 5 }],
+        scene: {
+          ...DEFAULT_SCENE,
+          obstacles: [{ north: 5, east: 0, width: 2, depth: 8, height: 5 }],
+        },
       },
     });
     await call({ type: "render", value: render });
@@ -441,12 +452,15 @@ test(
               type: "reset",
               setup: {
                 sensors: { lidarRays: 180, lidarChannels: 32, lidarHz: 20 },
-                obstacles: [
-                  { north: 4, east: 0, width: 0.1, depth: 12, height: 6 },
-                  { north: -4, east: 0, width: 0.1, depth: 12, height: 6 },
-                  { north: 0, east: 4, width: 12, depth: 0.1, height: 6 },
-                  { north: 0, east: -4, width: 12, depth: 0.1, height: 6 },
-                ],
+                scene: {
+                  ...DEFAULT_SCENE,
+                  obstacles: [
+                    { north: 4, east: 0, width: 0.1, depth: 12, height: 6 },
+                    { north: -4, east: 0, width: 0.1, depth: 12, height: 6 },
+                    { north: 0, east: 4, width: 12, depth: 0.1, height: 6 },
+                    { north: 0, east: -4, width: 12, depth: 0.1, height: 6 },
+                  ],
+                },
               },
             });
           } else {
@@ -563,27 +577,146 @@ test(
     assert.equal(takeoff.ok, true);
     assert.equal(takeoff.value.snapshot.navigation.mode, "takeoff");
     const environment = { preset: "field", timeOfDay: 18, fog: 0.2, rain: 0.1 };
-    const changed = await call({ type: "environment", value: environment });
+    const changed = await call({
+      type: "scene",
+      value: { ...DEFAULT_SCENE, environment },
+    });
     assert.equal(changed.ok, true);
-    assert.deepEqual(changed.value.setup.environment, environment);
+    assert.deepEqual(changed.value.setup.scene.environment, environment);
     const invalid = await call({
-      type: "environment",
-      value: { ...environment, fog: 2 },
+      type: "scene",
+      value: { ...DEFAULT_SCENE, environment: { ...environment, fog: 2 } },
     });
     assert.equal(invalid.ok, false);
     assert.deepEqual(
-      (await call({ type: "inspect" })).value.setup.environment,
+      (await call({ type: "inspect" })).value.setup.scene.environment,
       environment,
     );
     const exported = await call({ type: "apiExport" });
     assert.equal(exported.ok, true);
     const recording = validateRecording(exported.value);
-    assert.equal(recording.version, 6);
+    assert.equal(recording.version, 7);
     assert.ok(
       recording.events.some(
         (event) =>
-          event.type === "environment" && event.value.preset === "field",
+          event.type === "scene" && event.value.environment.preset === "field",
       ),
     );
   },
 );
+
+test("atomic scene edits preserve flight, training progress and custom geometry across replay and airframes", async (t) => {
+  const url = new URL("../worker.js", import.meta.url).href;
+  const worker = new Worker(
+    `import {parentPort} from 'node:worker_threads';
+ let now=0,scheduled;globalThis.performance={now:()=>now};globalThis.setTimeout=fn=>{scheduled=fn;};
+ globalThis.postMessage=data=>parentPort.postMessage(data);globalThis.onmessage=null;
+ parentPort.on('message',data=>{if(data.advance){now+=100;scheduled();parentPort.postMessage({advanced:true});}else globalThis.onmessage({data});});
+ await import(${JSON.stringify(url)});`,
+    { eval: true, type: "module" },
+  );
+  t.after(() => worker.terminate());
+  const next = (predicate) =>
+    new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        worker.off("message", receive);
+        reject(new Error("Worker timeout"));
+      }, 3000);
+      function receive(data) {
+        if (predicate(data)) {
+          clearTimeout(timeout);
+          worker.off("message", receive);
+          resolve(data);
+        }
+      }
+      worker.on("message", receive);
+    });
+  await next((d) => d.message === "reset");
+  let serial = 0;
+  const call = async (command) => {
+    const requestId = ++serial,
+      reply = next((d) => d.type === "apiReply" && d.requestId === requestId);
+    worker.postMessage({ ...command, requestId });
+    return await reply;
+  };
+  const advance = async () => {
+    const reply = next((d) => d.advanced);
+    worker.postMessage({ advance: true });
+    await reply;
+  };
+  const gates = [{ north: 2, east: 0, altitude: 2, yaw: 0, radius: 1 }];
+  const scene = {
+    ...DEFAULT_SCENE,
+    name: "可保存場景",
+    training: "hover",
+    customGates: gates,
+  };
+  assert.equal((await call({ type: "scene", value: scene })).ok, true);
+  await call({ type: "play" });
+  for (let i = 0; i < 12; i++) await advance();
+  await call({ type: "pause" });
+  const before = (await call({ type: "inspect" })).value;
+  const weather = {
+    ...scene,
+    environment: { ...scene.environment, preset: "field", rain: 0.5 },
+  };
+  const changed = await call({ type: "scene", value: weather });
+  assert.equal(changed.ok, true);
+  assert.deepEqual(changed.value.snapshot.training, before.snapshot.training);
+  assert.deepEqual(changed.value.snapshot.position, before.snapshot.position);
+  assert.equal(changed.value.snapshot.time, before.snapshot.time);
+  const invalid = await call({
+    type: "scene",
+    value: {
+      ...weather,
+      obstacles: [{ north: 0, east: 0, width: -1, depth: 1, height: 1 }],
+    },
+  });
+  assert.equal(invalid.ok, false);
+  assert.deepEqual((await call({ type: "inspectScene" })).value, weather);
+  for (const type of ["training", "environment", "obstacles"])
+    assert.equal((await call({ type, value: [] })).ok, false);
+  const custom = await call({
+    type: "scene",
+    value: { ...weather, training: "custom" },
+  });
+  assert.equal(custom.value.snapshot.training.total, 1);
+  assert.equal(custom.value.snapshot.training.passed, 0);
+  const box = { north: 0, east: 0, width: 2, depth: 2, height: 1 };
+  const geometry = await call({
+    type: "scene",
+    value: { ...weather, training: "custom", obstacles: [box] },
+  });
+  assert.equal(geometry.ok, true);
+  await call({ type: "play" });
+  await advance();
+  await call({ type: "pause" });
+  const measured = (await call({ type: "inspect" })).value;
+  assert.ok(measured.sensors.rangefinder.distanceM < 1.1);
+  const recording = validateRecording(
+    (await call({ type: "apiExport" })).value,
+  );
+  assert.equal(recording.setup.scene.training, "free");
+  assert.ok(
+    recording.events.some(
+      (e) => e.type === "scene" && e.value.training === "custom",
+    ),
+  );
+  const tall = { ...box, height: 3 };
+  await call({
+    type: "scene",
+    value: { ...weather, training: "custom", obstacles: [tall] },
+  });
+  await call({ type: "play" });
+  await advance();
+  await call({ type: "pause" });
+  assert.equal(
+    (await call({ type: "inspect" })).value.snapshot.status,
+    "crashed",
+  );
+  const wing = await call({ type: "reset", config: { airframe: "fixedwing" } });
+  assert.equal(wing.ok, true);
+  assert.equal(wing.value.setup.scene.training, "custom");
+  assert.deepEqual(wing.value.setup.scene.customGates, gates);
+  assert.deepEqual(wing.value.setup.scene.obstacles, [tall]);
+});

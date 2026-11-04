@@ -6,9 +6,11 @@ export function createFlightApi(request, onState) {
     structuredClone(await request(structuredClone(command)));
   const withValue = (type) => (value) => send({ type, value });
   return Object.freeze({
-    version: "1.4",
+    version: "1.5",
     getState: () => send({ type: "inspect" }),
     getSensors: () => send({ type: "inspectSensors" }),
+    getScene: () => send({ type: "inspectScene" }),
+    setScene: withValue("scene"),
     exportLidarPointCloud: (format = "pcd") =>
       send({ type: "pointCloudExport", value: format }),
     getCameraConfig: () => send({ type: "getCameraConfig" }),

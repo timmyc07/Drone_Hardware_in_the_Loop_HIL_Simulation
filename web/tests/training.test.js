@@ -195,3 +195,47 @@ test("air start cannot earn runway score and aborted or crashed runs latch until
   );
   assert.equal(t.update(runwaySample(1, "idle")).reason, "crashed");
 });
+
+test("custom gates preserve ordered continuous segment intersections and immutable scoring sources", async () => {
+  const { TRAINING_COURSES, resolveTrainingGates } =
+    await import("../training.js");
+  const gates = [2, 4, 6].map((north) => ({
+    north,
+    east: 0,
+    altitude: 2,
+    yaw: 0,
+    radius: 1,
+  }));
+  const trainer = createTrainer("custom", "fixedwing", gates);
+  gates[0].north = 100;
+  let result = trainer.update(sample(0, [0, 0, -2]));
+  result.nextGate.north = 999;
+  result = trainer.update(sample(1, [8, 0, -2]));
+  assert.equal(result.passed, 3);
+  assert.equal(result.complete, true);
+  const reversed = createTrainer("custom", "quadrotor", [
+    { ...gates[1], north: 6 },
+    { ...gates[2], north: 2 },
+  ]);
+  reversed.update(sample(0, [0, 0, -2]));
+  assert.equal(reversed.update(sample(1, [8, 0, -2])).passed, 1);
+  const backward = createTrainer("custom", "vtol", [{ ...gates[1], north: 2 }]);
+  backward.update(sample(0, [4, 0, -2]));
+  assert.equal(backward.update(sample(1, [0, 0, -2])).passed, 0);
+  const edge = createTrainer("custom", "quadrotor", [
+    { ...gates[1], north: 2 },
+  ]);
+  edge.update(sample(0, [0, 0.8, -2]));
+  assert.equal(edge.update(sample(1, [4, 0.8, -2])).passed, 1);
+  const miss = createTrainer("custom", "quadrotor", [
+    { ...gates[1], north: 2 },
+  ]);
+  miss.update(sample(0, [0, 0.8001, -2]));
+  assert.equal(miss.update(sample(1, [4, 0.8001, -2])).misses, 1);
+  assert.ok(Object.isFrozen(TRAINING_COURSES.gates.gates[0]));
+  const resolved = resolveTrainingGates({ training: "gates", customGates: [] });
+  resolved[0].north = 99;
+  assert.equal(TRAINING_COURSES.gates.gates[0].north, 8);
+  assert.throws(() => createTrainer("custom"));
+  assert.throws(() => createTrainer("custom", "quadrotor", Array(1)));
+});

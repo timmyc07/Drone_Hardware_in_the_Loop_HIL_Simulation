@@ -1,0 +1,66 @@
+{
+  "simulationOnly": true,
+  "passed": true,
+  "version": 7,
+  "flightModel": "0.5.0",
+  "course": {
+    "time": 2.359999999999972,
+    "position": [
+      4.255057108960604, -4.040237024152914e-16, -2.0033417964724003
+    ],
+    "training": {
+      "course": "custom",
+      "elapsed": 2.2349999999999746,
+      "passed": 2,
+      "total": 2,
+      "misses": 0,
+      "complete": true,
+      "score": 996,
+      "nextGate": null,
+      "holdSeconds": 0,
+      "reason": ""
+    },
+    "samples": 49
+  },
+  "weatherPreservedTraining": true,
+  "invalidSceneRejectedAtomically": true,
+  "scenePreservedClock": true,
+  "collision": {
+    "time": 3.5549999999999464,
+    "position": [
+      7.253762491290495, -4.843536295207523e-17, -1.9981766002853656
+    ],
+    "reason": "obstacle-collision",
+    "lidarReturns": 486,
+    "samples": 73
+  },
+  "limitations": [
+    "Educational flight dynamics and AABB collision, not real aircraft calibration",
+    "Gate score markers have no physical ring collision; collision proof uses a box"
+  ],
+  "browser": {
+    "numericInputPersisted": true,
+    "emptyNumericInputDisablesApplyExport": true,
+    "mapDrag": {
+      "north": 11.9,
+      "east": 9.9
+    },
+    "gateOrder": [2, 4],
+    "invalidImportPreservedDraft": true,
+    "cancelledImportPreservedDraft": true,
+    "sceneJsonRoundtripByteIdentical": true,
+    "passedGates": 2,
+    "totalGates": 2,
+    "score": 946,
+    "recording": {
+      "version": 7,
+      "simSeconds": 58.90000000001168,
+      "samples": 1179,
+      "bytes": 100684468
+    },
+    "replayReadOnly": true,
+    "replayInitialSceneByteIdentical": true,
+    "replayFinalSceneByteIdentical": true,
+    "replayAfterStorageLimitEnabled": true
+  }
+}

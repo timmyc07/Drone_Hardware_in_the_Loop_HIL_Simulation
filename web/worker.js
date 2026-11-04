@@ -1,5 +1,10 @@
+import { validateScene } from "./scene-data.js";
 import { createSimulation, validateConfig } from "./sim.js";
-import { createTrainer } from "./training.js";
+import {
+  createTrainer,
+  isCourseSupported,
+  resolveTrainingGates,
+} from "./training.js";
 import { createSensorSuite, validateSensorConfig } from "./sensors.js";
 import { exportLidarCsv, exportLidarPcd } from "./pointcloud.js";
 import {
@@ -7,7 +12,6 @@ import {
   MODEL_VERSION,
   compactSnapshot,
   validateSetup,
-  validateEnvironment,
 } from "./recording.js";
 
 const DT = 0.005;
@@ -17,13 +21,17 @@ let config = validateConfig();
 let setup = validateSetup(undefined, config);
 let initialSetup = structuredClone(setup);
 let sim = createSimulation(config);
-let trainer = createTrainer(setup.training, config.airframe);
+let trainer = createTrainer(
+  setup.scene.training,
+  config.airframe,
+  setup.scene.customGates,
+);
 let training = trainer.update(sim.snapshot());
 let sensorSuite = createSensorSuite(
   setup.sensors,
   (config.seed ^ 0x9e3779b9) >>> 0,
 );
-sensorSuite.setObstacles(setup.obstacles);
+sensorSuite.setObstacles(setup.scene.obstacles);
 let sensorState = sensorSuite.update(sim.snapshot());
 let scenario = "hover";
 let running = false;
@@ -96,27 +104,35 @@ function reset(nextConfig, nextScenario, nextSetup) {
           ...setup,
           mode: "attitude",
           mission: [],
-          training:
-            config.airframe === validated.airframe ? setup.training : "free",
+          scene: {
+            ...setup.scene,
+            training: isCourseSupported(
+              setup.scene.training,
+              validated.airframe,
+            )
+              ? setup.scene.training
+              : "free",
+          },
         }
       : nextSetup,
     validated,
   );
   const next = createSimulation(validated);
   next.setScenario(nextScenario);
-  next.setObstacles(validatedSetup.obstacles);
+  next.setObstacles(validatedSetup.scene.obstacles);
   if (validatedSetup.mission.length) next.setMission(validatedSetup.mission);
   next.setMode(validatedSetup.mode);
   const nextTrainer = createTrainer(
-    validatedSetup.training,
+    validatedSetup.scene.training,
     validated.airframe,
+    validatedSetup.scene.customGates,
   );
   const nextTraining = nextTrainer.update(next.snapshot());
   const nextSensors = createSensorSuite(
     validatedSetup.sensors,
     (validated.seed ^ 0x9e3779b9) >>> 0,
   );
-  nextSensors.setObstacles(validatedSetup.obstacles);
+  nextSensors.setObstacles(validatedSetup.scene.obstacles);
   const nextSensorState = nextSensors.update(next.snapshot());
   config = validated;
   setup = validatedSetup;
@@ -237,6 +253,7 @@ onmessage = ({ data }) => {
       "pointCloudExport",
       "inspect",
       "inspectSensors",
+      "inspectScene",
       "apiExport",
     ];
     if (storageLimited && !readCommands.includes(data.type))
@@ -331,28 +348,32 @@ onmessage = ({ data }) => {
         recordEvent(data);
         publish();
         break;
-      case "obstacles":
-        sim.setObstacles(data.value);
-        sensorSuite.setObstacles(data.value);
-        setup.obstacles = structuredClone(data.value);
-        recordEvent(data);
-        publish();
-        break;
-      case "training": {
-        const next = createTrainer(data.value, config.airframe);
-        const nextTraining = next.update(sim.snapshot());
-        trainer = next;
+      case "scene": {
+        const nextScene = validateScene(data.value, config.airframe);
+        const changed =
+          setup.scene.training !== nextScene.training ||
+          JSON.stringify(resolveTrainingGates(setup.scene, config.airframe)) !==
+            JSON.stringify(resolveTrainingGates(nextScene, config.airframe));
+        const nextTrainer = changed
+          ? createTrainer(
+              nextScene.training,
+              config.airframe,
+              nextScene.customGates,
+            )
+          : trainer;
+        const nextTraining = changed
+          ? nextTrainer.update(sim.snapshot())
+          : training;
+        // Both consumers receive one canonical validated geometry at the same simulation boundary.
+        sim.setObstacles(nextScene.obstacles);
+        sensorSuite.setObstacles(nextScene.obstacles);
+        setup.scene = nextScene;
+        trainer = nextTrainer;
         training = nextTraining;
-        setup.training = data.value;
-        recordEvent(data);
+        recordEvent({ ...data, value: nextScene });
         publish();
         break;
       }
-      case "environment":
-        setup.environment = validateEnvironment(data.value);
-        recordEvent({ ...data, value: setup.environment });
-        publish();
-        break;
       case "render":
         if (typeof data.value !== "boolean")
           throw new Error("渲染設定必須為布林值");
@@ -365,7 +386,7 @@ onmessage = ({ data }) => {
           validated,
           (config.seed ^ 0x9e3779b9) >>> 0,
         );
-        next.setObstacles(setup.obstacles);
+        next.setObstacles(setup.scene.obstacles);
         const state = next.update(sim.snapshot());
         sensorSuite = next;
         sensorState = state;
@@ -429,6 +450,7 @@ onmessage = ({ data }) => {
       }
       case "inspect":
       case "inspectSensors":
+      case "inspectScene":
       case "apiExport":
         if (data.requestId === undefined)
           throw new Error("此操作需要程式介面請求編號");
@@ -439,9 +461,11 @@ onmessage = ({ data }) => {
           value:
             data.type === "inspect"
               ? inspectedState()
-              : data.type === "inspectSensors"
-                ? sensorState
-                : recording(),
+              : data.type === "inspectScene"
+                ? setup.scene
+                : data.type === "inspectSensors"
+                  ? sensorState
+                  : recording(),
         });
         return;
       case "export": {

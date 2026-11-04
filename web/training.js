@@ -1,4 +1,10 @@
-export const TRAINING_COURSES = {
+const deepFreeze = (value) => {
+  Object.freeze(value);
+  for (const item of Object.values(value))
+    if (item && typeof item === "object") deepFreeze(item);
+  return value;
+};
+export const TRAINING_COURSES = deepFreeze({
   free: {
     title: "自由飛行",
     airframes: ["quadrotor", "fixedwing", "vtol"],
@@ -27,19 +33,67 @@ export const TRAINING_COURSES = {
       { north: 0, east: 0, altitude: 30, yaw: -Math.PI / 2, radius: 20 },
     ],
   },
-};
+});
 
 export function isCourseSupported(course, airframe) {
   return (
-    Object.hasOwn(TRAINING_COURSES, course) &&
-    TRAINING_COURSES[course].airframes.includes(airframe)
+    typeof course === "string" &&
+    ["quadrotor", "fixedwing", "vtol"].includes(airframe) &&
+    (course === "custom" ||
+      (Object.hasOwn(TRAINING_COURSES, course) &&
+        TRAINING_COURSES[course].airframes.includes(airframe)))
   );
 }
 
-export function createTrainer(course = "free", airframe = "quadrotor") {
+export function validateCustomGates(value) {
+  if (!Array.isArray(value) || value.length > 50)
+    throw new Error("Custom course requires at most 50 gates");
+  const limits = {
+    north: [-500, 500],
+    east: [-500, 500],
+    altitude: [0.25, 500],
+    yaw: [-Math.PI, Math.PI],
+    radius: [0.25, 100],
+  };
+  return Array.from(value, (gate) => {
+    if (
+      !gate ||
+      ![Object.prototype, null].includes(Object.getPrototypeOf(gate)) ||
+      Object.keys(gate).length !== 5 ||
+      Object.keys(gate).some((key) => !Object.hasOwn(limits, key))
+    )
+      throw new Error("Invalid custom gate fields");
+    return Object.fromEntries(
+      Object.entries(limits).map(([key, [min, max]]) => {
+        const v = gate[key];
+        if (!Number.isFinite(v) || v < min || v > max)
+          throw new Error(`Invalid gate ${key}`);
+        return [key, v];
+      }),
+    );
+  });
+}
+export function resolveTrainingGates(scene, airframe = "quadrotor") {
+  if (!scene || !isCourseSupported(scene.training, airframe))
+    throw new Error("Invalid or unsupported training course");
+  const custom = validateCustomGates(scene.customGates);
+  if (scene.training === "custom" && !custom.length)
+    throw new Error("Custom training needs at least one gate");
+  return scene.training === "custom"
+    ? custom
+    : TRAINING_COURSES[scene.training].gates.map((gate) => ({ ...gate }));
+}
+export function createTrainer(
+  course = "free",
+  airframe = "quadrotor",
+  customGates = [],
+) {
   if (!isCourseSupported(course, airframe))
     throw new Error("Invalid or unsupported training course");
-  const gates = TRAINING_COURSES[course].gates;
+  const gates = resolveTrainingGates(
+    { training: course, customGates },
+    airframe,
+  );
   let previous,
     start,
     passed,
@@ -77,7 +131,7 @@ export function createTrainer(course = "free", airframe = "quadrotor") {
       misses,
       complete,
       score,
-      nextGate: gates[passed] ?? null,
+      nextGate: gates[passed] ? { ...gates[passed] } : null,
       holdSeconds,
       reason,
     };
@@ -88,7 +142,10 @@ export function createTrainer(course = "free", airframe = "quadrotor") {
       typeof snapshot !== "object" ||
       !Number.isFinite(snapshot.time) ||
       ![snapshot.position, snapshot.velocity].every(
-        (v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite),
+        (v) =>
+          Array.isArray(v) &&
+          v.length === 3 &&
+          Array.from(v).every(Number.isFinite),
       ) ||
       typeof snapshot.status !== "string" ||
       typeof snapshot.armed !== "boolean"
@@ -185,25 +242,35 @@ export function createTrainer(course = "free", airframe = "quadrotor") {
             : 0;
       score = Math.max(0, Math.round(score - penalty));
     } else if (gates.length && previous) {
-      const gate = gates[passed];
-      const normal = [Math.cos(gate.yaw), Math.sin(gate.yaw)];
-      const planeDistance = (p) =>
-        (p[0] - gate.north) * normal[0] + (p[1] - gate.east) * normal[1];
-      const before = planeDistance(previous.position),
-        after = planeDistance(snapshot.position);
-      if (before < 0 && after >= 0) {
+      let lastIntersection = -1;
+      while (passed < gates.length) {
+        const gate = gates[passed],
+          normal = [Math.cos(gate.yaw), Math.sin(gate.yaw)];
+        const planeDistance = (p) =>
+          (p[0] - gate.north) * normal[0] + (p[1] - gate.east) * normal[1];
+        const before = planeDistance(previous.position),
+          after = planeDistance(snapshot.position);
+        if (!(before < 0 && after >= 0)) break;
         const t = -before / (after - before);
+        // Ordered gates must be crossed in increasing time along this physical segment.
+        if (t <= lastIntersection) break;
         const cross = previous.position.map(
           (v, i) => v + t * (snapshot.position[i] - v),
         );
         const lateral =
           -(cross[0] - gate.north) * normal[1] +
           (cross[1] - gate.east) * normal[0];
-        if (Math.hypot(lateral, -cross[2] - gate.altitude) <= gate.radius - 0.2)
-          passed++;
-        else misses++;
-        complete = passed === gates.length;
+        if (
+          Math.hypot(lateral, -cross[2] - gate.altitude) >
+          gate.radius - 0.2
+        ) {
+          misses++;
+          break;
+        }
+        passed++;
+        lastIntersection = t;
       }
+      complete = passed === gates.length;
       score = Math.max(
         0,
         Math.round(1000 - misses * 100 - elapsed * 2 - penalty),
