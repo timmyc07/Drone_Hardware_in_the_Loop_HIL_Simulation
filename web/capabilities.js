@@ -180,6 +180,16 @@ export const SOURCES = [
     url: "https://ardupilot.org/dev/docs/SITL_simulation_parameters.html",
     kind: "官方文件",
   },
+  {
+    name: "PX4 氣動模型",
+    url: "https://github.com/PX4/PX4-SITL_gazebo-classic/blob/main/src/liftdrag_plugin/README.md",
+    kind: "開源文件",
+  },
+  {
+    name: "JSBSim",
+    url: "https://github.com/JSBSim-Team/jsbsim",
+    kind: "開源專案",
+  },
 ];
 
 export const CAPABILITIES = [
@@ -197,21 +207,27 @@ export const CAPABILITIES = [
     id: "fixed-wing",
     category: "飛行模型",
     title: "固定翼動力學",
-    description: "固定翼升阻力及失速需要獨立模型。",
-    status: "planned",
+    description:
+      "固定翼採簡化升阻力、力矩與失速近似，從空中開始；未經實機校準。",
+    status: "partial",
     sources: [
       "https://github.com/PX4/PX4-Autopilot/blob/main/docs/en/simulation/index.md",
       "https://www.simnet.aero/product-page/online-course-manual-piloting-of-fixed-wing-uavs",
+      "https://github.com/PX4/PX4-SITL_gazebo-classic/blob/main/src/liftdrag_plugin/README.md",
+      "https://github.com/JSBSim-Team/jsbsim",
     ],
   },
   {
     id: "vtol",
     category: "飛行模型",
     title: "垂直起降轉換",
-    description: "固定翼與多旋翼模式及轉換。",
-    status: "planned",
+    description:
+      "lift+cruise 機型提供懸停與巡航轉換；最低轉換高度 8 m，未實機校準。",
+    status: "partial",
     sources: [
       "https://github.com/PX4/PX4-Autopilot/blob/main/docs/en/simulation/index.md",
+      "https://github.com/PX4/PX4-SITL_gazebo-classic/blob/main/src/liftdrag_plugin/README.md",
+      "https://github.com/JSBSim-Team/jsbsim",
     ],
   },
   {
@@ -228,8 +244,7 @@ export const CAPABILITIES = [
     id: "vehicle-setup",
     category: "飛行模型",
     title: "機體與組件設定",
-    description:
-      "可調整四旋翼質量、臂長及馬達等參數；不含任意機體或完整組件庫。",
+    description: "提供三類機型預設及機翼、推進與舵面參數。",
     status: "partial",
     sources: [
       "https://zephyr-sim.com/features?question=1",
@@ -292,7 +307,8 @@ export const CAPABILITIES = [
     id: "landing",
     category: "控制與航行",
     title: "降落",
-    description: "提供降落指令及有限的定點降落練習。",
+    description:
+      "四旋翼與 VTOL 支援降落；固定翼提供家點進場、拉平及滑跑近似；無風與 3 m/s 風測試完成，非精準跑道落點。",
     status: "partial",
     sources: [
       "https://www.easa.europa.eu/en/document-library/easy-access-rules/online-publications/easy-access-rules-unmanned-aircraft-systems?page=5",
@@ -313,7 +329,7 @@ export const CAPABILITIES = [
     id: "rtl",
     category: "控制與航行",
     title: "返航",
-    description: "提供簡化返航；並非實際飛控的返航程序。",
+    description: "四旋翼與 VTOL 使用簡化返航；固定翼返回家點盤旋。",
     status: "partial",
     sources: [
       "https://www.simnet.aero/product-page/introduction-to-arducopter-auto-missions-with-mission-planner",
@@ -656,7 +672,7 @@ export const CAPABILITIES = [
     id: "racing-gates",
     category: "訓練與評估",
     title: "競速門",
-    description: "四門練習依序判定航門穿越；非完整賽事系統。",
+    description: "近距離四門與巡航四門依序判定穿越；固定翼僅支援巡航航線。",
     status: "partial",
     sources: ["https://www.velocidrone.com/features"],
   },
@@ -727,16 +743,16 @@ export const CAPABILITIES = [
     id: "record-csv",
     category: "資料與整合",
     title: "CSV 飛行紀錄",
-    description: "匯出 98 欄遙測與感測資料 CSV，另可匯出當前光達點雲。",
-    status: "implemented",
+    description: "匯出 119 欄飛行及感測資料 CSV，另可匯出光達點雲。",
+    status: "partial",
     sources: ["https://wiki.zephyr-sim.com/help/faqs"],
   },
   {
     id: "replay-json",
     category: "資料與整合",
     title: "JSON 重播",
-    description: "版本 3 JSON 保留感測器影格、設定及故障事件；拒絕版本 1／2。",
-    status: "implemented",
+    description: "版本 4 JSON 保存機型、感測器影格及事件；拒絕版本 1、2、3。",
+    status: "partial",
     sources: [
       "https://www.liftoff-game.com/news/full-release-liftoff-micro-drones",
     ],
@@ -804,7 +820,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "程式控制 API",
     description:
-      "同頁 window.flightLab 提供 Promise 控制、查詢和訂閱；無網路服務或飛控協定橋接。",
+      "同頁 API 1.1 支援查詢、控制、訂閱、VTOL 轉換及水平推進器故障；無網路或飛控協定橋接。",
     status: "partial",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/apis.md"],
   },

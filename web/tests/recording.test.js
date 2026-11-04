@@ -13,9 +13,10 @@ import {
   validateSensorFrame,
 } from "../recording.js";
 
-function record() {
-  const sim = createSimulation(),
-    trainer = createTrainer();
+function record(airframe = "quadrotor") {
+  const config = validateConfig({ airframe });
+  const sim = createSimulation(config),
+    trainer = createTrainer("free", airframe);
   const capture = () => {
     const snapshot = sim.snapshot();
     return { ...snapshot, training: trainer.update(snapshot) };
@@ -27,12 +28,12 @@ function record() {
   return {
     format: "flight-lab",
     version: RECORDING_VERSION,
-    modelVersion: "0.3.0",
+    modelVersion: "0.4.0",
     createdAt: "2026-11-04T00:00:00.000Z",
-    config: validateConfig(),
+    config,
     scenario: "hover",
     dt: 0.005,
-    setup: validateSetup(undefined),
+    setup: validateSetup(undefined, config),
     runtime: {
       speed: 1,
       wallSeconds: 0.05,
@@ -46,7 +47,7 @@ function record() {
     sensorFrames: [sensors.update(first), sensors.update(last)],
   };
 }
-test("v3 round trip validates every new field and exports 98 CSV columns with empty invalid sensor cells", () => {
+test("v4 round trip validates every new field and exports 119 CSV columns with empty invalid sensor cells", () => {
   const input = record(),
     result = validateRecording(JSON.parse(JSON.stringify(input)));
   assert.deepEqual(result, JSON.parse(JSON.stringify(input)));
@@ -55,7 +56,7 @@ test("v3 round trip validates every new field and exports 98 CSV columns with em
     .map((row) => row.split(","));
   assert.equal(rows.length, 3);
   assert.equal(rows[0].length, rows[1].length);
-  assert.ok(rows[0].length > 65);
+  assert.equal(rows[0].length, 119);
   assert.equal(rows[0][44], "steps_count");
   for (const name of [
     "north_m",
@@ -289,10 +290,10 @@ test("sensor frames require exact parallel times and reject future/regressing ac
   input.sensorFrames[0].gps.time = 0.1;
   input.sensorFrames[1].gps.time = 0.05;
   assert.throws(() => validateRecording(input), /backwards/);
-  for (const version of [1, 2]) {
+  for (const version of [1, 2, 3]) {
     const legacy = record();
     legacy.version = version;
-    assert.throws(() => validateRecording(legacy), /version 3 required/);
+    assert.throws(() => validateRecording(legacy), /version 4 required/);
   }
 });
 test("no-return and startup measurements retain explicit nulls and produce empty CSV sensor cells", () => {
@@ -359,4 +360,83 @@ test("sensor config/fault history validates different lidar dimensions and prese
     value: { lidarRays: 181 },
   });
   assert.throws(() => validateRecording(config));
+});
+
+test("all airframes preserve propulsion, surfaces and flight data in schema 4 JSON and CSV", () => {
+  for (const airframe of ["quadrotor", "fixedwing", "vtol"]) {
+    const input = record(airframe);
+    if (airframe !== "quadrotor")
+      input.events.push({
+        time: 0,
+        type: "fault",
+        fault: "pusher",
+        value: { efficiency: 0.5 },
+      });
+    if (airframe === "vtol")
+      input.events.push({ time: 0, type: "transition", value: "cruise" });
+    const roundtrip = validateRecording(JSON.parse(recordingToJson(input)));
+    for (let i = 0; i < input.samples.length; i++) {
+      for (const key of [
+        "airframe",
+        "propulsion",
+        "controlSurfaces",
+        "flight",
+        "faults",
+        "target",
+      ])
+        assert.deepEqual(roundtrip.samples[i][key], input.samples[i][key]);
+    }
+    const [header, row] = recordingToCsv(input)
+      .split("\n")
+      .map((line) => line.split(","));
+    assert.equal(header.length, 119);
+    assert.equal(
+      row[header.indexOf("airframe_code")],
+      String(["quadrotor", "fixedwing", "vtol"].indexOf(airframe)),
+    );
+    assert.equal(
+      Number(row[header.indexOf("airspeed_m_s")]),
+      input.samples[0].flight.airspeedMps,
+    );
+    assert.ok(
+      row
+        .slice(98)
+        .every((cell) => cell !== "" && Number.isFinite(Number(cell))),
+    );
+  }
+});
+
+test("schema 4 rejects mismatched airframes, malformed flight state and invalid transition or propulsion faults", () => {
+  const mutations = [
+    (r) => (r.samples[0].airframe = "fixedwing"),
+    (r) => delete r.samples[0].flight,
+    (r) => (r.samples[0].flight.airspeedMps = Infinity),
+    (r) => (r.samples[0].flight.transitionPhase = "unknown"),
+    (r) => (r.samples[0].flight.transitionProgress = 2),
+    (r) => (r.samples[0].flight.stalled = 1),
+    (r) => (r.samples[0].propulsion.motor = -0.1),
+    (r) => (r.samples[0].propulsion.thrustN = -1),
+    (r) => (r.samples[0].controlSurfaces.elevator = Math.PI),
+    (r) => (r.samples[0].faults.pusherEfficiency = 1.1),
+    (r) => (r.samples[0].target.airspeed = 41),
+    (r) => r.events.push({ time: 0, type: "transition", value: "cruise" }),
+    (r) =>
+      r.events.push({
+        time: 0,
+        type: "fault",
+        fault: "pusher",
+        value: { efficiency: 0.5 },
+      }),
+  ];
+  for (const mutate of mutations) {
+    const input = record();
+    mutate(input);
+    assert.throws(() => validateRecording(input));
+  }
+  const wing = record("fixedwing");
+  wing.setup.training = "hover";
+  assert.throws(() => validateRecording(wing), /not supported/);
+  const vtol = record("vtol");
+  vtol.events.push({ time: 0, type: "transition", value: "invalid" });
+  assert.throws(() => validateRecording(vtol));
 });

@@ -1,8 +1,10 @@
 import { createSimulation, validateConfig } from "./sim.js";
 import { DEFAULT_SENSOR_CONFIG, validateSensorConfig } from "./sensors.js";
-import { TRAINING_COURSES } from "./training.js";
+import { TRAINING_COURSES, isCourseSupported } from "./training.js";
 
-export const RECORDING_VERSION = 3;
+export const RECORDING_VERSION = 4;
+export const MODEL_VERSION = "0.4.0";
+const AIRFRAMES = ["quadrotor", "fixedwing", "vtol"];
 const MODES = ["attitude", "position", "mission", "rtl", "land"];
 const COURSES = Object.keys(TRAINING_COURSES);
 export const DEFAULT_SETUP = Object.freeze({
@@ -67,6 +69,8 @@ export function validateSetup(value, config = {}) {
   const obstacles = Array.from(merged.obstacles, (box) => ({ ...object(box) }));
   const mode = choice(merged.mode, MODES);
   sim.setMode(mode);
+  if (!isCourseSupported(merged.training, sim.snapshot().airframe))
+    throw new Error("Training course is not supported by this airframe");
   return {
     mode,
     mission,
@@ -83,6 +87,7 @@ function targets(value, partial = false, automatic = false) {
     roll: [-Math.PI / 6, Math.PI / 6],
     pitch: [-Math.PI / 6, Math.PI / 6],
     yawRate: [-2, 2],
+    airspeed: [0, 40],
   };
   if (Object.keys(value).some((key) => !Object.hasOwn(limits, key)))
     throw new Error("Unknown target");
@@ -96,10 +101,12 @@ function targets(value, partial = false, automatic = false) {
       );
   return result;
 }
-function training(value) {
+function training(value, airframe) {
   object(value);
   const course = choice(value.course, COURSES),
     total = TRAINING_COURSES[course].gates.length;
+  if (!isCourseSupported(course, airframe))
+    throw new Error("Training course is not supported by this airframe");
   if (count(value.total, 50) !== total)
     throw new Error("Invalid training gate total");
   const passed = count(value.passed, total);
@@ -131,8 +138,10 @@ function training(value) {
     reason: choice(value.reason, ["", "crashed"]),
   };
 }
-function sample(value, route, routeText, routeCache) {
+function sample(value, route, routeText, routeCache, airframe) {
   object(value);
+  if (choice(value.airframe, AIRFRAMES) !== airframe)
+    throw new Error("Snapshot airframe does not match configuration");
   const quaternion = vector(value.quaternion, 4, -1, 1);
   if (Math.abs(Math.hypot(...quaternion) - 1) > 0.01)
     throw new Error("Invalid quaternion");
@@ -175,6 +184,7 @@ function sample(value, route, routeText, routeCache) {
   const home = vector(nav.home, 2, -500, 500);
   if (home.some((v) => v !== 0)) throw new Error("Invalid home position");
   return {
+    airframe,
     time: number(value.time, 0, 1800.001),
     position: vector(value.position, 3),
     velocity: vector(value.velocity, 3),
@@ -212,6 +222,7 @@ function sample(value, route, routeText, routeCache) {
         "geofence",
         "link-loss",
         "obstacle-collision",
+        "ground-impact",
       ]),
     },
     battery: {
@@ -227,14 +238,62 @@ function sample(value, route, routeText, routeCache) {
     faults: {
       motorEfficiency: vector(faults.motorEfficiency, 4, 0, 1),
       linkLost: boolean(faults.linkLost),
+      pusherEfficiency: number(faults.pusherEfficiency, 0, 1),
     },
-    training: training(value.training),
+    propulsion: propulsion(value.propulsion),
+    controlSurfaces: surfaces(value.controlSurfaces),
+    flight: flight(value.flight),
+    training: training(value.training, airframe),
+  };
+}
+function propulsion(value) {
+  object(value);
+  return {
+    command: number(value.command, 0, 1),
+    motor: number(value.motor, 0, 1),
+    thrustN: number(value.thrustN, 0),
+  };
+}
+function surfaces(value) {
+  object(value);
+  return Object.fromEntries(
+    ["aileron", "elevator", "rudder"].map((key) => [
+      key,
+      number(value[key], -Math.PI / 2, Math.PI / 2),
+    ]),
+  );
+}
+function flight(value) {
+  object(value);
+  return {
+    airspeedMps: number(value.airspeedMps, 0),
+    groundspeedMps: number(value.groundspeedMps, 0),
+    alphaRad: number(value.alphaRad, -Math.PI, Math.PI),
+    betaRad: number(value.betaRad, -Math.PI / 2, Math.PI / 2),
+    dynamicPressurePa: number(value.dynamicPressurePa, 0),
+    liftN: number(value.liftN),
+    dragN: number(value.dragN, 0),
+    loadFactor: number(value.loadFactor),
+    stalled: boolean(value.stalled),
+    transition: choice(value.transition, ["hover", "cruise"]),
+    transitionPhase: choice(value.transitionPhase, [
+      "hover",
+      "accelerating",
+      "cruise",
+      "decelerating",
+    ]),
+    transitionProgress: number(value.transitionProgress, 0, 1),
   };
 }
 function event(input, sim) {
   object(input);
   const result = { time: number(input.time, 0, 1800.001), type: input.type };
   switch (input.type) {
+    case "transition":
+      if (sim.snapshot().airframe !== "vtol")
+        throw new Error("Transition events require a VTOL airframe");
+      result.value = choice(input.value, ["hover", "cruise"]);
+      break;
     case "sensorConfig":
       result.value = validateSensorConfig(input.value);
       break;
@@ -272,7 +331,7 @@ function event(input, sim) {
       sim.setObstacles(result.value);
       break;
     case "fault":
-      result.fault = choice(input.fault, ["motor", "link"]);
+      result.fault = choice(input.fault, ["motor", "link", "pusher"]);
       sim.injectFault(result.fault, object(input.value));
       result.value = { ...input.value };
       sim.clearFaults();
@@ -414,11 +473,11 @@ export function validateRecording(value) {
   object(value);
   if (value.version !== RECORDING_VERSION)
     throw new Error(
-      "Unsupported recording version: version 3 required; legacy recordings are not supported",
+      "Unsupported recording version: version 4 required; legacy recordings are not supported",
     );
   if (
     value.format !== "flight-lab" ||
-    value.modelVersion !== "0.3.0" ||
+    value.modelVersion !== MODEL_VERSION ||
     typeof value.createdAt !== "string" ||
     !Number.isFinite(Date.parse(value.createdAt))
   )
@@ -476,7 +535,7 @@ export function validateRecording(value) {
       }
       eventIndex++;
     }
-    const result = sample(input, route, routeText, routeCache);
+    const result = sample(input, route, routeText, routeCache, config.airframe);
     lastTime = time;
     return result;
   });
@@ -510,7 +569,7 @@ export function validateRecording(value) {
   return {
     format: "flight-lab",
     version: RECORDING_VERSION,
-    modelVersion: "0.3.0",
+    modelVersion: MODEL_VERSION,
     createdAt: value.createdAt,
     config,
     scenario: value.scenario,
@@ -615,6 +674,27 @@ export function recordingToCsv(record) {
     "optical_flow_u_rad_s",
     "optical_flow_v_rad_s",
     "optical_flow_ground_distance_m",
+    "airframe_code",
+    "target_airspeed_m_s",
+    "pusher_command_normalized",
+    "pusher_motor_normalized",
+    "pusher_thrust_N",
+    "aileron_rad",
+    "elevator_rad",
+    "rudder_rad",
+    "airspeed_m_s",
+    "groundspeed_m_s",
+    "alpha_rad",
+    "beta_rad",
+    "dynamic_pressure_Pa",
+    "lift_N",
+    "drag_N",
+    "load_factor",
+    "stalled_boolean",
+    "transition_code",
+    "transition_phase_code",
+    "transition_progress_fraction",
+    "pusher_efficiency_fraction",
   ];
   const rows = samples.map((s, index) =>
     [
@@ -665,6 +745,29 @@ export function recordingToCsv(record) {
         Number(sensorFrames[index][name].valid),
       ]),
       ...sensorCsv(sensorFrames[index]),
+      AIRFRAMES.indexOf(s.airframe),
+      s.target.airspeed,
+      s.propulsion.command,
+      s.propulsion.motor,
+      s.propulsion.thrustN,
+      s.controlSurfaces.aileron,
+      s.controlSurfaces.elevator,
+      s.controlSurfaces.rudder,
+      s.flight.airspeedMps,
+      s.flight.groundspeedMps,
+      s.flight.alphaRad,
+      s.flight.betaRad,
+      s.flight.dynamicPressurePa,
+      s.flight.liftN,
+      s.flight.dragN,
+      s.flight.loadFactor,
+      Number(s.flight.stalled),
+      ["hover", "cruise"].indexOf(s.flight.transition),
+      ["hover", "accelerating", "cruise", "decelerating"].indexOf(
+        s.flight.transitionPhase,
+      ),
+      s.flight.transitionProgress,
+      s.faults.pusherEfficiency,
     ].join(","),
   );
   return [header.join(","), ...rows].join("\n");

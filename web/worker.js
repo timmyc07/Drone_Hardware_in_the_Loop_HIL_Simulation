@@ -7,6 +7,7 @@ import {
 } from "./sensors.js";
 import {
   RECORDING_VERSION,
+  MODEL_VERSION,
   compactSnapshot,
   validateSetup,
 } from "./recording.js";
@@ -18,7 +19,7 @@ let config = validateConfig();
 let setup = validateSetup(undefined, config);
 let initialSetup = structuredClone(setup);
 let sim = createSimulation(config);
-let trainer = createTrainer(setup.training);
+let trainer = createTrainer(setup.training, config.airframe);
 let training = trainer.update(sim.snapshot());
 let sensorSuite = createSensorSuite(
   setup.sensors,
@@ -87,21 +88,31 @@ function publish(message) {
   lastPublish = performance.now();
 }
 
-function reset(
-  nextConfig,
-  nextScenario,
-  nextSetup = { ...setup, mode: "attitude", mission: [] },
-) {
+function reset(nextConfig, nextScenario, nextSetup) {
   const validated = validateConfig(nextConfig);
   if (!["hover", "step", "gust"].includes(nextScenario))
     throw new Error("未知的實驗情境");
-  const validatedSetup = validateSetup(nextSetup, validated);
+  const validatedSetup = validateSetup(
+    nextSetup === undefined
+      ? {
+          ...setup,
+          mode: "attitude",
+          mission: [],
+          training:
+            config.airframe === validated.airframe ? setup.training : "free",
+        }
+      : nextSetup,
+    validated,
+  );
   const next = createSimulation(validated);
   next.setScenario(nextScenario);
   next.setObstacles(validatedSetup.obstacles);
   if (validatedSetup.mission.length) next.setMission(validatedSetup.mission);
   next.setMode(validatedSetup.mode);
-  const nextTrainer = createTrainer(validatedSetup.training);
+  const nextTrainer = createTrainer(
+    validatedSetup.training,
+    validated.airframe,
+  );
   const nextTraining = nextTrainer.update(next.snapshot());
   const nextSensors = createSensorSuite(
     validatedSetup.sensors,
@@ -176,7 +187,7 @@ function recording() {
   return {
     format: "flight-lab",
     version: RECORDING_VERSION,
-    modelVersion: "0.3.0",
+    modelVersion: MODEL_VERSION,
     createdAt,
     config,
     scenario,
@@ -264,6 +275,11 @@ onmessage = ({ data }) => {
         recordEvent(data);
         publish();
         break;
+      case "transition":
+        sim.setTransition(data.value);
+        recordEvent(data);
+        publish();
+        break;
       case "position":
         sim.setPositionTarget(data.value);
         recordEvent(data);
@@ -309,7 +325,7 @@ onmessage = ({ data }) => {
         publish();
         break;
       case "training": {
-        const next = createTrainer(data.value);
+        const next = createTrainer(data.value, config.airframe);
         const nextTraining = next.update(sim.snapshot());
         trainer = next;
         training = nextTraining;
@@ -365,7 +381,7 @@ onmessage = ({ data }) => {
         const text =
           data.kind === "json"
             ? JSON.stringify({
-                modelVersion: "0.3.0",
+                modelVersion: MODEL_VERSION,
                 config: setup.sensors,
                 sensors: sensorState,
               })

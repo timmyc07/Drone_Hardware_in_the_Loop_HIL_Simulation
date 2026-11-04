@@ -1,8 +1,13 @@
 export const TRAINING_COURSES = {
-  free: { title: "自由飛行", gates: [] },
-  hover: { title: "定點懸停", gates: [] },
+  free: {
+    title: "自由飛行",
+    airframes: ["quadrotor", "fixedwing", "vtol"],
+    gates: [],
+  },
+  hover: { title: "定點懸停", airframes: ["quadrotor", "vtol"], gates: [] },
   gates: {
     title: "四門航線",
+    airframes: ["quadrotor", "vtol"],
     gates: [
       { north: 8, east: 0, altitude: 2, yaw: 0, radius: 1.5 },
       { north: 8, east: 8, altitude: 2, yaw: Math.PI / 2, radius: 1.5 },
@@ -10,12 +15,29 @@ export const TRAINING_COURSES = {
       { north: 0, east: 0, altitude: 2, yaw: -Math.PI / 2, radius: 1.5 },
     ],
   },
-  landing: { title: "精準降落", gates: [] },
+  landing: { title: "精準降落", airframes: ["quadrotor", "vtol"], gates: [] },
+  circuit: {
+    title: "巡航航線",
+    airframes: ["quadrotor", "fixedwing", "vtol"],
+    gates: [
+      { north: 100, east: 0, altitude: 30, yaw: 0, radius: 20 },
+      { north: 100, east: 120, altitude: 30, yaw: Math.PI / 2, radius: 20 },
+      { north: 0, east: 120, altitude: 30, yaw: Math.PI, radius: 20 },
+      { north: 0, east: 0, altitude: 30, yaw: -Math.PI / 2, radius: 20 },
+    ],
+  },
 };
 
-export function createTrainer(course = "free") {
-  if (!Object.hasOwn(TRAINING_COURSES, course))
-    throw new Error("Invalid training course");
+export function isCourseSupported(course, airframe) {
+  return (
+    Object.hasOwn(TRAINING_COURSES, course) &&
+    TRAINING_COURSES[course].airframes.includes(airframe)
+  );
+}
+
+export function createTrainer(course = "free", airframe = "quadrotor") {
+  if (!isCourseSupported(course, airframe))
+    throw new Error("Invalid or unsupported training course");
   const gates = TRAINING_COURSES[course].gates;
   let previous,
     start,
@@ -107,7 +129,7 @@ export function createTrainer(course = "free") {
             ? 1000 - distance * 100
             : 0;
       score = Math.max(0, Math.round(score - penalty));
-    } else if (course === "gates" && previous) {
+    } else if (gates.length && previous) {
       const gate = gates[passed];
       const normal = [Math.cos(gate.yaw), Math.sin(gate.yaw)];
       const planeDistance = (p) =>

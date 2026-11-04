@@ -502,3 +502,306 @@ test("new navigation/fault/obstacle/config inputs validate atomically, including
   assert.throws(() => sim.injectFault("link", { lost: 1 }));
   assert.deepEqual(sim.snapshot(), initial);
 });
+
+test("airframe presets validate and reject coerced enum/target object values atomically", () => {
+  for (const airframe of ["quadrotor", "fixedwing", "vtol"]) {
+    const sim = createSimulation({ airframe });
+    assert.equal(sim.snapshot().airframe, airframe);
+    assert.equal(sim.snapshot().motors.length, 4);
+    assert.equal(sim.snapshot().pwm.length, 4);
+  }
+  for (const airframe of [new String("fixedwing"), ["fixedwing"], "unknown"])
+    assert.throws(() => validateConfig({ airframe }));
+  assert.throws(
+    () =>
+      validateConfig({
+        airframe: "fixedwing",
+        mass: 20,
+        wingArea: 0.1,
+        cruiseAirspeed: 8,
+      }),
+    /trim/,
+  );
+  const sim = createSimulation(),
+    before = sim.snapshot();
+  for (const value of [
+    new Date(),
+    new Map(),
+    { airspeed: NaN },
+    { airspeed: 41 },
+  ])
+    assert.throws(() => sim.setTargets(value));
+  assert.deepEqual(sim.snapshot(), before);
+  assert.throws(() => sim.setTransition("cruise"), /VTOL/);
+});
+
+test("fixed wing sustains actual trimmed level flight with wing lift and pusher drag balance", () => {
+  const sim = createSimulation({ airframe: "fixedwing", geofenceRadius: 500 });
+  const s = advance(sim, 20);
+  near(s.flight.airspeedMps, 15, 0.05);
+  near(s.position[2], -30, 0.1);
+  assert.ok(s.position[0] > 290);
+  assert.ok(s.flight.liftN > 11.5 && s.flight.liftN < 12);
+  near(s.propulsion.thrustN, s.flight.dragN, 0.05);
+  assert.ok(s.motors.every((value) => value === 0));
+  assert.equal(s.flight.stalled, false);
+  assert.equal(s.flight.transition, "cruise");
+});
+
+test("fixed wing ailerons produce a coordinated banked turn rather than translating a quad model", () => {
+  const sim = createSimulation({ airframe: "fixedwing" });
+  sim.setTargets({ roll: 0.3 });
+  const s = advance(sim, 10);
+  near(s.attitude[0], 0.3, 0.01);
+  near(s.position[2], -30, 0.2);
+  assert.ok(s.attitude[2] > 1.5);
+  assert.ok(s.position[1] > 70);
+  assert.ok(Math.abs(s.flight.betaRad) < 0.03);
+  assert.ok(s.flight.liftN > 1.03 * 1.2 * 9.80665);
+  near(s.flight.airspeedMps, 15, 0.1);
+});
+
+test("low airspeed/high pitch causes real wing stall, lost altitude and ground impact", () => {
+  const sim = createSimulation({ airframe: "fixedwing" });
+  sim.setTargets({ airspeed: 3, pitch: 0.3 });
+  let stalled = false,
+    minLift = Infinity;
+  for (let i = 0; i < 10 * 200; i++) {
+    const s = sim.step();
+    if (s.flight.stalled) {
+      stalled = true;
+      minLift = Math.min(minLift, s.flight.liftN);
+    }
+  }
+  assert.ok(stalled);
+  assert.ok(minLift < 1.2 * 9.80665 * 0.8);
+  assert.ok(sim.snapshot().position[2] > -20);
+  const s = advance(sim, 8);
+  assert.equal(s.status, "crashed");
+  assert.equal(s.navigation.reason, "ground-impact");
+});
+
+test("fixed wing 60m square with one-second holds flies every leg and completes without capture-orbit deadlock", () => {
+  const sim = createSimulation({ airframe: "fixedwing" });
+  const waypoints = [
+    [60, 0],
+    [60, 60],
+    [0, 60],
+    [0, 0],
+  ].map(([north, east]) => ({ north, east, altitude: 30, hold: 1 }));
+  sim.setMission(waypoints);
+  sim.setMode("mission");
+  const closest = Array(4).fill(Infinity),
+    visited = new Set();
+  let done;
+  for (let i = 0; i < 90 * 200; i++) {
+    const s = sim.step();
+    visited.add(s.navigation.index);
+    waypoints.forEach(
+      (p, index) =>
+        (closest[index] = Math.min(
+          closest[index],
+          Math.hypot(s.position[0] - p.north, s.position[1] - p.east),
+        )),
+    );
+    assert.equal(s.flight.stalled, false);
+    if (s.navigation.completed) {
+      done = s;
+      break;
+    }
+  }
+  assert.ok(
+    done,
+    "square mission must finish rather than orbit an unreachable capture circle",
+  );
+  assert.deepEqual([...visited], [0, 1, 2, 3]);
+  assert.ok(closest.every((value) => value < 8));
+  assert.equal(done.status, "flying");
+  assert.ok(done.time < 60);
+  near(done.position[2], -30, 0.5);
+  assert.ok(
+    done.flight.airspeedMps > 8 && done.flight.airspeedMps < 11,
+    "short-leg planner selects a physically flyable safe speed",
+  );
+});
+
+test("fixed wing position and RTL remain wing-borne loiters instead of impossible hover/vertical landing", () => {
+  const sim = createSimulation({ airframe: "fixedwing" });
+  sim.setPositionTarget({ north: 70, east: 50, altitude: 35 });
+  sim.setMode("position");
+  let s = advance(sim, 50);
+  let radius = Math.hypot(s.position[0] - 70, s.position[1] - 50);
+  assert.ok(radius > 40 && radius < 70);
+  near(s.position[2], -35, 0.2);
+  assert.ok(s.flight.airspeedMps > 14);
+  sim.setMode("rtl");
+  s = advance(sim, 55);
+  radius = Math.hypot(...s.position.slice(0, 2));
+  assert.ok(radius > 40 && radius < 70);
+  assert.equal(s.navigation.completed, true);
+  assert.equal(s.navigation.mode, "rtl");
+  assert.equal(s.armed, true);
+  assert.equal(s.status, "flying");
+});
+
+test("fixed wing flies home runway entry, flare, touchdown and physical ground rollout", () => {
+  const sim = createSimulation({ airframe: "fixedwing" });
+  sim.setMode("land");
+  let touchdown,
+    sawFlare = false,
+    previous = sim.snapshot(),
+    last;
+  for (let i = 0; i < 140 * 200; i++) {
+    const s = sim.step();
+    assert.ok(
+      Math.hypot(...s.position.map((v, j) => v - previous.position[j])) < 0.2,
+      "no landing teleport",
+    );
+    if (s.position[2] < 0 && s.position[2] > -2 && s.velocity[2] > 0)
+      sawFlare = true;
+    if (s.position[2] === 0 && !touchdown) touchdown = s;
+    previous = s;
+    last = s;
+    if (!s.armed) break;
+  }
+  assert.ok(sawFlare && touchdown);
+  assert.ok(
+    Math.abs(touchdown.position[0]) < 10 && Math.abs(touchdown.position[1]) < 3,
+    "touchdown is near the home runway",
+  );
+  assert.ok(
+    Math.hypot(...touchdown.velocity.slice(0, 2)) > 5,
+    "wheels contact while still rolling",
+  );
+  assert.equal(last.status, "landed");
+  assert.equal(last.armed, false);
+  assert.equal(last.navigation.completed, true);
+  assert.ok(
+    last.position[0] > touchdown.position[0] + 10,
+    "rollout integrates actual forward motion",
+  );
+  assert.ok(Math.abs(last.position[0]) < 40);
+  const stopped = advance(sim, 2);
+  assert.equal(stopped.target.altitude, 0);
+  assert.equal(stopped.target.airspeed, 0);
+  assert.throws(() => sim.takeoff(), /runway takeoff/);
+});
+
+test("VTOL conversion transfers support from real lift rotors to wing and back, then lands", () => {
+  const sim = createSimulation({ airframe: "vtol" });
+  const initial = sim.snapshot();
+  sim.setTransition("hover");
+  assert.deepEqual(sim.snapshot(), initial);
+  assert.throws(() => sim.setTransition("cruise"), /8 meters/);
+  assert.deepEqual(sim.snapshot(), initial);
+  sim.setTargets({ altitude: 12 });
+  advance(sim, 12);
+  sim.setTransition("cruise");
+  let minimum = Infinity,
+    s;
+  for (let i = 0; i < 10 * 200; i++) {
+    s = sim.step();
+    minimum = Math.min(minimum, -s.position[2]);
+  }
+  assert.ok(minimum > 11.5);
+  assert.equal(s.flight.transitionPhase, "cruise");
+  assert.equal(s.flight.transitionProgress, 1);
+  assert.ok(s.flight.airspeedMps > 14);
+  assert.ok(s.flight.liftN > 1.2 * 9.80665 * 0.9);
+  assert.ok(s.motors.every((v) => v < 0.01));
+  sim.setTransition("hover");
+  s = advance(sim, 35);
+  assert.equal(s.flight.transitionPhase, "hover");
+  assert.equal(s.flight.transitionProgress, 0);
+  assert.ok(Math.hypot(...s.velocity) < 0.1);
+  assert.ok(s.motors.every((v) => v > 0.5));
+  near(s.position[2], -12, 0.2);
+  sim.setMode("land");
+  s = advance(sim, 35);
+  assert.equal(s.status, "landed");
+  assert.equal(s.armed, false);
+  assert.equal(s.target.altitude, 0);
+  assert.equal(s.target.airspeed, 0);
+});
+
+test("VTOL RTL from cruise decelerates, returns home under rotors, and lands", () => {
+  const sim = createSimulation({ airframe: "vtol" });
+  sim.setTargets({ altitude: 12 });
+  advance(sim, 12);
+  sim.setTransition("cruise");
+  advance(sim, 10);
+  assert.ok(sim.snapshot().position[0] > 100);
+  sim.setMode("rtl");
+  const s = advance(sim, 115);
+  assert.equal(s.status, "landed");
+  assert.equal(s.navigation.completed, true);
+  assert.equal(s.flight.transitionPhase, "hover");
+  assert.ok(Math.hypot(...s.position.slice(0, 2)) < 1);
+  assert.equal(s.armed, false);
+});
+
+test("pusher efficiency fault changes real propulsion force and fixed-wing flight energy", () => {
+  const normal = createSimulation({ airframe: "fixedwing" }),
+    faulted = createSimulation({ airframe: "fixedwing" });
+  faulted.injectFault("pusher", { efficiency: 0 });
+  const a = advance(normal, 5),
+    b = advance(faulted, 5);
+  near(b.propulsion.thrustN, 0);
+  assert.ok(b.flight.airspeedMps < a.flight.airspeedMps - 2);
+  assert.equal(b.faults.pusherEfficiency, 0);
+  faulted.clearFaults();
+  assert.equal(faulted.snapshot().faults.pusherEfficiency, 1);
+  assert.throws(
+    () => normal.injectFault("motor", { index: 0, efficiency: 0 }),
+    /no lift rotors/,
+  );
+});
+
+test("home runway approach corrects a three meter-per-second crosswind and completes rollout", () => {
+  const sim = createSimulation({
+    airframe: "fixedwing",
+    wind: 3,
+    windDirection: 90,
+  });
+  sim.setMode("land");
+  let touchdown, final;
+  for (let i = 0; i < 140 * 200; i++) {
+    const s = sim.step();
+    if (s.position[2] === 0 && !touchdown) touchdown = s;
+    final = s;
+    if (!s.armed) break;
+  }
+  assert.ok(touchdown);
+  assert.ok(
+    Math.abs(touchdown.position[1]) < 3,
+    "crosswind final aligns with the Northbound runway",
+  );
+  assert.ok(Math.abs(touchdown.position[0]) < 15);
+  assert.equal(final.status, "landed");
+  assert.equal(final.armed, false);
+  assert.ok(Math.abs(final.position[1]) < 3);
+  assert.ok(Math.hypot(...final.velocity) < 0.01);
+});
+
+test("gust then reset exactly matches a fresh simulation for all airframes, including wing trim velocity", () => {
+  for (const airframe of ["quadrotor", "fixedwing", "vtol"]) {
+    const config = {
+      airframe,
+      wind: 2,
+      windDirection: 35,
+      noise: 0.1,
+      turbulence: 0.2,
+      seed: 123,
+    };
+    const sim = createSimulation(config);
+    advance(sim, 0.1);
+    sim.gust();
+    assert.notDeepEqual(
+      sim.snapshot().wind,
+      createSimulation(config).snapshot().wind,
+    );
+    assert.deepEqual(sim.reset(), createSimulation(config).snapshot());
+    const fresh = createSimulation(config);
+    assert.deepEqual(sim.step(), fresh.step());
+  }
+});

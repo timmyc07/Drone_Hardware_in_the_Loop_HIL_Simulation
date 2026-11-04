@@ -1,4 +1,4 @@
-import { DEFAULT_CONFIG, validateConfig } from "./sim.js";
+import { DEFAULT_CONFIG, AIRFRAME_PRESETS, validateConfig } from "./sim.js";
 import { createScene } from "./scene.js";
 import {
   validateRecording,
@@ -8,7 +8,7 @@ import {
 import { readPilotInput } from "./input.js";
 import { createFlightApi } from "./api.js";
 import { DEFAULT_SENSOR_CONFIG, validateSensorConfig } from "./sensors.js";
-import { TRAINING_COURSES } from "./training.js";
+import { TRAINING_COURSES, isCourseSupported } from "./training.js";
 import { CAPABILITIES, SOURCES } from "./capabilities.js";
 
 const $ = (id) => document.getElementById(id);
@@ -138,10 +138,20 @@ function setPlaying(value) {
 
 const targets = [
   {
+    key: "airspeed",
+    label: "目標空速",
+    min: 0,
+    max: 40,
+    step: 0.5,
+    value: 0,
+    unit: "m/s",
+    factor: 1,
+  },
+  {
     key: "altitude",
     label: "目標高度",
     min: 0,
-    max: 20,
+    max: 100,
     step: 0.1,
     value: 2,
     unit: "m",
@@ -150,8 +160,8 @@ const targets = [
   {
     key: "roll",
     label: "滾轉 Roll",
-    min: -20,
-    max: 20,
+    min: -30,
+    max: 30,
     step: 1,
     value: 0,
     unit: "°",
@@ -160,8 +170,8 @@ const targets = [
   {
     key: "pitch",
     label: "俯仰 Pitch",
-    min: -20,
-    max: 20,
+    min: -30,
+    max: 30,
     step: 1,
     value: 0,
     unit: "°",
@@ -257,6 +267,17 @@ groups.push([
     ["criticalBatteryThreshold", "危急電量門檻", 0, 0.3, 0.01, 1],
   ],
 ]);
+groups.push([
+  "固定翼與巡航",
+  [
+    ["wingArea", "翼面積 (m²)", 0.1, 3, 0.01, 1],
+    ["wingSpan", "翼展 (m)", 0.5, 5, 0.1, 1],
+    ["wingChord", "平均翼弦 (m)", 0.1, 1, 0.01, 1],
+    ["maxPusherThrust", "巡航最大推力 (N)", 0.5, 80, 0.1, 1],
+    ["servoTau", "舵機時間常數 (ms)", 20, 500, 1, 1000],
+    ["cruiseAirspeed", "巡航空速 (m/s)", 8, 35, 0.5, 1],
+  ],
+]);
 const fields = groups.flatMap(([, list]) => list);
 $("settings-fields").innerHTML = groups
   .map(
@@ -265,6 +286,8 @@ $("settings-fields").innerHTML = groups
   )
   .join("");
 function populateConfig(values) {
+  $("config-airframe").value = values.airframe;
+  $("model-preset").disabled = values.airframe !== "quadrotor";
   for (const [key, , , , , factor] of fields)
     $(`config-${key}`).value = Number((values[key] * factor).toFixed(8));
   $("settings-error").textContent = "";
@@ -274,6 +297,10 @@ $("settings-open").onclick = () => {
   populateSensorConfig(sensorConfig);
   $("settings-dialog").showModal();
 };
+$("config-airframe").onchange = (event) => {
+  populateConfig(AIRFRAME_PRESETS[event.target.value]);
+  $("model-preset").value = "";
+};
 $("settings-default").onclick = () => {
   populateConfig(DEFAULT_CONFIG);
   populateSensorConfig(DEFAULT_SENSOR_CONFIG);
@@ -281,7 +308,12 @@ $("settings-default").onclick = () => {
 $("settings-form").onsubmit = async (event) => {
   event.preventDefault();
   try {
-    const next = { ...config };
+    const selectedAirframe = $("config-airframe").value;
+    const next =
+      selectedAirframe === config.airframe
+        ? { ...config }
+        : { ...AIRFRAME_PRESETS[selectedAirframe] };
+    next.airframe = selectedAirframe;
     for (const [key, , , , , factor] of fields)
       next[key] = Number($(`config-${key}`).value) / factor;
     const validated = validateConfig(next);
@@ -546,6 +578,8 @@ worker.onmessage = ({ data }) => {
   if (data.message === "reset") {
     config = data.config;
     scenario = data.scenario;
+    $("position-altitude").value =
+      config.airframe === "quadrotor" ? 3 : Math.min(30, config.geofenceHeight);
     exportedTime = 0;
     $("target-roll").disabled = scenario === "step";
     document.querySelector(".control-hint").textContent =
@@ -631,10 +665,54 @@ function updateTelemetry() {
   $("age-value").textContent = `${(s.metrics.sampleAge * 1000).toFixed(0)} ms`;
   $("drop-value").textContent = s.metrics.dropped.toLocaleString();
   $("samples-value").textContent = sampleCount.toLocaleString();
+  const kind = s.airframe;
+  const wing = kind !== "quadrotor";
+  $("airframe-eyebrow").textContent = {
+    quadrotor: "QUADROTOR",
+    fixedwing: "FIXED WING",
+    vtol: "LIFT+CRUISE VTOL",
+  }[kind];
+  $("airframe-status").textContent =
+    `機型：${{ quadrotor: "四旋翼", fixedwing: "固定翼", vtol: "升力加巡航 VTOL" }[kind] || "未知"}`;
+  const f = s.flight,
+    p = s.propulsion,
+    surfaces = s.controlSurfaces;
+  const phaseNames = {
+    hover: "懸停",
+    accelerating: "加速轉換",
+    cruise: "巡航",
+    decelerating: "減速轉換",
+  };
+  $("wing-telemetry").textContent = wing
+    ? `空速 ${f.airspeedMps.toFixed(1)} m/s · 地速 ${f.groundspeedMps.toFixed(1)} m/s · 攻角 ${(f.alphaRad * DEG).toFixed(1)}° · ${f.stalled ? "翼面失速" : "翼面未失速"} · 巡航槳 ${(p.motor * 100).toFixed(0)}% / ${p.thrustN.toFixed(1)} N · 副翼 / 升降舵 / 方向舵 ${[surfaces.aileron, surfaces.elevator, surfaces.rudder].map((x) => (x * DEG).toFixed(1)).join(" / ")}°${kind === "vtol" ? ` · 轉換 ${phaseNames[f.transitionPhase]} ${(f.transitionProgress * 100).toFixed(0)}%` : ""}`
+    : "空速與翼面狀態：不適用";
+  $("wing-hint").textContent =
+    kind === "fixedwing"
+      ? "固定翼由 30 m、15 m/s 空中配平開始；地面無跑道起飛，空中可復飛。位置及返航以盤旋保持，降落採固定航向進場，不能懸停。"
+      : kind === "vtol"
+        ? "VTOL 轉換進度表示控制分配；翼面升力持續計算。"
+        : "";
+  $("transition-controls").hidden = kind !== "vtol";
+  for (const id of ["transition-hover", "transition-cruise"])
+    $(id).disabled = !!replay || kind !== "vtol";
+  $("fault-motor").disabled = $("fault-apply").disabled =
+    !!replay || kind === "fixedwing";
+  $("fault-pusher").disabled = !!replay || !wing;
+  for (const option of $("training-select").options)
+    option.disabled = !isCourseSupported(option.value, kind);
+  document.querySelector('[data-command="takeoff"]').textContent =
+    kind === "fixedwing" ? "復飛" : "起飛";
+  document.querySelector('[data-scenario="hover"] strong').textContent =
+    kind === "fixedwing" ? "巡航基準" : "穩定懸停";
+  document.querySelector('[data-scenario="hover"] small').textContent =
+    kind === "fixedwing" ? "固定翼由空中配平狀態開始" : "維持高度與水平姿態";
+  $("flight-mode").querySelector('option[value="position"]').textContent =
+    kind === "fixedwing" ? "位置盤旋" : "位置";
+  $("target-airspeed").disabled = !!replay || !wing;
   const nav = s.navigation;
   const modeLabels = {
     attitude: "姿態",
-    position: "位置",
+    position: kind === "fixedwing" ? "位置盤旋" : "位置",
     mission: "任務",
     rtl: "返航",
     land: "降落",
@@ -653,12 +731,13 @@ function updateTelemetry() {
     "link-loss": "連線中斷",
     "stale-sensor": "感測資料逾時",
     "obstacle-collision": "撞上障礙物",
+    "ground-impact": "非正常觸地",
     rtl: "返航降落",
     crashed: "碰撞",
   };
   if (nav) $("flight-mode").value = nav.mode;
   $("flight-details").textContent = nav
-    ? `模式：${modeLabels[nav.mode] || "未知"} · 航點 ${Math.min(nav.index + 1, nav.waypoints?.length || 0)}/${nav.waypoints?.length || 0} · ${nav.fenceBreached ? "超出圍欄" : "圍欄內"} ${reasons[nav.reason] || ""} · ${s.armed ? "已解鎖" : "已上鎖"} · ${stateLabels[s.status] || "未知"}`
+    ? `模式：${modeLabels[nav.mode] || "未知"} · 航點 ${Math.min(nav.index + 1, nav.waypoints?.length || 0)}/${nav.waypoints?.length || 0}${nav.completed && nav.mode === "mission" ? "（任務完成）" : ""} · ${nav.fenceBreached ? "超出圍欄" : "圍欄內"} ${reasons[nav.reason] || ""} · ${s.armed ? "已解鎖" : "已上鎖"} · ${stateLabels[s.status] || "未知"}`
     : `狀態：${stateLabels[s.status] || "未知"}`;
   if (s.status === "crashed") {
     $("runtime-status").textContent = "碰撞停機";
@@ -669,12 +748,15 @@ function updateTelemetry() {
     ? `電池 ${(battery.soc * 100).toFixed(0)}% · ${battery.voltage.toFixed(1)} V · ${battery.current.toFixed(1)} A`
     : "電池：—";
   $("fault-details").textContent = s.faults
-    ? `故障：${s.faults.linkLost ? "連線中斷" : "連線正常"} · 馬達效率 ${s.faults.motorEfficiency.map((v) => `${Math.round(v * 100)}%`).join(" / ")}`
+    ? `故障：${s.faults.linkLost ? "連線中斷" : "連線正常"} · 馬達效率 ${s.faults.motorEfficiency.map((v) => `${Math.round(v * 100)}%`).join(" / ")}${wing ? ` · 巡航推進效率 ${Math.round(s.faults.pusherEfficiency * 100)}%` : ""}`
     : "故障：—";
   const training = s.training;
-  $("training-status").textContent = training
-    ? `${TRAINING_COURSES[training.course]?.title || training.course} · ${training.elapsed.toFixed(1)} 秒 · 通過 ${training.passed}/${training.total} · 分數 ${training.score} ${training.complete ? "· 完成" : ""} ${reasons[training.reason] || ""}`
-    : "尚未開始";
+  $("training-status").textContent =
+    training && !isCourseSupported(training.course, kind)
+      ? "此練習不適用目前機型，請選擇其他練習。"
+      : training
+        ? `${TRAINING_COURSES[training.course]?.title || training.course} · ${training.elapsed.toFixed(1)} 秒 · 通過 ${training.passed}/${training.total} · 分數 ${training.score} ${training.complete ? "· 完成" : ""} ${reasons[training.reason] || ""}`
+        : "尚未開始";
   if (s.status === "failsafe") {
     $("runtime-status").textContent = "斷訊保護";
     $("view-status").innerHTML =
@@ -785,16 +867,31 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-const squareMission = () =>
-  [
-    [8, 0],
-    [8, 8],
-    [0, 8],
+const mapExtent = () =>
+  Math.min(
+    500,
+    Math.max(1, config.geofenceRadius),
+    config.airframe === "quadrotor" ? 50 : 500,
+  );
+const squareMission = () => {
+  const wing = config.airframe !== "quadrotor";
+  const side = wing
+    ? Math.min(60, (config.geofenceRadius / Math.SQRT2) * 0.9)
+    : 8;
+  const altitude = wing ? Math.min(30, config.geofenceHeight) : 3;
+  return [
+    [side, 0],
+    [side, side],
+    [0, side],
     [0, 0],
-  ].map(([north, east]) => ({ north, east, altitude: 3, hold: 1 }));
+  ].map(([north, east]) => ({ north, east, altitude, hold: 1 }));
+};
 let waypoints = squareMission();
 const map = $("mission-map");
 function drawMission() {
+  const extent = mapExtent();
+  $("map-extent").textContent =
+    `座標範圍 ±${extent.toFixed(0)} m；實際航點須在圍欄內。`;
   const ctx = map.getContext("2d"),
     w = map.width,
     h = map.height;
@@ -817,15 +914,15 @@ function drawMission() {
   ctx.lineWidth = 2;
   ctx.beginPath();
   waypoints.forEach((p, i) => {
-    const x = ((p.east + 50) / 100) * w,
-      y = ((50 - p.north) / 100) * h;
+    const x = ((p.east + extent) / (2 * extent)) * w,
+      y = ((extent - p.north) / (2 * extent)) * h;
     if (i) ctx.lineTo(x, y);
     else ctx.moveTo(x, y);
   });
   ctx.stroke();
   waypoints.forEach((p, i) => {
-    const x = ((p.east + 50) / 100) * w,
-      y = ((50 - p.north) / 100) * h;
+    const x = ((p.east + extent) / (2 * extent)) * w,
+      y = ((extent - p.north) / (2 * extent)) * h;
     ctx.beginPath();
     ctx.arc(x, y, 5, 0, Math.PI * 2);
     ctx.fill();
@@ -843,8 +940,8 @@ function renderWaypoints() {
     title.textContent = `${index + 1}`;
     row.append(title);
     for (const [key, label, min, max] of [
-      ["north", "北", -50, 50],
-      ["east", "東", -50, 50],
+      ["north", "北", -mapExtent(), mapExtent()],
+      ["east", "東", -mapExtent(), mapExtent()],
       ["altitude", "高度", 0, 100],
       ["hold", "停留秒", 0, 60],
     ]) {
@@ -888,9 +985,13 @@ map.onclick = (event) => {
   const rect = map.getBoundingClientRect();
   waypoints.push({
     north:
-      Math.round((0.5 - (event.clientY - rect.top) / rect.height) * 1000) / 10,
+      Math.round(
+        (0.5 - (event.clientY - rect.top) / rect.height) * 2 * mapExtent() * 10,
+      ) / 10,
     east:
-      Math.round(((event.clientX - rect.left) / rect.width - 0.5) * 1000) / 10,
+      Math.round(
+        ((event.clientX - rect.left) / rect.width - 0.5) * 2 * mapExtent() * 10,
+      ) / 10,
     altitude: Number($("position-altitude").value),
     hold: 1,
   });
@@ -994,6 +1095,15 @@ $("fault-apply").onclick = () =>
       efficiency: Number($("fault-efficiency").value),
     },
   });
+$("fault-pusher").onclick = () =>
+  worker.postMessage({
+    type: "fault",
+    fault: "pusher",
+    value: { efficiency: Number($("fault-efficiency").value) },
+  });
+for (const mode of ["hover", "cruise"])
+  $(`transition-${mode}`).onclick = () =>
+    worker.postMessage({ type: "transition", value: mode });
 $("fault-link").onclick = () =>
   worker.postMessage({ type: "fault", fault: "link", value: { lost: true } });
 $("fault-clear").onclick = () => worker.postMessage({ type: "clearFaults" });
@@ -1180,6 +1290,7 @@ function updatePilot(now) {
   worker.postMessage({ type: "targets", value });
   pilotWasActive = true;
   for (const t of targets) {
+    if (!Object.hasOwn(value, t.key)) continue;
     const display = value[t.key] * t.factor;
     $(`target-${t.key}`).value = display;
     $(`output-${t.key}`).textContent = `${display.toFixed(1)} ${t.unit}`;
@@ -1188,7 +1299,7 @@ function updatePilot(now) {
 function setReplayControls(disabled) {
   document
     .querySelectorAll(
-      "#mission-workspace button:not(#mission-export), #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #sensor-export-csv, #flight-mode, [data-command], [data-mode], #position-apply, #fault-apply, #fault-link, #fault-clear, #pilot-enable",
+      "#mission-workspace button:not(#mission-export), #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #sensor-export-csv, #flight-mode, [data-command], [data-mode], #position-apply, #fault-apply, #fault-link, #fault-clear, #fault-pusher, #transition-hover, #transition-cruise, #pilot-enable",
     )
     .forEach((element) => {
       element.disabled = disabled;

@@ -108,7 +108,7 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   const record = validateRecording(exported.recording);
   assert.equal(record.config.seed, 18);
   assert.equal(record.scenario, "step");
-  assert.equal(record.version, 3);
+  assert.equal(record.version, 4);
   assert.equal(record.sensorFrames.length, record.samples.length);
   assert.equal(record.sensorFrames[0].time, record.samples[0].time);
   assert.equal(record.setup.sensors.gpsNoiseM, 1.5);
@@ -165,6 +165,63 @@ test("worker runs, pauses, records simulation-time samples and exports validated
   assert.equal(reset.snapshot.navigation.mode, "attitude");
   assert.equal(reset.snapshot.navigation.waypoints.length, 0);
   assert.equal(reset.setup.environment.preset, "field");
+  let requestSerial = 100;
+  const call = async (command) => {
+    const requestId = ++requestSerial;
+    const response = next(
+      (d) => d.type === "apiReply" && d.requestId === requestId,
+    );
+    worker.postMessage({ ...command, requestId });
+    return response;
+  };
+  const wing = await call({
+    type: "reset",
+    config: { airframe: "fixedwing", geofenceRadius: 300 },
+  });
+  assert.equal(wing.ok, true);
+  assert.equal(wing.value.snapshot.airframe, "fixedwing");
+  assert.equal(wing.value.setup.training, "free");
+  assert.ok(wing.value.snapshot.flight.airspeedMps > 10);
+  assert.equal(
+    (await call({ type: "targets", value: { airspeed: 16 } })).value.snapshot
+      .target.airspeed,
+    16,
+  );
+  assert.equal((await call({ type: "transition", value: "cruise" })).ok, false);
+  const failedPusher = await call({
+    type: "fault",
+    fault: "pusher",
+    value: { efficiency: 0 },
+  });
+  assert.equal(failedPusher.ok, true);
+  assert.equal(failedPusher.value.snapshot.faults.pusherEfficiency, 0);
+  const wingRecord = validateRecording(
+    (await call({ type: "apiExport" })).value,
+  );
+  assert.equal(wingRecord.samples[0].airframe, "fixedwing");
+  assert.ok(wingRecord.events.some((e) => e.fault === "pusher"));
+  const vtol = await call({
+    type: "reset",
+    config: { airframe: "vtol", geofenceRadius: 300 },
+  });
+  assert.equal(vtol.ok, true);
+  assert.equal(vtol.value.snapshot.flight.transition, "hover");
+  assert.equal((await call({ type: "transition", value: "cruise" })).ok, false);
+  await call({ type: "targets", value: { altitude: 12 } });
+  await call({ type: "speed", value: 4 });
+  const atTransitionHeight = next(
+    (d) => d.type === "state" && -d.snapshot.position[2] >= 9,
+  );
+  await call({ type: "play" });
+  await atTransitionHeight;
+  await call({ type: "pause" });
+  const transition = await call({ type: "transition", value: "cruise" });
+  assert.equal(transition.ok, true);
+  const vtolRecord = validateRecording(
+    (await call({ type: "apiExport" })).value,
+  );
+  assert.equal(vtolRecord.samples[0].airframe, "vtol");
+  assert.equal(vtolRecord.events.at(-1).type, "transition");
 });
 
 test(
@@ -186,14 +243,28 @@ test(
       { eval: true, type: "module" },
     );
     t.after(() => worker.terminate());
+    let configured = false;
     const finished = new Promise((resolve, reject) => {
       worker.on("error", reject);
       worker.on("message", (data) => {
         if (data.message === "reset") {
+          if (!configured) {
+            configured = true;
+            // Keep payload small so this exercises the time limit rather than the separate data cap.
+            worker.postMessage({
+              type: "reset",
+              setup: { sensors: { lidarRays: 12, dropout: 1 } },
+            });
+            return;
+          }
           worker.postMessage({ type: "speed", value: 4 });
           worker.postMessage({ type: "play" });
         }
         if (data.message === "limit") resolve(data);
+        if (data.message === "storage-limit")
+          reject(
+            new Error("Time-limit fixture reached storage capacity first"),
+          );
       });
     });
     const state = await finished;
@@ -201,5 +272,79 @@ test(
     assert.ok(Math.abs(state.snapshot.time - 1800) < 1e-7);
     assert.equal(state.sampleCount, 36001);
     assert.equal(state.snapshot.metrics.steps, 360000);
+  },
+);
+
+test(
+  "dense scans stop at the data limit and still export the final state",
+  { timeout: 20000 },
+  async (t) => {
+    const url = new URL("../worker.js", import.meta.url).href;
+    const worker = new Worker(
+      `
+    import {parentPort} from 'node:worker_threads';
+    let now=0;
+    globalThis.performance={now:()=>now};
+    globalThis.setTimeout=fn=>setImmediate(()=>{now+=100;fn();});
+    globalThis.postMessage=data=>parentPort.postMessage(data);
+    globalThis.onmessage=null;
+    parentPort.on('message',data=>globalThis.onmessage({data}));
+    await import(${JSON.stringify(url)});
+  `,
+      { eval: true, type: "module" },
+    );
+    t.after(() => worker.terminate());
+    let configured = false;
+    const finished = new Promise((resolve, reject) => {
+      worker.on("error", reject);
+      worker.on("message", (data) => {
+        if (data.type === "error") reject(new Error(data.message));
+        if (data.message === "reset") {
+          if (!configured) {
+            configured = true;
+            worker.postMessage({
+              type: "reset",
+              setup: {
+                sensors: { lidarRays: 180 },
+                obstacles: [
+                  { north: 4, east: 0, width: 0.1, depth: 12, height: 6 },
+                  { north: -4, east: 0, width: 0.1, depth: 12, height: 6 },
+                  { north: 0, east: 4, width: 12, depth: 0.1, height: 6 },
+                  { north: 0, east: -4, width: 12, depth: 0.1, height: 6 },
+                ],
+              },
+            });
+          } else {
+            worker.postMessage({ type: "speed", value: 4 });
+            worker.postMessage({ type: "play" });
+          }
+        }
+        if (data.message === "storage-limit") resolve(data);
+      });
+    });
+    const stopped = await finished;
+    assert.equal(stopped.running, false);
+    assert.equal(stopped.storageLimited, true);
+    assert.ok(stopped.snapshot.time > 0 && stopped.snapshot.time < 1800);
+    const call = (command) =>
+      new Promise((resolve) => {
+        const receive = (data) => {
+          if (
+            data.type === "apiReply" &&
+            data.requestId === command.requestId
+          ) {
+            worker.off("message", receive);
+            resolve(data);
+          }
+        };
+        worker.on("message", receive);
+        worker.postMessage(command);
+      });
+    assert.equal((await call({ type: "play", requestId: 1 })).ok, false);
+    const exported = await call({ type: "apiExport", requestId: 2 });
+    const record = validateRecording(exported.value);
+    assert.equal(record.samples.at(-1).time, stopped.snapshot.time);
+    assert.equal(record.sensorFrames.at(-1).time, stopped.snapshot.time);
+    assert.equal(record.samples.length, stopped.sampleCount);
   },
 );

@@ -79,3 +79,29 @@ test("free flight never completes or scores", () => {
   assert.equal(result.score, 0);
   assert.equal(result.complete, false);
 });
+
+test("course compatibility rejects unknown and unsuitable aircraft", async () => {
+  const { isCourseSupported } = await import("../training.js");
+  assert.equal(isCourseSupported("circuit", "fixedwing"), true);
+  assert.equal(isCourseSupported("hover", "fixedwing"), false);
+  assert.equal(isCourseSupported("free", "vtol"), true);
+  assert.equal(isCourseSupported("unknown", "vtol"), false);
+  assert.equal(isCourseSupported("circuit", "unknown"), false);
+  assert.throws(() => createTrainer("hover", "fixedwing"));
+  assert.throws(() => createTrainer("free", "unknown"));
+});
+
+test("circuit uses ordered positive plane crossings with interpolated positions", () => {
+  const t = createTrainer("circuit", "fixedwing");
+  t.update(sample(0, [110, 0, -30]));
+  assert.equal(t.update(sample(1, [90, 0, -30])).passed, 0);
+  assert.equal(t.update(sample(2, [110, 50, -30])).misses, 1);
+  t.update(sample(3, [80, 0, -30]));
+  assert.equal(t.update(sample(4, [120, 0, -30])).passed, 1);
+  t.update(sample(5, [100, 100, -30]));
+  assert.equal(t.update(sample(6, [100, 140, -30])).passed, 2);
+  t.update(sample(7, [20, 120, -30]));
+  assert.equal(t.update(sample(8, [-20, 120, -30])).passed, 3);
+  t.update(sample(9, [0, 20, -30]));
+  assert.equal(t.update(sample(10, [0, -20, -30])).complete, true);
+});

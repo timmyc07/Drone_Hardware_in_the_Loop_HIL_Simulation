@@ -5,16 +5,16 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 export function createScene(container) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color("#101c2d");
-  scene.fog = new THREE.Fog("#101c2d", 20, 65);
-  const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 150);
+  scene.fog = new THREE.Fog("#101c2d", 600, 1200);
+  const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 2000);
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.domElement.setAttribute("aria-label", "Quadrotor flight simulation");
+  renderer.domElement.setAttribute("aria-label", "Drone flight simulation");
   container.appendChild(renderer.domElement);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
-  controls.maxDistance = 35;
+  controls.maxDistance = 700;
   controls.minDistance = 1.5;
   controls.maxPolarAngle = Math.PI / 2 - 0.02;
 
@@ -25,7 +25,7 @@ export function createScene(container) {
   const fill = new THREE.DirectionalLight(0x64dce2, 1.3);
   fill.position.set(-6, 4, -5);
   scene.add(fill);
-  const grid = new THREE.GridHelper(60, 120, 0x35566b, 0x233c50);
+  const grid = new THREE.GridHelper(1200, 240, 0x35566b, 0x233c50);
   grid.material.transparent = true;
   grid.material.opacity = 0.48;
   scene.add(grid);
@@ -56,10 +56,12 @@ export function createScene(container) {
     parent.add(mesh);
     return mesh;
   };
-  box(drone, [0.29, 0.085, 0.34], [0, 0, 0], dark);
-  box(drone, [0.23, 0.055, 0.27], [0, 0.065, 0], shell);
-  box(drone, [0.12, 0.012, 0.16], [0, 0.1, -0.015], black);
-  box(drone, [0.1, 0.015, 0.025], [0, 0.11, -0.06], teal);
+  const quad = new THREE.Group();
+  drone.add(quad);
+  box(quad, [0.29, 0.085, 0.34], [0, 0, 0], dark);
+  box(quad, [0.23, 0.055, 0.27], [0, 0.065, 0], shell);
+  box(quad, [0.12, 0.012, 0.16], [0, 0.1, -0.015], black);
+  box(quad, [0.1, 0.015, 0.025], [0, 0.11, -0.06], teal);
   const rotors = [];
   const arm = 0.23;
   for (const [x, z] of [
@@ -69,31 +71,81 @@ export function createScene(container) {
     [-arm, -arm],
   ]) {
     const beam = box(
-      drone,
+      quad,
       [0.075, 0.045, Math.hypot(x, z)],
       [x / 2, 0, z / 2],
       shell,
     );
     beam.rotation.y = Math.atan2(x, z);
-    cylinder(drone, 0.047, 0.045, [x, 0.033, z], dark);
-    cylinder(drone, 0.036, 0.015, [x, 0.063, z], x > 0 ? teal : orange);
+    cylinder(quad, 0.047, 0.045, [x, 0.033, z], dark);
+    cylinder(quad, 0.036, 0.015, [x, 0.063, z], x > 0 ? teal : orange);
     const rotor = new THREE.Group();
     rotor.position.set(x, 0.079, z);
     box(rotor, [0.028, 0.008, 0.31], [0, 0, 0], rotorMaterial);
     cylinder(rotor, 0.017, 0.014, [0, 0.006, 0], black);
-    drone.add(rotor);
+    quad.add(rotor);
     rotors.push(rotor);
   }
   for (const x of [-0.12, 0.12]) {
-    box(drone, [0.022, 0.15, 0.022], [x, -0.095, 0.09], dark).rotation.z =
+    box(quad, [0.022, 0.15, 0.022], [x, -0.095, 0.09], dark).rotation.z =
       x > 0 ? -0.15 : 0.15;
-    box(drone, [0.022, 0.15, 0.022], [x, -0.095, -0.09], dark).rotation.z =
+    box(quad, [0.022, 0.15, 0.022], [x, -0.095, -0.09], dark).rotation.z =
       x > 0 ? -0.15 : 0.15;
-    box(drone, [0.035, 0.022, 0.29], [x * 1.1, -0.17, 0], black);
+    box(quad, [0.035, 0.022, 0.29], [x * 1.1, -0.17, 0], black);
   }
-  box(drone, [0.105, 0.075, 0.06], [0, -0.025, -0.2], black);
-  const lens = cylinder(drone, 0.027, 0.015, [0, -0.025, -0.237], teal);
+  box(quad, [0.105, 0.075, 0.06], [0, -0.025, -0.2], black);
+  const lens = cylinder(quad, 0.027, 0.015, [0, -0.025, -0.237], teal);
   lens.rotation.x = Math.PI / 2;
+
+  function winged(liftRotors) {
+    const aircraft = new THREE.Group();
+    box(aircraft, [0.25, 0.19, 1.25], [0, 0, 0], shell);
+    box(aircraft, [0.18, 0.1, 0.28], [0, 0.13, -0.25], black);
+    box(aircraft, [2.2, 0.065, 0.35], [0, 0.02, -0.02], shell);
+    box(aircraft, [2.05, 0.015, 0.04], [0, 0.06, -0.19], teal);
+    box(aircraft, [0.8, 0.04, 0.22], [0, 0.08, 0.53], shell);
+    box(aircraft, [0.045, 0.25, 0.25], [0, 0.21, 0.5], shell);
+    const nose = cylinder(aircraft, 0.06, 0.11, [0, 0, -0.66], dark);
+    nose.rotation.x = Math.PI / 2;
+    const propeller = new THREE.Group();
+    propeller.position.z = -0.73;
+    box(propeller, [0.025, 0.52, 0.015], [0, 0, 0], rotorMaterial);
+    aircraft.add(propeller);
+    const ailerons = [-0.7, 0.7].map((x) =>
+      box(aircraft, [0.65, 0.025, 0.11], [x, 0.02, 0.2], dark),
+    );
+    const elevator = box(aircraft, [0.65, 0.025, 0.08], [0, 0.08, 0.68], dark);
+    const rudder = box(aircraft, [0.03, 0.17, 0.08], [0, 0.23, 0.65], dark);
+    const lift = [];
+    if (liftRotors) {
+      for (const x of [-0.65, 0.65]) {
+        box(aircraft, [0.07, 0.06, 0.86], [x, 0.03, 0], dark);
+        for (const z of [-0.36, 0.36]) {
+          cylinder(aircraft, 0.06, 0.06, [x, 0.09, z], dark);
+          const rotor = new THREE.Group();
+          rotor.position.set(x, 0.13, z);
+          box(rotor, [0.035, 0.012, 0.48], [0, 0, 0], rotorMaterial);
+          aircraft.add(rotor);
+          lift.push({
+            rotor,
+            motorIndex: x > 0 ? (z < 0 ? 0 : 1) : z < 0 ? 3 : 2,
+          });
+          cylinder(aircraft, 0.025, 0.02, [x, 0.14, z], orange);
+        }
+      }
+    }
+    aircraft.visible = false;
+    drone.add(aircraft);
+    return { aircraft, propeller, ailerons, elevator, rudder, lift };
+  }
+  const fixedwing = winged(false);
+  const vtol = winged(true);
+  const airframes = {
+    quadrotor: quad,
+    fixedwing: fixedwing.aircraft,
+    vtol: vtol.aircraft,
+  };
+  let airframe = "quadrotor";
 
   const ringMaterial = new THREE.MeshBasicMaterial({
     color: 0x5edbd5,
@@ -197,7 +249,7 @@ export function createScene(container) {
       preset === "field" ? 0x799cab : 0x253c50,
     ).multiplyScalar(0.28 + daylight * 0.72);
     scene.background = sky;
-    scene.fog = new THREE.Fog(sky, 20 - fog * 17, 65 - fog * 48);
+    scene.fog = new THREE.Fog(sky, 600 - fog * 580, 1200 - fog * 1100);
     key.intensity = 0.5 + daylight * 2.3;
     fill.intensity = 0.7 + (1 - daylight) * 0.9;
     if (preset === "field") {
@@ -343,8 +395,10 @@ export function createScene(container) {
       .copy(target)
       .add(
         mode === "top"
-          ? new THREE.Vector3(0.001, 8, 0)
-          : new THREE.Vector3(3, 2, 4),
+          ? new THREE.Vector3(0.001, airframe === "quadrotor" ? 8 : 15, 0)
+          : new THREE.Vector3(3, 2, 4).multiplyScalar(
+              airframe === "quadrotor" ? 1 : 2,
+            ),
       );
     controls.update();
   }
@@ -362,6 +416,15 @@ export function createScene(container) {
   resize();
   return {
     update(snapshot, wallDt) {
+      const nextAirframe = Object.hasOwn(airframes, snapshot.airframe)
+        ? snapshot.airframe
+        : "quadrotor";
+      if (nextAirframe !== airframe) {
+        airframes[airframe].visible = false;
+        airframe = nextAirframe;
+        airframes[airframe].visible = true;
+        if (mode === "follow") resetView();
+      }
       const [north, east, down] = snapshot.position;
       const [w, x, y, z] = snapshot.quaternion;
       target.set(east, -down, -north);
@@ -388,6 +451,25 @@ export function createScene(container) {
           Math.max(0, wallDt) *
           90;
       });
+      if (airframe !== "quadrotor") {
+        const model = airframe === "fixedwing" ? fixedwing : vtol;
+        model.propeller.rotation.z +=
+          (snapshot.propulsion?.motor || 0) * Math.max(0, wallDt) * 90;
+        const surfaces = snapshot.controlSurfaces;
+        if (surfaces) {
+          model.ailerons[0].rotation.x = surfaces.aileron;
+          model.ailerons[1].rotation.x = -surfaces.aileron;
+          model.elevator.rotation.x = surfaces.elevator;
+          model.rudder.rotation.y = surfaces.rudder;
+        }
+        model.lift.forEach(({ rotor, motorIndex }) => {
+          rotor.rotation.y +=
+            (motorIndex % 2 ? -1 : 1) *
+            (snapshot.motors[motorIndex] || 0) *
+            Math.max(0, wallDt) *
+            90;
+        });
+      }
       if (mode === "follow") {
         const delta = target.clone().sub(previousTarget);
         camera.position.add(delta);

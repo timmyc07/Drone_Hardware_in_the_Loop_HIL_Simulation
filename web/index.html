@@ -6,9 +6,9 @@
     <meta name="theme-color" content="#0a121e" />
     <meta
       name="description"
-      content="在瀏覽器探索四旋翼動力學、姿態控制與擾動響應。獨立數值模擬、3D 視覺化與可匯出的實驗紀錄。"
+      content="在瀏覽器探索無人機動力學、姿態控制與擾動響應。獨立數值模擬、3D 視覺化與可匯出的實驗紀錄。"
     />
-    <title>Flight Lab｜四旋翼網頁模擬器</title>
+    <title>Flight Lab｜無人機網頁模擬器</title>
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%23101c2d'/%3E%3Cpath d='M10 10L30 30M10 30L30 10' stroke='%2369e2cd' stroke-width='4'/%3E%3Ccircle cx='20' cy='20' r='5' fill='%2369e2cd'/%3E%3C/svg%3E"
@@ -35,9 +35,10 @@
       <div class="page-heading">
         <div>
           <div class="eyebrow">
-            EXPERIMENT / 001 <span class="eyebrow-line"></span> QUADROTOR
+            EXPERIMENT / 001 <span class="eyebrow-line"></span>
+            <span id="airframe-eyebrow">QUADROTOR</span>
           </div>
-          <h1>四旋翼模擬工作台<span class="heading-dot">.</span></h1>
+          <h1>無人機模擬工作台<span class="heading-dot">.</span></h1>
           <p>從控制指令到飛行響應，每一個變化都看得見。</p>
         </div>
         <div class="heading-actions">
@@ -66,7 +67,11 @@
       </nav>
       <section id="mission-workspace" class="panel workspace-extra" hidden>
         <h2>任務規劃 <span>MISSION PLANNER</span></h2>
-        <p>點選地圖新增航點；北方朝上，東方朝右。座標範圍 ±50 m。</p>
+        <p>
+          點選地圖新增航點；北方朝上，東方朝右。<span id="map-extent"
+            >座標範圍 ±50 m。</span
+          >
+        </p>
         <canvas
           id="mission-map"
           width="500"
@@ -94,6 +99,7 @@
             <option value="hover">懸停</option>
             <option value="gates">穿越訓練門</option>
             <option value="landing">降落</option>
+            <option value="circuit">巡航航線</option>
           </select></label
         >
         <p id="training-status">尚未開始</p>
@@ -329,12 +335,13 @@
             </section>
             <section class="panel motor-panel">
               <div class="panel-heading">
-                <h2>馬達輸出 <span>ACTUATORS</span></h2>
+                <h2>升力旋翼 <span>ACTUATORS</span></h2>
                 <span class="tag">模擬值</span>
               </div>
               <div id="motor-bars" class="motor-bars"></div>
               <div class="motor-note">
-                <span class="dot"></span>PWM 為模型換算值，未連接實體飛控
+                <span class="dot"></span>固定翼不使用升力旋翼；PWM
+                為模型換算值，未連接實體飛控
               </div>
             </section>
           </div>
@@ -388,7 +395,15 @@
                   step="0.5" /></label
               ><button id="position-apply">設定位置</button>
             </div>
+            <p id="airframe-status">機型：等待狀態</p>
             <p id="flight-details">等待狀態</p>
+            <p id="wing-telemetry">空速與翼面狀態：—</p>
+            <p id="wing-hint"></p>
+            <div id="transition-controls" class="feature-actions" hidden>
+              <button id="transition-hover">切換懸停</button
+              ><button id="transition-cruise">切換巡航</button
+              ><span>切換巡航前請先升至 8 m 以上；不會自動升高。</span>
+            </div>
             <p id="battery-details">電池：—</p>
             <p id="fault-details">故障：—</p>
             <label
@@ -414,6 +429,7 @@
                   step="0.1"
                   value="0.5" /></label
               ><button id="fault-apply">設定馬達故障</button
+              ><button id="fault-pusher">設定巡航推進故障</button
               ><button id="fault-link">模擬斷訊</button
               ><button id="fault-clear">清除故障</button>
             </div>
@@ -550,6 +566,17 @@
           </select></label
         >
         <p>預設值為通用假設，並非品牌實機校準。</p>
+        <label
+          >機型
+          <select id="config-airframe">
+            <option value="quadrotor">四旋翼</option>
+            <option value="fixedwing">固定翼</option>
+            <option value="vtol">升力加巡航 VTOL</option>
+          </select></label
+        >
+        <p>
+          切換機型會載入該機型預設參數並重設實驗；固定翼從 30 m 空中配平開始。
+        </p>
         <div id="settings-fields"></div>
         <section class="settings-group">
           <h3>虛擬感測器</h3>
@@ -585,7 +612,7 @@
         <li>從「實驗紀錄」匯出 CSV 分析，或匯出 JSON 後再次匯入重播。</li>
       </ol>
       <p>
-        姿態指令會造成水平移動；位置與任務模式使用簡化控制。控制器使用理想化姿態觀測；虛擬
+        姿態指令會造成水平移動；位置與任務模式使用簡化控制。固定翼無法懸停，其位置與返航模式以盤旋保持，降落採固定航向進場。控制器使用理想化姿態觀測；虛擬
         IMU
         的雜訊是每次取樣的標準差倍率，尚未對應真實感測器。切到背景分頁會自動暫停，避免隱藏節流被誤認為實時結果。
       </p>

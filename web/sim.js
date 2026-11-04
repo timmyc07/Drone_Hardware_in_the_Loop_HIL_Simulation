@@ -1,6 +1,19 @@
+import {
+  aerodynamicForces,
+  wingTrim,
+  stallSpeed,
+  WING,
+} from "./aerodynamics.js";
 // SI units; NED world, FRD body; scalar-first quaternion rotates body into world.
 // Equations/conventions: https://github.com/bobzwik/Quadcopter_SimCon
 export const DEFAULT_CONFIG = Object.freeze({
+  airframe: "quadrotor",
+  wingArea: 0.4,
+  wingSpan: 1.6,
+  wingChord: 0.25,
+  maxPusherThrust: 8,
+  servoTau: 0.06,
+  cruiseAirspeed: 15,
   mass: 1.2,
   arm: 0.23,
   motorTau: 0.04,
@@ -29,7 +42,26 @@ export const DEFAULT_CONFIG = Object.freeze({
   lowBatteryThreshold: 0.2,
   criticalBatteryThreshold: 0.07,
 });
+export const AIRFRAME_PRESETS = Object.freeze({
+  quadrotor: DEFAULT_CONFIG,
+  fixedwing: Object.freeze({
+    ...DEFAULT_CONFIG,
+    airframe: "fixedwing",
+    geofenceRadius: 500,
+  }),
+  vtol: Object.freeze({
+    ...DEFAULT_CONFIG,
+    airframe: "vtol",
+    geofenceRadius: 300,
+  }),
+});
 const bounds = {
+  wingArea: [0.1, 3],
+  wingSpan: [0.5, 5],
+  wingChord: [0.1, 1],
+  maxPusherThrust: [0.5, 80],
+  servoTau: [0.02, 0.5],
+  cruiseAirspeed: [8, 35],
   mass: [0.1, 20],
   arm: [0.05, 2],
   motorTau: [0.01, 1],
@@ -59,19 +91,35 @@ const bounds = {
   criticalBatteryThreshold: [0, 0.3],
 };
 export function validateConfig(config = {}) {
-  if (!config || typeof config !== "object" || Array.isArray(config))
+  if (
+    !config ||
+    typeof config !== "object" ||
+    Array.isArray(config) ||
+    ![Object.prototype, null].includes(Object.getPrototypeOf(config))
+  )
     throw new Error("Configuration must be an object");
   for (const [key, value] of Object.entries(config)) {
+    if (key === "airframe") {
+      if (typeof value !== "string" || !Object.hasOwn(AIRFRAME_PRESETS, value))
+        throw new Error("Unknown airframe");
+      continue;
+    }
     if (!Object.hasOwn(bounds, key))
       throw new Error(`Unknown configuration: ${key}`);
     const [min, max] = bounds[key];
     if (!Number.isFinite(value) || value < min || value > max)
       throw new Error(`${key} must be finite and between ${min} and ${max}`);
   }
-  const result = { ...DEFAULT_CONFIG, ...config };
+  const result = {
+    ...AIRFRAME_PRESETS[config.airframe ?? "quadrotor"],
+    ...config,
+  };
   if (!Number.isInteger(result.seed))
     throw new Error("seed must be an integer");
-  if (result.maxMotorThrust * 4 <= result.mass * 9.80665)
+  if (
+    result.airframe !== "fixedwing" &&
+    result.maxMotorThrust * 4 <= result.mass * 9.80665
+  )
     throw new Error("maxMotorThrust must provide more than vehicle weight");
   if (!Number.isInteger(result.batteryCells))
     throw new Error("batteryCells must be an integer");
@@ -79,6 +127,7 @@ export function validateConfig(config = {}) {
     throw new Error(
       "criticalBatteryThreshold must be below lowBatteryThreshold",
     );
+  if (result.airframe !== "quadrotor") wingTrim(result);
   return result;
 }
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -109,7 +158,16 @@ function angles(q) {
 export function createSimulation(configuration = {}) {
   const config = validateConfig(configuration);
   const lever = config.arm / Math.SQRT2;
-  const inertia = [0.5, 0.5, 1].map((v) => v * config.mass * config.arm ** 2);
+  const hasWing = config.airframe !== "quadrotor";
+  const fixedWing = config.airframe === "fixedwing";
+  const inertia = hasWing
+    ? [
+        config.mass * (config.wingSpan ** 2 / 48 + 0.015),
+        config.mass * ((4 * config.wingChord) ** 2 / 18 + 0.01),
+        0,
+      ]
+    : [0.5, 0.5, 1].map((v) => v * config.mass * config.arm ** 2);
+  if (hasWing) inertia[2] = inertia[0] + inertia[1];
   // Motors: front-right, rear-right, rear-left, front-left. Positive torque signs.
   const rollSign = [-1, -1, 1, 1],
     pitchSign = [1, -1, -1, 1],
@@ -153,6 +211,58 @@ export function createSimulation(configuration = {}) {
     turbulenceState,
     turbulenceGoal,
     nextTurbulence;
+  let pusherCommand,
+    surfaceCommands,
+    speedIntegral,
+    transition,
+    transitionPhase,
+    transitionProgress;
+  let landing, groundRolling, missionLegStart, missionRejoin;
+  const rotate = (r, v) =>
+    [0, 1, 2].map(
+      (i) => r[3 * i] * v[0] + r[3 * i + 1] * v[1] + r[3 * i + 2] * v[2],
+    );
+  const inverseRotate = (r, v) =>
+    [0, 1, 2].map((i) => r[i] * v[0] + r[3 + i] * v[1] + r[6 + i] * v[2]);
+  const wrap = (value) => Math.atan2(Math.sin(value), Math.cos(value));
+  function aero(s = state) {
+    if (!hasWing) {
+      const bodyVelocity = inverseRotate(
+        rotation(s.slice(6, 10)),
+        s.slice(3, 6).map((v, i) => v - wind[i]),
+      );
+      const airspeedMps = Math.hypot(...bodyVelocity);
+      return {
+        forceBody: [0, 0, 0],
+        momentBody: [0, 0, 0],
+        airspeedMps,
+        alphaRad:
+          airspeedMps > 1e-8 ? Math.atan2(bodyVelocity[2], bodyVelocity[0]) : 0,
+        betaRad:
+          airspeedMps > 1e-8
+            ? Math.asin(clamp(bodyVelocity[1] / airspeedMps, -1, 1))
+            : 0,
+        dynamicPressurePa: 0.6125 * Math.exp(s[2] / 8500) * airspeedMps ** 2,
+        liftN: 0,
+        dragN: 0,
+        loadFactor: 0,
+        stalled: false,
+        pHat: 0,
+        qHat: 0,
+        rHat: 0,
+      };
+    }
+    return aerodynamicForces(
+      config,
+      inverseRotate(
+        rotation(s.slice(6, 10)),
+        s.slice(3, 6).map((v, i) => v - wind[i]),
+      ),
+      s.slice(10, 13),
+      s.slice(18, 21),
+      -s[2],
+    );
+  }
   function random() {
     randomState = (Math.imul(1664525, randomState) + 1013904223) >>> 0;
     return (randomState + 0.5) / 4294967296;
@@ -184,11 +294,28 @@ export function createSimulation(configuration = {}) {
         Math.sqrt((config.mass * G) / (4 * config.maxMotorThrust)),
       ),
     ];
-    target = { altitude: 2, roll: 0, pitch: 0, yawRate: 0 };
+    state.push(0, 0, 0, 0);
+    pusherCommand = 0;
+    surfaceCommands = [0, 0, 0];
+    speedIntegral = 0;
+    transition = fixedWing ? "cruise" : "hover";
+    transitionPhase = transition;
+    transitionProgress = fixedWing ? 1 : 0;
+    landing = null;
+    groundRolling = false;
+    missionLegStart = [0, 0];
+    missionRejoin = false;
+    target = {
+      altitude: fixedWing ? 30 : 2,
+      roll: 0,
+      pitch: 0,
+      yawRate: 0,
+      airspeed: hasWing ? config.cruiseAirspeed : 0,
+    };
     baseTarget = { ...target };
     scenario = "hover";
     scenarioStart = 0;
-    commands = state.slice(13);
+    commands = state.slice(13, 17);
     integrals = [0, 0, 0];
     randomState = config.seed >>> 0;
     queue = [];
@@ -216,16 +343,20 @@ export function createSimulation(configuration = {}) {
     rtlPhase = "";
     armed = true;
     crashed = false;
-    faults = { motorEfficiency: [1, 1, 1, 1], linkLost: false };
+    faults = {
+      motorEfficiency: [1, 1, 1, 1],
+      linkLost: false,
+      pusherEfficiency: 1,
+    };
     obstacles = [];
     usedWh = 0;
     safetyReason = "";
     turbulenceState = [0, 0, 0];
     turbulenceGoal = [0, 0, 0];
     nextTurbulence = 0;
-    wind = currentWind();
     gustUntil = 0;
     gustVector = [0, 0, 0];
+    wind = currentWind();
     observed = {
       time: 0,
       attitude: [0, 0, 0],
@@ -236,15 +367,47 @@ export function createSimulation(configuration = {}) {
       velocity: [0, 0],
     };
     imu = { accel: [0, 0, -G], gyro: [0, 0, 0] };
+    if (fixedWing) {
+      const trim = wingTrim(config);
+      state[2] = -30;
+      state[3] = config.cruiseAirspeed + wind[0];
+      state[4] = wind[1];
+      state[5] = wind[2];
+      state[6] = Math.cos(trim.alpha / 2);
+      state[8] = Math.sin(trim.alpha / 2);
+      for (let i = 13; i < 17; i++) state[i] = 0;
+      state[17] = Math.sqrt(trim.thrust / config.maxPusherThrust);
+      state[19] = trim.elevator;
+      commands.fill(0);
+      pusherCommand = state[17];
+      surfaceCommands[1] = trim.elevator;
+      observed.altitude = 30;
+      observed.attitude[1] = trim.alpha;
+      positionTarget.altitude = 30;
+    }
+    observed.airspeed = aero().airspeedMps;
     battery = batterySnapshot();
     return snapshot();
   }
   function derivative(s) {
-    if (crashed || (!armed && s[2] >= -0.001)) return Array(17).fill(0);
+    if (crashed || (!armed && s[2] >= -0.001)) return Array(21).fill(0);
+    if (groundRolling) {
+      const speed = Math.hypot(s[3], s[4]),
+        friction = Math.min(2, speed / 0.02);
+      return [
+        s[3],
+        s[4],
+        0,
+        (-friction * s[3]) / Math.max(speed, 0.001),
+        (-friction * s[4]) / Math.max(speed, 0.001),
+        0,
+        ...Array(15).fill(0),
+      ];
+    }
     const r = rotation(s.slice(6, 10));
     // Motor states/commands are normalized rotor speeds; thrust is proportional to speed squared.
     const thrusts = s
-      .slice(13)
+      .slice(13, 17)
       .map(
         (v, i) =>
           clamp(v, 0, 1) ** 2 *
@@ -252,16 +415,27 @@ export function createSimulation(configuration = {}) {
           faults.motorEfficiency[i],
       );
     const thrust = thrusts.reduce((a, b) => a + b, 0);
+    const wing = aero(s);
+    const pusherThrust = hasWing
+      ? config.maxPusherThrust *
+        clamp(s[17], 0, 1) ** 2 *
+        faults.pusherEfficiency
+      : 0;
+    const forceBody = [...wing.forceBody];
+    forceBody[0] += pusherThrust;
+    forceBody[2] -= thrust;
+    const forceWorld = rotate(r, forceBody);
     const acceleration = [0, 1, 2].map(
       (i) =>
-        (-r[i * 3 + 2] * thrust) / config.mass -
-        (config.drag * (s[i + 3] - wind[i])) / config.mass +
-        (i === 2 ? G : 0),
+        forceWorld[i] / config.mass +
+        (i === 2 ? G : 0) -
+        (hasWing ? 0 : (config.drag * (s[i + 3] - wind[i])) / config.mass),
     );
     const torque = [rollSign, pitchSign, yawSign].map(
       (signs, axis) =>
         thrusts.reduce((sum, f, i) => sum + f * signs[i], 0) *
-        (axis === 2 ? yawLever : lever),
+          (axis === 2 ? yawLever : lever) +
+        wing.momentBody[axis],
     );
     const [p, q, rRate] = s.slice(10, 13),
       [w, x, y, z] = s.slice(6, 10);
@@ -280,6 +454,8 @@ export function createSimulation(configuration = {}) {
       (w * rRate + x * q - y * p) / 2,
       ...angular,
       ...commands.map((v, i) => (v - s[13 + i]) / config.motorTau),
+      (pusherCommand - s[17]) / config.motorTau,
+      ...surfaceCommands.map((v, i) => (v - s[18 + i]) / config.servoTau),
     ];
   }
   function sample() {
@@ -306,6 +482,7 @@ export function createSimulation(configuration = {}) {
       rates: [...imu.gyro],
       altitude: -state[2] + noise(0.02),
       downSpeed: state[5] + noise(0.02),
+      airspeed: hasWing ? aero().airspeedMps + noise(0.05) : 0,
       position: state.slice(0, 2).map((v) => v + noise(0.02)),
       velocity: state.slice(3, 5).map((v) => v + noise(0.02)),
     };
@@ -321,7 +498,21 @@ export function createSimulation(configuration = {}) {
     }
     if (failed || !armed || crashed || battery.soc <= 0) {
       commands.fill(0);
+      pusherCommand = 0;
+      surfaceCommands = [0, 0, 0];
       integrals.fill(0);
+      return;
+    }
+    if (groundRolling) {
+      commands.fill(0);
+      pusherCommand = 0;
+      surfaceCommands = [0, 0, 0];
+      return;
+    }
+    updateTransition(dt);
+    if (hasWing) wingControl(dt);
+    if (fixedWing) {
+      commands.fill(0);
       return;
     }
     const [phi, theta] = observed.attitude;
@@ -329,7 +520,8 @@ export function createSimulation(configuration = {}) {
     const desiredRates = [
       config.attitudeKp * (target.roll - phi) -
         Math.sin(theta) * target.yawRate,
-      config.attitudeKp * (target.pitch - theta) +
+      config.attitudeKp *
+        ((hasWing ? wingPitchDemand() : target.pitch) - theta) +
         Math.sin(phi) * Math.cos(theta) * target.yawRate,
       Math.cos(phi) * Math.cos(theta) * target.yawRate,
     ];
@@ -338,7 +530,12 @@ export function createSimulation(configuration = {}) {
     );
     const candidate = integrals.map((v, i) => clamp(v + errors[i] * dt, -2, 2));
     const torque = errors.map(
-      (v, i) => config.rateKp * v + config.rateKi * candidate[i],
+      (v, i) =>
+        (config.rateKp * v + config.rateKi * candidate[i]) *
+        (hasWing
+          ? inertia[i] / ([0.5, 0.5, 1][i] * config.mass * config.arm ** 2)
+          : 1) *
+        (1 - transitionProgress),
     );
     const upAcceleration = clamp(
       config.altitudeKp * (target.altitude - observed.altitude) +
@@ -346,8 +543,15 @@ export function createSimulation(configuration = {}) {
       -G,
       G,
     );
+    const wingUp = hasWing
+      ? -rotate(rotation(state.slice(6, 10)), aero().forceBody)[2] +
+        config.maxPusherThrust *
+          state[17] ** 2 *
+          faults.pusherEfficiency *
+          Math.sin(theta)
+      : 0;
     const total =
-      (config.mass * (G + upAcceleration)) /
+      Math.max(0, config.mass * (G + upAcceleration) - wingUp) /
       Math.max(0.3, Math.cos(phi) * Math.cos(theta));
     const raw = rollSign.map(
       (_, i) =>
@@ -361,11 +565,355 @@ export function createSimulation(configuration = {}) {
     // Conditional integration: freeze the integral while any motor is saturated.
     if (raw.every((v) => v >= 0 && v <= 1)) integrals = candidate;
   }
+  function flightSnapshot() {
+    const wing = aero();
+    return {
+      airspeedMps: wing.airspeedMps,
+      groundspeedMps: Math.hypot(state[3], state[4]),
+      alphaRad: wing.alphaRad,
+      betaRad: wing.betaRad,
+      dynamicPressurePa: wing.dynamicPressurePa,
+      liftN: wing.liftN,
+      dragN: wing.dragN,
+      loadFactor: wing.loadFactor,
+      stalled: wing.stalled,
+      transition,
+      transitionPhase,
+      transitionProgress,
+    };
+  }
+  function setTransition(value) {
+    if (config.airframe !== "vtol")
+      throw new Error("Transition is only available for lift+cruise VTOL");
+    if (!["hover", "cruise"].includes(value))
+      throw new Error("Unknown VTOL transition");
+    if (crashed || failed || !armed || safetyReason)
+      throw new Error(
+        "Cannot transition while disarmed or during a safety action",
+      );
+    if (value === transition) return;
+    if (value === "cruise" && -state[2] < 8)
+      throw new Error("Climb to at least 8 meters before cruise transition");
+    if (value === "cruise")
+      positionTarget.altitude = Math.max(
+        -state[2],
+        baseTarget.altitude,
+        positionTarget.altitude,
+      );
+    transition = value;
+    transitionPhase = value === "cruise" ? "accelerating" : "decelerating";
+    speedIntegral = 0;
+    if (value === "hover") {
+      positionTarget = {
+        north: state[0],
+        east: state[1],
+        altitude: Math.max(8, -state[2]),
+      };
+      enterMode("position");
+    }
+  }
+  function updateTransition(dt) {
+    if (config.airframe !== "vtol") return;
+    const wing = aero(),
+      safeSpeed = 1.3 * stallSpeed(config, -state[2]);
+    if (transition === "cruise") {
+      const available = Math.min(
+        clamp((wing.airspeedMps - safeSpeed * 0.65) / (safeSpeed * 0.35), 0, 1),
+        clamp(wing.liftN / (config.mass * G), 0, 1),
+      );
+      transitionProgress += clamp(
+        available - transitionProgress,
+        -dt / 2,
+        dt / 3,
+      );
+      transitionPhase =
+        transitionProgress > 0.97 && wing.airspeedMps >= safeSpeed
+          ? "cruise"
+          : "accelerating";
+      if (transitionPhase === "cruise") transitionProgress = 1;
+    } else {
+      if (transitionPhase === "hover") return;
+      transitionProgress = Math.max(0, transitionProgress - dt / 3);
+      transitionPhase =
+        transitionProgress < 0.01 && wing.airspeedMps < 2
+          ? "hover"
+          : "decelerating";
+      if (transitionPhase === "hover") transitionProgress = 0;
+    }
+  }
+  function wingPitchDemand() {
+    if (!fixedWing && transition === "hover") return target.pitch;
+    const speed = Math.max(3, observed.airspeed),
+      height = observed.altitude;
+    const density = 1.225 * Math.exp(-height / 8500),
+      pressure = 0.5 * density * speed ** 2;
+    const liftRequired =
+      (config.mass * G) / Math.max(0.7, Math.cos(target.roll));
+    const alpha = clamp(
+      (liftRequired / (pressure * config.wingArea) - WING.cl0) / WING.clAlpha,
+      -0.1,
+      0.22,
+    );
+    let path = clamp(
+      0.035 * (target.altitude - height) + 0.12 * observed.downSpeed,
+      -0.16,
+      0.16,
+    );
+    if (fixedWing && navigation.mode === "land" && landing?.phase === "final") {
+      const sink = height < 2 ? 0.45 : 1.2;
+      path = clamp(
+        -sink / speed +
+          0.035 * (target.altitude - height) +
+          0.12 * (observed.downSpeed - sink),
+        -0.2,
+        0.08,
+      );
+    }
+    return clamp(
+      alpha + path + (navigation.mode === "attitude" ? target.pitch : 0),
+      -0.4,
+      0.45,
+    );
+  }
+  function wingControl(dt) {
+    const wing = aero(),
+      speed = Math.max(1, wing.airspeedMps),
+      [phi, theta] = observed.attitude;
+    const [p, q, r] = observed.rates;
+    let demandSpeed = target.airspeed;
+    if (navigation.mode !== "attitude")
+      demandSpeed = Math.max(
+        1.25 * stallSpeed(config, observed.altitude),
+        demandSpeed,
+      );
+    const powered = fixedWing || transition === "cruise";
+    if (powered) {
+      const error = demandSpeed - observed.airspeed;
+      const candidate = clamp(speedIntegral + error * dt, -10, 10);
+      const thrust = wing.dragN + 1.4 * error + 0.3 * candidate;
+      pusherCommand = Math.sqrt(clamp(thrust / config.maxPusherThrust, 0, 1));
+      if (thrust >= 0 && thrust <= config.maxPusherThrust)
+        speedIntegral = candidate;
+    } else {
+      pusherCommand = 0;
+      speedIntegral = 0;
+    }
+    const yawRate =
+      (G * Math.tan(target.roll)) / Math.max(4, speed) + target.yawRate;
+    const desiredRates = [
+      -Math.sin(theta) * yawRate,
+      Math.sin(phi) * Math.cos(theta) * yawRate,
+      Math.cos(phi) * Math.cos(theta) * yawRate,
+    ];
+    const pitchDemand = wingPitchDemand();
+    const requested = [
+      inertia[0] * (12 * (target.roll - phi) + 5 * (desiredRates[0] - p)),
+      inertia[1] * (12 * (pitchDemand - theta) + 5 * (desiredRates[1] - q)),
+      inertia[2] * (4 * (desiredRates[2] - r) + 2 * wing.betaRad),
+    ];
+    const weight = fixedWing ? 1 : transitionProgress;
+    const reference = Math.max(0.01, wing.dynamicPressurePa * config.wingArea);
+    const passive = [
+      -0.08 * wing.betaRad - 0.5 * wing.pHat + 0.08 * wing.rHat,
+      wing.pitchStatic - 8 * wing.qHat,
+      0.12 * wing.betaRad - 0.3 * wing.rHat - 0.01 * state[18],
+    ];
+    surfaceCommands = requested.map((moment, i) =>
+      clamp(
+        ((moment * weight) /
+          (reference * (i === 1 ? config.wingChord : config.wingSpan)) -
+          passive[i]) /
+          [WING.rollAileron, WING.cmElevator, WING.yawRudder][i],
+        -WING.surfaceLimit,
+        WING.surfaceLimit,
+      ),
+    );
+  }
+  function landingPlan() {
+    const height = clamp(-state[2], 15, 30),
+      distance = (height + 6) / 0.15;
+    return {
+      phase: "entry",
+      index: 0,
+      height,
+      start: state.slice(0, 2),
+      rejoin: false,
+      points: [
+        { north: -distance - 80, east: -80 },
+        { north: -distance - 80, east: 0 },
+        { north: -distance, east: 0 },
+      ],
+    };
+  }
+  function navigateWing(dt) {
+    const speed = Math.max(1, observed.airspeed),
+      course = Math.atan2(observed.velocity[1], observed.velocity[0]);
+    let desiredSpeed = Math.max(
+      baseTarget.airspeed,
+      1.3 * stallSpeed(config, observed.altitude),
+    );
+    let radius = Math.max(25, desiredSpeed ** 2 / (G * Math.tan(0.4)));
+    const dn = observed.position[0] - positionTarget.north,
+      de = observed.position[1] - positionTarget.east;
+    const distance = Math.hypot(dn, de);
+    let desiredCourse,
+      feedForward = 0;
+    if (navigation.mode === "mission" && !navigation.completed) {
+      const waypoint = navigation.waypoints[navigation.index];
+      const leg = [
+          positionTarget.north - missionLegStart[0],
+          positionTarget.east - missionLegStart[1],
+        ],
+        length = Math.hypot(...leg);
+      const unit =
+        length > 0.01
+          ? leg.map((v) => v / length)
+          : [Math.cos(course), Math.sin(course)];
+      const offset = [
+        observed.position[0] - missionLegStart[0],
+        observed.position[1] - missionLegStart[1],
+      ];
+      const along = offset[0] * unit[0] + offset[1] * unit[1],
+        cross = -offset[0] * unit[1] + offset[1] * unit[0];
+      // Slow for short legs instead of demanding a turn radius the wing cannot fly.
+      desiredSpeed = Math.max(
+        1.3 * stallSpeed(config, observed.altitude),
+        Math.min(
+          desiredSpeed,
+          Math.sqrt(G * Math.tan(0.45) * Math.max(15, length * 0.3)),
+        ),
+      );
+      const captured = distance < Math.max(8, Math.min(12, speed * 0.8));
+      const passed =
+        along >= length && along - length < 20 && Math.abs(cross) < 12;
+      if (
+        (captured || passed) &&
+        Math.abs(observed.altitude - positionTarget.altitude) < 4 &&
+        holdSince === null
+      )
+        holdSince = time;
+      if (holdSince !== null && time - holdSince >= waypoint.hold) {
+        if (navigation.index + 1 < navigation.waypoints.length) {
+          missionLegStart = [positionTarget.north, positionTarget.east];
+          navigation.index++;
+          positionTarget = { ...navigation.waypoints[navigation.index] };
+          holdSince = null;
+          missionRejoin = false;
+          desiredCourse = Math.atan2(
+            positionTarget.east - observed.position[1],
+            positionTarget.north - observed.position[0],
+          );
+        } else navigation.completed = true;
+      } else if (holdSince === null) {
+        if (along > length + 20) missionRejoin = true;
+        if (missionRejoin && along < length - 30 && Math.abs(cross) < 20)
+          missionRejoin = false;
+        desiredCourse = missionRejoin
+          ? Math.atan2(
+              positionTarget.east - unit[1] * 60 - observed.position[1],
+              positionTarget.north - unit[0] * 60 - observed.position[0],
+            )
+          : Math.atan2(unit[1], unit[0]) -
+            Math.atan2(cross, Math.max(15, speed * 1.5));
+      }
+    }
+    if (navigation.mode === "land") {
+      if (!landing) landing = landingPlan();
+      if (landing.phase === "entry") {
+        const point = landing.points[landing.index];
+        const leg = [
+            point.north - landing.start[0],
+            point.east - landing.start[1],
+          ],
+          length = Math.hypot(...leg);
+        const unit = length > 0.01 ? leg.map((v) => v / length) : [1, 0];
+        const offset = [
+          observed.position[0] - landing.start[0],
+          observed.position[1] - landing.start[1],
+        ];
+        const along = offset[0] * unit[0] + offset[1] * unit[1],
+          cross = -offset[0] * unit[1] + offset[1] * unit[0];
+        const close =
+          Math.hypot(
+            point.north - observed.position[0],
+            point.east - observed.position[1],
+          ) < 10 ||
+          (along >= length && along - length < 20 && Math.abs(cross) < 10);
+        if (close && Math.abs(observed.altitude - landing.height) < 4) {
+          if (landing.index < landing.points.length - 1) {
+            landing.start = [point.north, point.east];
+            landing.index++;
+            landing.rejoin = false;
+          } else if (
+            Math.abs(wrap(course)) < 0.6 &&
+            Math.abs(observed.position[1]) < 10
+          )
+            landing.phase = "final";
+        }
+        if (along > length + 20) landing.rejoin = true;
+        if (landing.rejoin && along < length - 30 && Math.abs(cross) < 20)
+          landing.rejoin = false;
+        desiredCourse = landing.rejoin
+          ? Math.atan2(
+              point.east - unit[1] * 60 - observed.position[1],
+              point.north - unit[0] * 60 - observed.position[0],
+            )
+          : Math.atan2(unit[1], unit[0]) -
+            Math.atan2(cross, Math.max(15, speed * 1.5));
+        positionTarget = { ...point, altitude: landing.height };
+        desiredSpeed = Math.max(
+          1.4 * stallSpeed(config, observed.altitude),
+          Math.min(baseTarget.airspeed, 11),
+        );
+      }
+      if (landing.phase === "final") {
+        desiredCourse = -Math.atan2(observed.position[1], 25);
+        positionTarget = {
+          north: 0,
+          east: 0,
+          altitude: Math.max(0, -observed.position[0] * 0.15 - 6),
+        };
+        desiredSpeed = 1.25 * stallSpeed(config, observed.altitude);
+      }
+    } else if (desiredCourse === undefined) {
+      radius = Math.max(25, desiredSpeed ** 2 / (G * Math.tan(0.4)));
+      const bearing = distance > 1 ? Math.atan2(de, dn) : course - Math.PI / 2;
+      desiredCourse =
+        bearing + Math.PI / 2 + Math.atan((2 * (distance - radius)) / radius);
+      feedForward = desiredSpeed / radius;
+      if (
+        navigation.mode === "rtl" &&
+        Math.abs(distance - radius) < 10 &&
+        Math.abs(observed.altitude - positionTarget.altitude) < 4
+      )
+        navigation.completed = true;
+    }
+    const turnRate = clamp(
+      0.7 * wrap(desiredCourse - course) + feedForward,
+      -0.4,
+      0.4,
+    );
+    target = {
+      altitude: positionTarget.altitude,
+      roll: clamp(Math.atan((speed * turnRate) / G), -0.5, 0.5),
+      pitch: 0,
+      yawRate: 0,
+      airspeed: desiredSpeed,
+    };
+    navigation.targetPosition = [positionTarget.north, positionTarget.east];
+  }
+
   function setTargets(values) {
-    if (!values || typeof values !== "object" || Array.isArray(values))
+    if (
+      !values ||
+      typeof values !== "object" ||
+      Array.isArray(values) ||
+      ![Object.prototype, null].includes(Object.getPrototypeOf(values))
+    )
       throw new Error("Targets must be an object");
     const limits = {
       altitude: [0, 500],
+      airspeed: [0, 40],
       roll: [-Math.PI / 6, Math.PI / 6],
       pitch: [-Math.PI / 6, Math.PI / 6],
       yawRate: [-2, 2],
@@ -432,7 +980,11 @@ export function createSimulation(configuration = {}) {
     navigation.index = 0;
     navigation.completed = false;
     holdSince = null;
-    if (navigation.mode === "mission") positionTarget = { ...validated[0] };
+    if (navigation.mode === "mission") {
+      positionTarget = { ...validated[0] };
+      missionLegStart = state.slice(0, 2);
+      missionRejoin = false;
+    }
   }
   function enterMode(mode, reason = "") {
     navigation.mode = mode;
@@ -446,6 +998,7 @@ export function createSimulation(configuration = {}) {
         roll: 0,
         pitch: 0,
         yawRate: 0,
+        airspeed: hasWing ? config.cruiseAirspeed : 0,
       };
       target = { ...baseTarget };
     } else if (mode === "position") {
@@ -458,6 +1011,8 @@ export function createSimulation(configuration = {}) {
         };
     } else if (mode === "mission") {
       navigation.index = 0;
+      missionLegStart = state.slice(0, 2);
+      missionRejoin = false;
       positionTarget = { ...navigation.waypoints[0] };
     } else if (mode === "rtl") {
       rtlPhase = "climb";
@@ -474,6 +1029,30 @@ export function createSimulation(configuration = {}) {
         north: state[0],
         east: state[1],
         altitude: Math.max(0, -state[2]),
+      };
+    }
+    if (hasWing && (fixedWing || transition === "cruise")) {
+      if (mode === "rtl")
+        positionTarget = {
+          north: 0,
+          east: 0,
+          altitude: Math.max(20, -state[2]),
+        };
+      if (mode === "land") {
+        landing = landingPlan();
+      }
+    }
+    if (
+      config.airframe === "vtol" &&
+      ["rtl", "land"].includes(mode) &&
+      (transition === "cruise" || transitionProgress > 0.01)
+    ) {
+      transition = "hover";
+      transitionPhase = "decelerating";
+      positionTarget = {
+        north: mode === "rtl" ? 0 : state[0],
+        east: mode === "rtl" ? 0 : state[1],
+        altitude: Math.max(8, -state[2]),
       };
     }
     explicitPosition = false;
@@ -508,6 +1087,8 @@ export function createSimulation(configuration = {}) {
   function disarm() {
     armed = false;
     commands.fill(0);
+    pusherCommand = 0;
+    surfaceCommands = [0, 0, 0];
     integrals.fill(0);
   }
   function takeoff() {
@@ -515,13 +1096,29 @@ export function createSimulation(configuration = {}) {
       throw new Error(
         "Cannot take off during a safety return/landing; reset first",
       );
+    if (fixedWing && state[2] >= -0.1)
+      throw new Error(
+        "Fixed-wing runway takeoff is not implemented; reset starts airborne in trim",
+      );
     arm();
-    positionTarget = { north: state[0], east: state[1], altitude: 2 };
+    positionTarget = {
+      north: state[0],
+      east: state[1],
+      altitude: hasWing ? 30 : 2,
+    };
     explicitPosition = true;
     enterMode("position");
   }
   function injectFault(kind, value) {
-    if (kind === "motor") {
+    if (kind === "pusher") {
+      if (!hasWing) throw new Error("Quadrotor has no cruise pusher");
+      faults.pusherEfficiency = validateFields(
+        value,
+        { efficiency: [0, 1] },
+        "Pusher fault",
+      ).efficiency;
+    } else if (kind === "motor") {
+      if (fixedWing) throw new Error("Fixed wing has no lift rotors");
       const checked = validateFields(
         value,
         { index: [0, 3], efficiency: [0, 1] },
@@ -543,7 +1140,11 @@ export function createSimulation(configuration = {}) {
     } else throw new Error("Unknown fault type");
   }
   function clearFaults() {
-    faults = { motorEfficiency: [1, 1, 1, 1], linkLost: false };
+    faults = {
+      motorEfficiency: [1, 1, 1, 1],
+      linkLost: false,
+      pusherEfficiency: 1,
+    };
   }
   function setObstacles(boxes) {
     if (!Array.isArray(boxes) || boxes.length > 50)
@@ -601,7 +1202,7 @@ export function createSimulation(configuration = {}) {
       availableWh > 0
         ? config.batteryBasePower +
           config.batteryMotorPower *
-            state.slice(13).reduce((sum, speed) => sum + speed ** 3, 0)
+            state.slice(13, 18).reduce((sum, speed) => sum + speed ** 3, 0)
         : 0;
     const resistance = config.batteryInternalResistance;
     // Simplified Thevenin pack; cap electrical demand at maximum deliverable power.
@@ -641,10 +1242,24 @@ export function createSimulation(configuration = {}) {
         !navigation.fenceBreached
       ) {
         navigation.fenceBreached = true;
-        safetyMode("rtl", "geofence");
+        if (navigation.mode !== "land") safetyMode("rtl", "geofence");
       }
       if (battery.low && !safetyReason && navigation.mode !== "land")
         safetyMode("rtl", "low-battery");
+    }
+    if (hasWing && (fixedWing || transition === "cruise")) {
+      if (config.airframe === "vtol" && transitionPhase === "accelerating") {
+        target = {
+          ...baseTarget,
+          altitude: positionTarget.altitude,
+          roll: 0,
+          pitch: 0,
+          yawRate: 0,
+        };
+        return;
+      }
+      if (navigation.mode !== "attitude") navigateWing(dt);
+      return;
     }
     if (navigation.mode === "attitude") return;
     if (navigation.mode === "mission") {
@@ -683,7 +1298,11 @@ export function createSimulation(configuration = {}) {
         positionTarget.east = 0;
       }
     }
-    if (navigation.mode === "land")
+    if (
+      navigation.mode === "land" &&
+      (config.airframe !== "vtol" ||
+        (transitionProgress < 0.02 && Math.hypot(...state.slice(3, 5)) < 1))
+    )
       positionTarget.altitude = Math.max(0, positionTarget.altitude - 0.5 * dt);
     const errors = [
       positionTarget.north - observed.position[0],
@@ -712,6 +1331,7 @@ export function createSimulation(configuration = {}) {
       roll: Math.atan2(-Math.sin(yaw) * north + Math.cos(yaw) * east, G),
       pitch: -Math.atan2(Math.cos(yaw) * north + Math.sin(yaw) * east, G),
       yawRate: 0,
+      airspeed: hasWing ? baseTarget.airspeed : 0,
     };
     navigation.targetPosition = [positionTarget.north, positionTarget.east];
   }
@@ -768,7 +1388,9 @@ export function createSimulation(configuration = {}) {
     }
     wind = currentWind();
     const previousImu = imu,
-      previousCommands = commands;
+      previousCommands = commands,
+      previousPusher = pusherCommand,
+      previousSurfaces = surfaceCommands;
     sample();
     navigate(dt);
     control(dt);
@@ -781,8 +1403,19 @@ export function createSimulation(configuration = {}) {
       (v, i) => v + (dt * (a[i] + 2 * b[i] + 2 * c[i] + d[i])) / 6,
     );
     const norm = Math.hypot(...nextState.slice(6, 10));
+    const nextAero = aero(nextState);
+    const forceFinite = [
+      ...nextAero.forceBody,
+      ...nextAero.momentBody,
+      nextAero.airspeedMps,
+      nextAero.dynamicPressurePa,
+      nextAero.liftN,
+      nextAero.dragN,
+      nextAero.loadFactor,
+    ].every(Number.isFinite);
     if (
       !nextState.every(Number.isFinite) ||
+      !forceFinite ||
       !Number.isFinite(norm) ||
       norm < 1e-12 ||
       !Number.isFinite(
@@ -791,6 +1424,8 @@ export function createSimulation(configuration = {}) {
     ) {
       imu = previousImu;
       commands = previousCommands;
+      pusherCommand = previousPusher;
+      surfaceCommands = previousSurfaces;
       target = previousTarget;
       throw new Error(
         "Numerical integration diverged; reduce controller gains/noise or use a smaller integration step",
@@ -801,13 +1436,34 @@ export function createSimulation(configuration = {}) {
       state = nextState;
       for (let i = 6; i < 10; i++) state[i] /= norm;
     }
-    for (let i = 13; i < 17; i++) state[i] = clamp(state[i], 0, 1);
-    // shortcut: flat inelastic ground, add a contact solver before terrain/landing research.
+    for (let i = 13; i < 18; i++) state[i] = clamp(state[i], 0, 1);
+    for (let i = 18; i < 21; i++)
+      state[i] = clamp(state[i], -WING.surfaceLimit, WING.surfaceLimit);
+    if (hasWing && !crashed && state[2] >= 0 && !groundRolling) {
+      if (
+        fixedWing &&
+        navigation.mode === "land" &&
+        state[5] < 1.6 &&
+        Math.abs(angles(state.slice(6, 10))[0]) < 0.25
+      ) {
+        groundRolling = true;
+        state[2] = 0;
+        state[5] = 0;
+        for (let i = 10; i < 21; i++) state[i] = 0;
+      } else if (fixedWing || state[5] > 2.5) {
+        crashed = true;
+        navigation.reason = "ground-impact";
+        disarm();
+      }
+    }
+    // shortcut: flat inelastic ground; conventional wing landing additionally models wheel rollout.
     if (state[2] >= 0) {
       state[2] = 0;
       state[5] = Math.min(0, state[5]);
-      state[3] *= Math.exp(-8 * dt);
-      state[4] *= Math.exp(-8 * dt);
+      if (!groundRolling) {
+        state[3] *= Math.exp(-8 * dt);
+        state[4] *= Math.exp(-8 * dt);
+      }
     }
     if (
       !crashed &&
@@ -820,10 +1476,11 @@ export function createSimulation(configuration = {}) {
       navigation.reason = "obstacle-collision";
       disarm();
       state.splice(3, 3, 0, 0, 0);
-      state.splice(10, 7, 0, 0, 0, 0, 0, 0, 0);
+      for (let i = 10; i < 21; i++) state[i] = 0;
     }
     if (
       !crashed &&
+      !fixedWing &&
       navigation.mode === "land" &&
       state[2] > -0.12 &&
       Math.abs(state[5]) < 0.6
@@ -833,10 +1490,16 @@ export function createSimulation(configuration = {}) {
       navigation.completed = true;
       disarm();
     }
+    if (groundRolling && Math.hypot(state[3], state[4]) < 0.25) {
+      navigation.completed = true;
+      disarm();
+    }
     if (crashed || (!armed && state[2] >= -0.001)) {
       state.splice(3, 3, 0, 0, 0);
-      state.splice(10, 7, 0, 0, 0, 0, 0, 0, 0);
+      for (let i = 10; i < 21; i++) state[i] = 0;
     }
+    if (navigation.mode === "land" && navigation.completed && !armed)
+      target = { altitude: 0, roll: 0, pitch: 0, yawRate: 0, airspeed: 0 };
     usedWh = Math.min(
       config.batteryCapacityWh * config.batteryInitialSoc,
       usedWh + (batterySnapshot().power * dt) / 3600,
@@ -867,7 +1530,21 @@ export function createSimulation(configuration = {}) {
       quaternion: state.slice(6, 10),
       attitude: angles(state.slice(6, 10)),
       rates: state.slice(10, 13),
-      motors: state.slice(13),
+      airframe: config.airframe,
+      motors: state.slice(13, 17),
+      propulsion: {
+        command: pusherCommand,
+        motor: state[17],
+        thrustN: hasWing
+          ? config.maxPusherThrust * state[17] ** 2 * faults.pusherEfficiency
+          : 0,
+      },
+      controlSurfaces: {
+        aileron: state[18],
+        elevator: state[19],
+        rudder: state[20],
+      },
+      flight: flightSnapshot(),
       pwm: commands.map((v) => 1000 + v * 1000),
       target: { ...target },
       imu: { accel: [...imu.accel], gyro: [...imu.gyro] },
@@ -890,6 +1567,7 @@ export function createSimulation(configuration = {}) {
       faults: {
         motorEfficiency: [...faults.motorEfficiency],
         linkLost: faults.linkLost,
+        pusherEfficiency: faults.pusherEfficiency,
       },
       armed,
       status: crashed
@@ -921,5 +1599,6 @@ export function createSimulation(configuration = {}) {
     injectFault,
     clearFaults,
     setObstacles,
+    setTransition,
   };
 }
