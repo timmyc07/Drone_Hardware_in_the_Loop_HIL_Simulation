@@ -1,6 +1,7 @@
 import { DEFAULT_CONFIG, AIRFRAME_PRESETS, validateConfig } from "./sim.js";
 import { MULTIROTOR_AIRFRAMES } from "./rotor-geometry.js";
 import { createScene } from "./scene.js";
+import { DEFAULT_GROUND_OBSERVER, validateGroundObserver } from "./ground-observer.js";
 import { validateWorldConfig } from "./world.js";
 import {
   validateRecording,
@@ -104,6 +105,15 @@ try {
   if (savedCamera) cameraConfig = validateCameraConfig(JSON.parse(savedCamera));
 } catch {
   /* Invalid or unavailable storage uses camera defaults. */
+}
+
+const observerStorageKey = "flight-lab-ground-observer-v1";
+let groundObserver = { ...DEFAULT_GROUND_OBSERVER };
+try {
+  const saved = localStorage.getItem(observerStorageKey);
+  if (saved) groundObserver = validateGroundObserver(JSON.parse(saved));
+} catch {
+  /* Invalid or unavailable storage uses observer defaults. */
 }
 
 let worldState;
@@ -1033,7 +1043,7 @@ async function launchFlight(vehicleId = activeVehicleId) {
     if (!active) await requestApi({ type: "takeoff", vehicleId });
     document.querySelector('[data-workspace="flight"]').click();
     if (!rendering) $("render-toggle").click();
-    document.querySelector('[data-camera="follow"]').click();
+    if (scene?.getCameraState().mode !== "observer") document.querySelector('[data-camera="follow"]').click();
     $("viewport").scrollIntoView({ behavior: "smooth", block: "center" });
     if (!running) await requestApi({ type: "play" });
   } catch (error) {
@@ -1075,16 +1085,52 @@ $("gust").onclick = () => {
   sendWorker({ type: "gust" });
   toast("已加入一秒陣風，模擬運行時生效。");
 };
+function syncCamera({ mode, reason }) {
+  $("camera-interaction-hint").textContent = mode === "observer"
+    ? "固定觀察點 · 設定中調整視角"
+    : mode === "fpv" ? "機身第一人稱" : "拖曳旋轉 · 滾輪縮放";
+  document.querySelectorAll("[data-camera]").forEach((button) => {
+    const active = button.dataset.camera === mode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  const notice = $("observer-notice");
+  notice.hidden = reason !== "terrain-coverage";
+  notice.textContent = notice.hidden ? "" : "觀察點不在地形範圍內，已切回自由視角。請重新設定觀察位置。";
+  updateObserverStatus();
+}
+function updateObserverStatus() {
+  const state = scene?.getCameraState();
+  const status = $("observer-status");
+  status.hidden = state?.mode !== "observer";
+  if (status.hidden) return;
+  const { groundObserver: observer, eyeNed, distanceM } = state;
+  status.textContent = `觀察點 N ${eyeNed[0].toFixed(1)} m / E ${eyeNed[1].toFixed(1)} m / D ${eyeNed[2].toFixed(1)} m · 離地 ${observer.eyeHeightM.toFixed(1)} m · 垂直 FOV ${observer.fovDeg.toFixed(1)}° · 距離 ${distanceM == null ? "—" : `${distanceM.toFixed(1)} m`}`;
+}
 document.querySelectorAll("[data-camera]").forEach((button) => {
   button.onclick = () => {
-    scene?.setCamera(button.dataset.camera);
-    document.querySelectorAll("[data-camera]").forEach((item) => {
-      const active = item === button;
-      item.classList.toggle("active", active);
-      item.setAttribute("aria-pressed", String(active));
-    });
+    try { scene?.setCamera(button.dataset.camera); }
+    catch (error) { toast(`無法切換視角：${error.message}`); }
   };
 });
+const observerFields = { north: "observer-north", east: "observer-east", eyeHeightM: "observer-height", fovDeg: "observer-fov" };
+$("observer-settings-open").onclick = () => {
+  for (const [key, id] of Object.entries(observerFields)) $(id).value = groundObserver[key];
+  $("observer-error").textContent = "";
+  $("observer-dialog").showModal();
+};
+$("observer-form").onsubmit = (event) => {
+  event.preventDefault();
+  try {
+    const next = validateGroundObserver(Object.fromEntries(Object.entries(observerFields).map(([key, id]) => [key, Number($(id).value)])));
+    scene.setGroundObserver(next);
+    scene.setCamera("observer");
+    groundObserver = next;
+    try { localStorage.setItem(observerStorageKey, JSON.stringify(next)); }
+    catch { toast("此瀏覽器無法儲存觀察設定，本次仍會使用新設定。"); }
+    $("observer-dialog").close();
+  } catch (error) { $("observer-error").textContent = `無法套用觀察視角：${error.message}`; }
+};
 $("render-toggle").onclick = () => {
   rendering = !rendering;
   scene?.setVisible(rendering);
@@ -1708,12 +1754,15 @@ function drawChart() {
 new ResizeObserver(drawChart).observe(canvas);
 
 try {
-  scene = createScene($("viewport"));
+  scene = createScene($("viewport"), { onCameraChange: syncCamera });
+  try { scene.setGroundObserver(groundObserver); }
+  catch { groundObserver = { ...DEFAULT_GROUND_OBSERVER }; scene.setGroundObserver(groundObserver); }
 } catch (error) {
   $("scene-error").hidden = false;
   $("scene-error").textContent =
     `3D 畫面無法啟動：${error.message}。請使用支援 WebGL 2 的瀏覽器；數值模擬與圖表仍可使用。`;
 }
+document.querySelectorAll("[data-camera], #observer-settings-open").forEach((button) => { button.disabled = !scene; });
 let previousFrame = performance.now();
 let uiTime = 0;
 function animate(now) {
@@ -1745,6 +1794,7 @@ function animate(now) {
     else if (worldState)
       scene?.updateWorld(worldState, activeVehicleId, wallDt);
   }
+  updateObserverStatus();
   requestAnimationFrame(animate);
 }
 requestAnimationFrame(animate);
@@ -4400,7 +4450,7 @@ function showHilHealth(state, connected) {
 function focusFlightView() {
   document.querySelector('[data-workspace="flight"]').click();
   if (!rendering) $("render-toggle").click();
-  document.querySelector('[data-camera="follow"]').click();
+  if (scene?.getCameraState().mode !== "observer") document.querySelector('[data-camera="follow"]').click();
   $("viewport").scrollIntoView({ behavior: "smooth", block: "center" });
 }
 async function sendHilCommand(command) {

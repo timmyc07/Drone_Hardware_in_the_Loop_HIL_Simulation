@@ -1,6 +1,12 @@
 import * as THREE from "three";
 import { zonePoints } from "./geofence-zones-panel.js";
 import { createTerrain } from "./terrain.js";
+import {
+  DEFAULT_GROUND_OBSERVER,
+  validateGroundObserver,
+  groundObserverEye,
+  applyGroundObserverCamera,
+} from "./ground-observer.js";
 import { inspectionPanel } from "./inspection.js";
 import { createNistLaneGroup, NIST_LANE } from "./nist-geometry.js";
 import { lidarPoints, MAX_LIDAR_POINTS } from "./sensors.js";
@@ -16,7 +22,7 @@ export function obstacleVisualPlacement(item) {
   };
 }
 
-export function createScene(container) {
+export function createScene(container, { onCameraChange } = {}) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color("#101c2d");
   scene.fog = new THREE.Fog("#101c2d", 600, 1200);
@@ -103,6 +109,9 @@ export function createScene(container) {
   }
 
   let terrain = createTerrain();
+  let mode = "orbit";
+  let groundObserver = { ...DEFAULT_GROUND_OBSERVER };
+  let observerEyeNed = null;
   let runway, pad;
   function setTerrain(value) {
     const next = createTerrain(value);
@@ -123,6 +132,12 @@ export function createScene(container) {
     grid.visible = next.data.kind === "flat";
     if (runway) runway.visible = next.runwayCompatible && !nistEnabled;
     if (pad) pad.visible = next.data.kind !== "dem" && !nistEnabled;
+    if (mode === "observer") {
+      if (terrain.contains(groundObserver.north, groundObserver.east)) {
+        observerEyeNed = groundObserverEye(groundObserver, terrain);
+        resetView();
+      } else setCamera("orbit", "terrain-coverage");
+    }
   }
   setTerrain();
 
@@ -789,11 +804,14 @@ export function createScene(container) {
   }
   let count = 0;
   let lastTime = -Infinity;
-  let mode = "orbit";
   let visible = true;
   const target = new THREE.Vector3(0, 2, 0);
   const previousTarget = target.clone();
   function resetView() {
+    if (mode === "observer") {
+      applyGroundObserverCamera(camera, observerEyeNed, target, groundObserver.fovDeg);
+      return;
+    }
     if (mode === "fpv") return;
     controls.target.copy(target);
     camera.position
@@ -810,6 +828,20 @@ export function createScene(container) {
             ),
       );
     controls.update();
+  }
+  function setCamera(value, reason = "selection") {
+    if (!["orbit", "follow", "top", "fpv", "observer"].includes(value))
+      throw new Error("Unknown camera mode");
+    const nextEye = value === "observer" ? groundObserverEye(groundObserver, terrain) : null;
+    const changed = mode !== value;
+    mode = value;
+    observerEyeNed = nextEye;
+    controls.enabled = value !== "fpv" && value !== "observer";
+    drone.visible = value !== "fpv";
+    camera.fov = value === "observer" ? groundObserver.fovDeg : value === "fpv" ? 90 : 42;
+    camera.updateProjectionMatrix();
+    resetView();
+    if (changed) onCameraChange?.({ mode, reason });
   }
   resetView();
   const resize = () => {
@@ -895,6 +927,8 @@ export function createScene(container) {
         camera.position.copy(target);
         camera.quaternion.copy(drone.quaternion);
       }
+      if (mode === "observer")
+        applyGroundObserverCamera(camera, observerEyeNed, target, groundObserver.fovDeg);
       const markers = mission.children.filter((item) => item.userData.waypoint);
       markers.forEach((item, i) =>
         item.material.color.setHex(
@@ -922,7 +956,7 @@ export function createScene(container) {
       }
       previousTarget.copy(target);
       if (visible) {
-        if (mode !== "fpv") controls.update();
+        if (mode !== "fpv" && mode !== "observer") controls.update();
         renderer.render(scene, camera);
       }
     },
@@ -931,13 +965,22 @@ export function createScene(container) {
       renderer.domElement.style.display = value ? "" : "none";
       if (value) resize();
     },
-    setCamera(value) {
-      mode = value;
-      controls.enabled = value !== "fpv";
-      drone.visible = value !== "fpv";
-      camera.fov = value === "fpv" ? 90 : 42;
-      camera.updateProjectionMatrix();
-      resetView();
+    setCamera,
+    setGroundObserver(value) {
+      const config = validateGroundObserver(value);
+      const eye = groundObserverEye(config, terrain);
+      groundObserver = config;
+      observerEyeNed = mode === "observer" ? eye : null;
+      if (mode === "observer") resetView();
+      onCameraChange?.({ mode, reason: "observer-settings" });
+    },
+    getCameraState() {
+      return {
+        mode,
+        groundObserver: { ...groundObserver },
+        eyeNed: observerEyeNed && [...observerEyeNed],
+        distanceM: mode === "observer" ? camera.position.distanceTo(target) : null,
+      };
     },
     resetView,
     setSensorScan,

@@ -1,6 +1,11 @@
 // 公開資料盤點；狀態描述本專案，不代表外部產品狀態。
 export const SOURCES = [
   {
+    name: "OpenRCsimulator 固定飛行員視角",
+    url: "https://github.com/bultodepapas/OpenRCsimulator/blob/37a550925afb82fa9b982ea27d189584ef8fa487/docs/FIRST-LAUNCH.md",
+    kind: "開源文件",
+  },
+  {
     name: "PX4 v1.17.0 Follow-Me",
     url: "https://github.com/PX4/PX4-Autopilot/blob/v1.17.0/docs/en/flight_modes_mc/follow_me.md",
     kind: "開源文件",
@@ -439,9 +444,10 @@ export const CAPABILITIES = [
     id: "los",
     category: "控制與航行",
     title: "目視操控",
-    description: "可使用環繞、俯視與跟隨視角；無固定地面飛行員觀察視角。",
+    description: "提供固定地面觀察點、離地眼高及光學視角縮放，持續看向所選載具；尚未校準為目視訓練。",
     status: "partial",
     sources: [
+      "https://github.com/bultodepapas/OpenRCsimulator/blob/37a550925afb82fa9b982ea27d189584ef8fa487/docs/FIRST-LAUNCH.md",
       "https://www.simnet.aero/product-page/online-course-manual-piloting-of-fixed-wing-uavs",
     ],
   },

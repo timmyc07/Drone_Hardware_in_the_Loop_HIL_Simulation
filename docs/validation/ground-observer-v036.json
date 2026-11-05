@@ -1,0 +1,363 @@
+{
+  "appVersion": "0.36.0",
+  "feature": "Fixed ground observer spectator view",
+  "verifiedAtUtc": "2026-11-05T15:56:35.388Z",
+  "baseCommit": "1938cbe2cd434f8c735803a6f54bfaaafb155095",
+  "unchangedFormats": {
+    "model": "0.16.0",
+    "recording": 22,
+    "scene": 7,
+    "flightApi": "2.11",
+    "cameraDataset": 5,
+    "csvColumns": 222
+  },
+  "automated": {
+    "tests": 620,
+    "passed": 620,
+    "failed": 0,
+    "durationMs": 105240.599709,
+    "scope": "Full suite passed; final changes after that run only clarified spectator UI hints and persistent terrain notice, verified in the final browser build",
+    "newGroundObserverTests": 6,
+    "finalBuild": "passed"
+  },
+  "browser": {
+    "url": "http://127.0.0.1:4193/",
+    "actualFlight": {
+      "simSeconds": 69.43000000000934,
+      "frames": 1392,
+      "ticks": 13886,
+      "startedOnGround": true,
+      "movedNorthM": 3,
+      "movedEastM": 2,
+      "maxCommandedAltitudeM": 3,
+      "endedLandedAndDisarmed": true,
+      "observerPreservedAcrossTakeoffMoveAndLanding": true
+    },
+    "fixedEyeAcrossVehicleSelection": true,
+    "fovComparison": {
+      "wideDeg": 50,
+      "narrowDeg": 25,
+      "eyeNed": [
+        -8,
+        -8,
+        -1.6
+      ],
+      "samePausedTimeS": 57.91000000001117
+    },
+    "checks": [
+      {
+        "name": "vehicle-1",
+        "state": {
+          "observer": "觀察點 N -8.0 m / E -8.0 m / D -1.6 m · 離地 1.6 m · 垂直 FOV 25.0° · 距離 11.4 m",
+          "vehicle": "drone-1",
+          "view": "observer"
+        }
+      },
+      {
+        "name": "vehicle-2",
+        "state": {
+          "observer": "觀察點 N -8.0 m / E -8.0 m / D -1.6 m · 離地 1.6 m · 垂直 FOV 25.0° · 距離 13.7 m",
+          "vehicle": "drone-2",
+          "view": "observer"
+        }
+      },
+      {
+        "name": "DEM-fallback",
+        "state": {
+          "dirty": "已套用",
+          "statusHidden": true,
+          "toast": "場景已套用。",
+          "view": "orbit"
+        }
+      },
+      {
+        "name": "DEM-invalid-switch",
+        "state": {
+          "toast": "無法切換視角：Ground observer position is outside terrain coverage",
+          "view": "orbit"
+        }
+      },
+      {
+        "name": "invalid-settings-preserved",
+        "state": {
+          "east": "-8",
+          "fov": "25",
+          "north": "-8"
+        }
+      },
+      {
+        "name": "reload-persistence",
+        "state": {
+          "east": "-8",
+          "fov": "25",
+          "height": "1.6",
+          "north": "-8"
+        }
+      },
+      {
+        "name": "DEM-persistent-notice",
+        "state": {
+          "notice": "觀察點不在地形範圍內，已切回自由視角。請重新設定觀察位置。",
+          "noticeVisible": true,
+          "toast": "場景已套用。",
+          "view": "orbit"
+        }
+      },
+      {
+        "name": "valid-DEM-settings",
+        "state": {
+          "hint": "固定觀察點 · 設定中調整視角",
+          "noticeHidden": true,
+          "observer": "觀察點 N -3.0 m / E -3.0 m / D -2.4 m · 離地 2.4 m · 垂直 FOV 35.0° · 距離 4.9 m",
+          "view": "observer"
+        }
+      },
+      {
+        "name": "replay-observer",
+        "state": {
+          "altitude": "3.00",
+          "observer": "觀察點 N -3.0 m / E -3.0 m / D -2.4 m · 離地 2.4 m · 垂直 FOV 35.0° · 距離 8.2 m",
+          "replay": "影格 1245 / 1392 · 62.150 秒（範圍 0.000–69.430 秒）",
+          "time": "01:02.15",
+          "view": "observer"
+        }
+      },
+      {
+        "name": "view-orbit",
+        "state": {
+          "active": "orbit",
+          "hint": "拖曳旋轉 · 滾輪縮放",
+          "observerHidden": true
+        }
+      },
+      {
+        "name": "view-top",
+        "state": {
+          "active": "top",
+          "hint": "拖曳旋轉 · 滾輪縮放",
+          "observerHidden": true
+        }
+      },
+      {
+        "name": "view-follow",
+        "state": {
+          "active": "follow",
+          "hint": "拖曳旋轉 · 滾輪縮放",
+          "observerHidden": true
+        }
+      },
+      {
+        "name": "view-fpv",
+        "state": {
+          "active": "fpv",
+          "hint": "機身第一人稱",
+          "observerHidden": true
+        }
+      },
+      {
+        "name": "view-observer",
+        "state": {
+          "active": "observer",
+          "hint": "固定觀察點 · 設定中調整視角",
+          "observerHidden": false
+        }
+      },
+      {
+        "name": "mobile-toolbar",
+        "state": {
+          "observer": "觀察點 N -3.0 m / E -3.0 m / D -2.4 m · 離地 2.4 m · 垂直 FOV 35.0° · 距離 8.2 m",
+          "scrollWidth": 390,
+          "view": "observer",
+          "width": 390
+        }
+      },
+      {
+        "name": "mobile-dialog",
+        "state": {
+          "allInputsVisible": true,
+          "dialogWidth": 360,
+          "scrollWidth": 390,
+          "width": 390
+        }
+      },
+      {
+        "name": "console",
+        "state": []
+      }
+    ],
+    "recordingRoundtrip": {
+      "deepEqual": true,
+      "originalBytes": 23242245,
+      "roundtripBytes": 23242245,
+      "sameFileSha256": true
+    },
+    "sensorCameraInvariance": {
+      "sameWorldTick": 11582,
+      "sameSimulationTimeS": 57.91000000001117,
+      "differentFields": [
+        "captureId"
+      ],
+      "allOtherFieldsIdentical": true,
+      "imagePayloadSha256": {
+        "rgbRgba": "910fd1e587d4c3cbb0d6c0ac9ebe051193951bbe7377c3e803ac344792a7d5a7",
+        "depthM": "5f531857a7375e66257089b609d4d852646702acfaa44beeeb498d8f9038e221",
+        "classes": "9b87e560b4beffeed0f28cc957f4e5712021c4f7831a6bb974202ba15742b5ca"
+      }
+    },
+    "independentReplay": {
+      "passed": true,
+      "vehicles": 1,
+      "frames": 1392,
+      "ticks": 13886,
+      "simSeconds": 69.43000000000934,
+      "maximum": {
+        "positionM": 2.6645352591003757e-15,
+        "quaternion": 6.869504964868156e-16,
+        "motors": 3.3306690738754696e-16,
+        "allState": 1.3642420526593924e-12,
+        "sensors": 2.5835333872237243e-11
+      }
+    }
+  },
+  "research": {
+    "conceptsOnlyNoCopiedSimulatorCode": true,
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/bultodepapas/OpenRCsimulator/37a550925afb82fa9b982ea27d189584ef8fa487/docs/FIRST-LAUNCH.md",
+        "ref": "37a550925afb82fa9b982ea27d189584ef8fa487",
+        "file": "local/downloads/ground-observer-research/openrcsimulator-first-launch.md",
+        "bytes": 45307,
+        "sha256": "d98d8ca6810cd884aef206eb6853e07dd1841f7f9aba7a41fcde6f860da9aaba"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/Rowlhouse/PicaSim/5b2c5871b82aecae4ae6293b862f31600a6a949c/README.md",
+        "ref": "5b2c5871b82aecae4ae6293b862f31600a6a949c",
+        "file": "local/downloads/ground-observer-research/picasim-readme.md",
+        "bytes": 14893,
+        "sha256": "b2fe9b74f9b384d2e84d52ddf17af76e44acfaa6b844f0dbdc70b0934630fb85"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/mrdoob/three.js/r187/src/cameras/PerspectiveCamera.js",
+        "ref": "r187",
+        "file": "local/downloads/ground-observer-research/three-r187-PerspectiveCamera.js",
+        "bytes": 10651,
+        "sha256": "1cc44938885f785649a978ecb6f57c444561381ddab24de19fc59b400009b111"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/mrdoob/three.js/r187/src/core/Object3D.js",
+        "ref": "r187",
+        "file": "local/downloads/ground-observer-research/three-r187-Object3D.js",
+        "bytes": 41868,
+        "sha256": "5cd0ab0914f006ad4c5a88eeefbe114e964409be46ee005938875b11408613f0"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/mrdoob/three.js/r187/src/math/Matrix4.js",
+        "ref": "r187",
+        "file": "local/downloads/ground-observer-research/three-r187-Matrix4.js",
+        "bytes": 33863,
+        "sha256": "f37121b58e71b0b9fb05a69a2a8e5d76e7d1751fd24320d650bdf1a0c6f9ae83"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/mrdoob/three.js/r187/examples/jsm/controls/OrbitControls.js",
+        "ref": "r187",
+        "file": "local/downloads/ground-observer-research/three-r187-OrbitControls.js",
+        "bytes": 40918,
+        "sha256": "e7fca2fe9e7670a828af9b28084669a5909445b7f36f1f26cee9bf8f2961c32c"
+      }
+    ],
+    "threeJsVersion": "0.187.0",
+    "context7": {
+      "resolved": "/mrdoob/three.js",
+      "queried": "/mrdoob/three.js/r186",
+      "gap": "r187 is not indexed; installed r187 PerspectiveCamera, Object3D/Matrix4 lookAt and OrbitControls were verified against official r187 sources"
+    }
+  },
+  "limits": [
+    "Fixed spectator point and gaze only; no walking, automatic zoom, magnifier, calibrated visual acuity or smooth overhead motion",
+    "Normal scene occlusion remains; no through-obstacle vision",
+    "Preferences are browser-local global viewing preferences and are not recorded as physics events",
+    "Native PX4/ArduPilot flight was not repeated for this spectator-only change; native takeoff camera-preservation caller was updated and code-reviewed",
+    "New DEM coverage browser fixture is synthetic; no new real-world GeoTIFF processing calibration was performed",
+    "Raw screenshots, downloads and flight data remain in ignored project-local local/"
+  ],
+  "capabilities": {
+    "total": 74,
+    "statusCounts": {
+      "implemented": 8,
+      "partial": 58,
+      "external": 8
+    }
+  },
+  "evidence": [
+    {
+      "path": "local/evidence/ground-observer-v036/tests.log",
+      "bytes": 65316,
+      "sha256": "99973e696e773b4d2286ce67b54bcedd9c23699de726e731426c5a729bd446fc"
+    },
+    {
+      "path": "local/evidence/ground-observer-v036/build.log",
+      "bytes": 1180,
+      "sha256": "4cffba0c58b778e6a1f7daa5735dfca4ca4fe3ec9d4e6410068a61a846809b87"
+    },
+    {
+      "path": "local/evidence/ground-observer-v036/browser-observer-flight.json",
+      "bytes": 23242245,
+      "sha256": "506d4d34a3d510ba0cd5d273f3b8b4c3bc01c14149650cc1ac2da3a236d2f349"
+    },
+    {
+      "path": "local/evidence/ground-observer-v036/browser-observer-roundtrip.json",
+      "bytes": 23242245,
+      "sha256": "506d4d34a3d510ba0cd5d273f3b8b4c3bc01c14149650cc1ac2da3a236d2f349"
+    },
+    {
+      "path": "local/evidence/ground-observer-v036/spectator-invariant-camera-dataset.json",
+      "bytes": 1845950,
+      "sha256": "774314f0aa474b9f9be063179b2450dbb0cf621a1fa127a6be546268586eba59"
+    },
+    {
+      "path": "local/evidence/ground-observer-v036/browser-checks.json",
+      "bytes": 3206,
+      "sha256": "3253d33d4694c6f0bf57c3d7dc4c8e6236f9aaa358383df9a04f5cb2ddc93afb"
+    },
+    {
+      "path": "local/evidence/ground-observer-v036/independent-replay.json",
+      "bytes": 327,
+      "sha256": "5ee617101820482756d4d22e92321aae7fbd911a3783225aebf02b1167ca50bd"
+    },
+    {
+      "path": "local/evidence/ground-observer-v036/camera-invariance.json",
+      "bytes": 430,
+      "sha256": "ad3e2d25a4984a4c408fd227d13bae7562c584d9e10a10706e7462f3cce73d0c"
+    },
+    {
+      "path": "local/evidence/ground-observer-v036/roundtrip-check.json",
+      "bytes": 109,
+      "sha256": "b87aca735cead0661699be7316fd395103e97af91a80c6e88d26e9e6b324b28a"
+    },
+    {
+      "path": "local/evidence/ground-observer-v036/synthetic-dem-scene.json",
+      "bytes": 1266,
+      "sha256": "01209584859ad2a60b6d53ed5f9a5a65a850ec39e2625ed300aec0965039051e"
+    },
+    {
+      "path": "local/evidence/ground-observer-v036/observer-fov50.png",
+      "bytes": 76389,
+      "sha256": "af794c6522b20b28e48ab45e21e8629cd033ab94ee37a6bce37843cd02bff63c"
+    },
+    {
+      "path": "local/evidence/ground-observer-v036/observer-fov25.png",
+      "bytes": 75628,
+      "sha256": "de0a1e2d7ba29321616bf9dae483f05439dbb0c0965c289e7fca4c3a50a846aa"
+    },
+    {
+      "path": "local/evidence/ground-observer-v036/mobile-observer-settings.png",
+      "bytes": 21868,
+      "sha256": "9e19e572a4431c79678c1a1f3dd2e16a5df6d5b6db1d0d58f33c5f407b5b0486"
+    },
+    {
+      "path": "local/evidence/ground-observer-v036/ground-observer-release-preview.png",
+      "bytes": 80385,
+      "sha256": "2b499b46f73e0fd7f61727ae542aad39c0b77b48fb8dd41bf32de25f454fa958"
+    }
+  ]
+}

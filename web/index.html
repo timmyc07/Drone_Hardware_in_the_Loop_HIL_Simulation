@@ -831,8 +831,9 @@
                 ><button data-camera="follow" aria-pressed="false">跟隨</button
                 ><button data-camera="fpv" aria-pressed="false">
                   第一人稱
-                </button>
+                </button><button data-camera="observer" aria-pressed="false">地面觀察</button>
               </div>
+              <button id="observer-settings-open" class="text-button" type="button">觀察視角設定</button>
               <button
                 id="render-toggle"
                 class="text-button"
@@ -841,6 +842,8 @@
                 關閉渲染
               </button>
             </div>
+            <p id="observer-status" class="observer-status" hidden></p>
+            <p id="observer-notice" class="observer-status" role="status" hidden></p>
             <div class="transport">
               <button id="play" class="button primary" disabled>
                 <span aria-hidden="true">▶</span> 開始模擬</button
@@ -934,7 +937,7 @@
                 <span
                   ><i class="axis-dot"></i> NED / FRD
                   <span class="muted">・單位 m</span></span
-                ><span>拖曳旋轉 · 滾輪縮放</span>
+                ><span id="camera-interaction-hint">拖曳旋轉 · 滾輪縮放</span>
               </div>
               <div id="scene-error" class="scene-error" hidden></div>
             </div>
@@ -1239,6 +1242,20 @@
       </footer>
     </main>
 
+    <dialog id="observer-dialog" aria-labelledby="observer-title">
+      <form id="observer-form">
+        <div class="dialog-heading"><h2 id="observer-title">觀察視角設定</h2><button type="button" class="icon-button" data-close="observer-dialog" aria-label="關閉觀察視角設定">×</button></div>
+        <p>設定固定地面觀察點；此視角不影響飛行或機載相機。</p>
+        <div class="observer-fields">
+          <label>北向 N（m）<input id="observer-north" type="number" min="-500" max="500" step="any" required></label>
+          <label>東向 E（m）<input id="observer-east" type="number" min="-500" max="500" step="any" required></label>
+          <label>離地眼高（m）<input id="observer-height" type="number" min="0.5" max="10" step="any" required></label>
+          <label>垂直視角 FOV（°）<input id="observer-fov" type="number" min="15" max="100" step="any" required></label>
+        </div>
+        <p id="observer-error" role="alert"></p>
+        <div class="dialog-actions"><button class="button primary" type="submit">套用並切換地面視角</button></div>
+      </form>
+    </dialog>
     <dialog id="settings-dialog" class="settings-dialog">
       <form id="settings-form">
         <div class="dialog-heading">
