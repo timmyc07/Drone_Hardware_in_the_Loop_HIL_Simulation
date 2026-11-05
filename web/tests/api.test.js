@@ -11,7 +11,7 @@ test("vehicle operations require and preserve explicit vehicle IDs", async () =>
     },
     () => () => {},
   );
-  assert.equal(api.version, "2.6");
+  assert.equal(api.version, "2.7");
   await api.getState("one");
   const target = { altitude: 3 };
   await api.setTargets("two", target);
@@ -103,4 +103,25 @@ test("subscriptions isolate delivered state and can be removed", () => {
   assert.equal(received.world.tick, 9);
   unsubscribe();
   assert.equal(removed, true);
+});
+
+test("NIST commands require explicit vehicle IDs and isolate values and reports", async () => {
+  const calls = [], status = { captures: [{ slotId: "s01-1" }] };
+  const api = createFlightApi(async command => { calls.push(command); return status; }, () => () => {});
+  const start = { durationSeconds: 300 }, capture = { slotId: "s01-1" }, score = { slotId: "s01-1", value: 1 }, landing = { phase: "position", value: 2 };
+  const result = await api.startNistTrial("one", start); start.durationSeconds = 10; result.captures[0].slotId = "changed";
+  await api.captureNist("one", capture); await api.scoreNistImage("one", score); await api.scoreNistLanding("one", landing);
+  await api.endNistTrial("one"); await api.getNistReport("one");
+  assert.deepEqual(calls, [
+    { type: "nistStart", vehicleId: "one", value: { durationSeconds: 300 } },
+    { type: "captureNist", vehicleId: "one", value: capture },
+    { type: "nistScore", vehicleId: "one", value: score },
+    { type: "nistLanding", vehicleId: "one", value: landing },
+    { type: "nistEnd", vehicleId: "one" }, { type: "nistReport", vehicleId: "one" },
+  ]);
+  assert.equal(status.captures[0].slotId, "s01-1");
+  for (const method of ["startNistTrial", "captureNist", "scoreNistImage", "scoreNistLanding", "endNistTrial", "getNistReport"]) {
+    assert.throws(() => api[method]("bad id", {}), /vehicleId/);
+    assert.throws(() => api[method](), /vehicleId/);
+  }
 });

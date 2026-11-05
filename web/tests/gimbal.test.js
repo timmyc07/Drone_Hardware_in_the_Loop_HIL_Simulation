@@ -243,6 +243,34 @@ test("bounded analytic fit is no worse than an independent coarse orientation gr
   }
 });
 
+test("yaw hard-stop ties choose the same endpoint across ULP perturbations", () => {
+  const states = [-4e-16, 4e-16].map(perturbation => {
+    const g = createGimbal(settings("body"));g.set(settings("ned"));
+    const q = quaternion(Math.PI, 0.3, 0);q[0] += perturbation;
+    return settle(g, q, 4);
+  });
+  near(states[0].actual.yaw, -Math.PI);near(states[1].actual.yaw, -Math.PI);
+  for (const state of states) assert.ok(state.trackingErrorRad < 1e-12);
+});
+
+test("both pitch poles retain equivalent raw joints across tiny body perturbations without swallowing real yaw", () => {
+  for (const sign of [-1, 1]) {
+    const input = settings("ned", { yaw: 0, pitch: sign * Math.PI / 2, roll: 0 });
+    const a = createGimbal(input), b = createGimbal(input);
+    for (let tick = 0; tick < 2000; tick++) {
+      const q = quaternion(0, 5e-6 * Math.sin(tick / 20), 0);
+      const perturbed = [...q]; perturbed[1] += 4e-16; perturbed[3] -= 2e-16;
+      const first = a.update(0.005, q), second = b.update(0.005, perturbed);
+      for (const axis of ["yaw", "pitch", "roll"])
+        near(first.actual[axis], second.actual[axis], 1e-9);
+      near(first.actual.yaw, 0, 1e-9);near(first.actual.roll, 0, 1e-9);
+    }
+    const q = quaternion(0.1, 0, 0), state = settle(a, q);
+    assert.ok(Math.abs(state.actual.yaw) + Math.abs(state.actual.roll) > 0.05);
+    assert.ok(rotationError(achieved(q, state.actual), gimbalRotation(input.target)) < 1e-12);
+  }
+});
+
 test("long near-nadir hover remains continuous across ULP-sized attitude perturbations", () => {
   const input = settings("ned", { yaw: 0, pitch: Math.PI / 2, roll: 0 });
   const a = createGimbal(input), b = createGimbal(input);

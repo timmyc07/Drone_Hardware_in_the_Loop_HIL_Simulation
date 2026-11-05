@@ -1,3 +1,4 @@
+import { NIST_EVENT_TYPES } from '../web/nist.js';
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { createWorld } from "../web/world.js";
@@ -47,7 +48,7 @@ export function replayWorldRecording(input) {
       const e = record.events[eventIndex++];
       if (e.type === "scene") state = world.setScene(e.value);
       else if (e.type === "wind") state = world.setWind(e.value);
-      else if (e.type !== "render")
+      else if (e.type !== "render" && !NIST_EVENT_TYPES.includes(e.type))
         state = world.command(e.vehicleId, e.type, e.value, e.fault);
     }
   }

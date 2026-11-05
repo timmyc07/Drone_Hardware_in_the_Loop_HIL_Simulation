@@ -14,6 +14,15 @@ void main() {
   cameraDepth = -viewPosition.z;
   gl_Position = projectionMatrix * viewPosition;
 }`;
+// Derive visibility from the same precise varying as exported depth: interpolating
+// clip-space depth across the 20 km ground triangles can hide millimetre-high parts.
+const fragmentDepth = `
+#ifdef CAMERA_LOGARITHMIC_DEPTH
+  gl_FragDepth = log2(1.0 + cameraDepth) / log2(1.0 + farM);
+#else
+  gl_FragDepth = farM / (farM - nearM) * (1.0 - nearM / cameraDepth);
+#endif
+`;
 const depthFragment = `
 precision highp float;
 in highp float cameraDepth;
@@ -22,6 +31,7 @@ uniform float farM;
 out vec4 outputColor;
 void main() {
   if (cameraDepth < nearM || cameraDepth > farM) discard;
+  ${fragmentDepth}
   float mm = floor(cameraDepth * 1000.0 + 0.5);
   outputColor = vec4(floor(mm / 65536.0), floor(mod(mm, 65536.0) / 256.0), mod(mm, 256.0), 255.0) / 255.0;
 }`;
@@ -34,6 +44,7 @@ uniform float classId;
 out vec4 outputColor;
 void main() {
   if (cameraDepth < nearM || cameraDepth > farM) discard;
+  ${fragmentDepth}
   outputColor = vec4(classId / 255.0, 0.0, 0.0, 1.0);
 }
 `;
@@ -80,6 +91,9 @@ export function createCameraRenderer(renderer, scene) {
         new THREE.RawShaderMaterial({
           name: `Camera ${kind} ${id}`,
           glslVersion: THREE.GLSL3,
+          defines: renderer.capabilities.logarithmicDepthBuffer
+            ? { CAMERA_LOGARITHMIC_DEPTH: 1 }
+            : {},
           vertexShader,
           fragmentShader: kind === "depth" ? depthFragment : classFragment,
           uniforms: {

@@ -8,6 +8,7 @@ import {
   recordingToJson,
   recordingWorldAt,
   recordingInspectionReport,
+  recordingNistState,
 } from "./recording.js";
 import { readPilotInput, takeoffPlayAction } from "./input.js";
 import { exportVehiclePointCloud } from "./pointcloud.js";
@@ -15,6 +16,10 @@ import { exportRadarData } from "./radar.js";
 import { exportProximityData, PROXIMITY_BOUNDS } from "./proximity.js";
 import { createProximityPanel } from "./proximity-panel.js";
 import { createInstructorPanel } from "./instructor-panel.js";
+import { createNistPanel } from "./nist-panel.js";
+import { nistReportToJson } from "./nist.js";
+import { createNistEvidenceVerifier } from "./nist-evidence.js";
+import { createNistTrainingWorld } from "./nist-setup.js";
 import {
   createHilClient,
   isCompanionOrigin,
@@ -99,6 +104,11 @@ let automaticCamera;
 let automaticCameraControls;
 let instructorPanel, instructorState;
 let instructorEpoch = 0;
+let nistPanel, nistState;
+let nistEpoch = 0;
+let nistBusy = false;
+let nistEvidenceSessionId = null;
+let nistVerifiedImages = new Set();
 let cameraBusy = false;
 let cameraDatasetBusy = false;
 let surveyApplying = false;
@@ -488,6 +498,8 @@ function requestApi(command, internal = false) {
   }
   if (command.type === "captureInspection")
     return captureInspectionFrame(command.vehicleId, command.value);
+  if (command.type === "captureNist")
+    return captureNistFrame(command.vehicleId, command.value);
   const id = ++requestId;
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -582,6 +594,7 @@ function setPlaying(value) {
     `<span class="dot"></span>${externalActive ? (hilState?.controller?.verified === true && hilState?.stats?.sensorPackets > 0 && hilState?.stats?.actuatorPackets > 0 ? `${hilControllerName()} SITL 閉環 · 植物模型真值` : `${hilControllerName()} 介接中`) : label}`;
   observeAutomaticCamera();
   instructorPanel?.refresh(instructorState);
+  nistPanel?.refresh(nistState);
 }
 
 const targets = [
@@ -1165,6 +1178,8 @@ worker.onmessage = ({ data }) => {
   worldState = data.world;
   worldConfig = data.worldConfig;
   instructorState = data.instructor;
+  nistState = data.nist;
+  if (data.message === "reset") nistEpoch++;
   if (data.message === "reset") instructorEpoch++;
   if (!worldConfig.scene.geography)
     for (const item of worldConfig.vehicles)
@@ -1275,6 +1290,7 @@ worker.onmessage = ({ data }) => {
     termination: data.termination,
     timing: data.timing,
     instructor: data.instructor,
+    nist: data.nist,
   };
   for (const callback of apiSubscribers) {
     try {
@@ -2452,6 +2468,7 @@ for (const button of document.querySelectorAll("[data-workspace]"))
       "mission",
       "training",
       "instructor",
+      "nist",
       "scene",
       "inspection",
       "sensors",
@@ -2462,6 +2479,7 @@ for (const button of document.querySelectorAll("[data-workspace]"))
     document.querySelector(".workspace").hidden =
       button.dataset.workspace === "catalog";
     instructorPanel.refresh(instructorState);
+    nistPanel?.refresh(nistState);
   };
 const category = $("catalog-category"),
   status = $("catalog-status");
@@ -2657,6 +2675,7 @@ function renderScene(value, viewOnly) {
   scene?.setTerrain(value.terrain);
   scene?.setEnvironment(value.environment);
   scene?.setObstacles(value.obstacles, value.inspectionTargets);
+  scene?.setNistLane(value.nistLane);
   const selected = worldState?.vehicles.find(
     (item) => item.id === activeVehicleId,
   );
@@ -2681,6 +2700,7 @@ function showReplayEvent(type, value) {
 }
 function projectReplayWorld(resetHistory = false) {
   worldState = recordingWorldAt(replay, replayIndex);
+  nistState = recordingNistState(replay, replayIndex);
   worldTermination =
     replayIndex === replay.samples.length - 1 ? replay.termination : null;
   const selected =
@@ -3270,6 +3290,9 @@ function clearCameraPreview() {
     const canvas = $(id);
     canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
   }
+  const nistImage = $('nist-image');
+  nistImage.getContext('2d').clearRect(0, 0, nistImage.width, nistImage.height);
+  $('nist-image-label').textContent = '尚未拍攝。';
   updateCameraStatus();
 }
 function updateCameraStatus() {
@@ -3479,6 +3502,12 @@ $("inspection-export").onclick = async () => {
   }
 };
 async function captureInspectionFrame(vehicleId, targetId) {
+  return captureEvidenceFrame(vehicleId, targetId, false);
+}
+async function captureNistFrame(vehicleId, slotId) {
+  return captureEvidenceFrame(vehicleId, slotId, true);
+}
+async function captureEvidenceFrame(vehicleId, targetId, isNist) {
   if (
     replay || externalActive || inspectionBusy || cameraBusy || cameraDatasetBusy || surveyApplying ||
     automaticCamera?.getState().active || automaticCamera?.getState().pending
@@ -3492,18 +3521,29 @@ async function captureInspectionFrame(vehicleId, targetId) {
   )
     throw new Error("相機資料集已滿，請先匯出並清除。");
   const captureConfig = { ...cameraConfig };
+  const [begin, submit, cancel] = isNist
+    ? ["nistCaptureBegin", "nistCaptureSubmit", "nistCaptureCancel"]
+    : ["inspectionBegin", "inspectionSubmit", "inspectionCancel"];
+  const epoch = cameraEpoch, sessionId = isNist ? nistState?.sessionId : null;
+  const checkContext = () => {
+    if (epoch !== cameraEpoch || vehicleId !== activeVehicleId || replay || externalActive ||
+        (isNist && sessionId !== nistState?.sessionId))
+      throw new Error("實驗、模式或載具已切換，本次拍攝已取消。");
+  };
   inspectionBusy = true;
+  nistBusy = isNist;
   cameraBusy = true;
   renderInspection();
   updateCameraStatus();
   let captureId;
   try {
     const ticket = await requestApi({
-      type: "inspectionBegin",
+      type: begin,
       vehicleId,
-      value: { targetId, config: captureConfig },
+      value: { [isNist ? "slotId" : "targetId"]: targetId, config: captureConfig },
     });
     captureId = ticket.captureId;
+    checkContext();
     const selected = ticket.world.vehicles.find(
       (item) => item.id === vehicleId,
     );
@@ -3521,28 +3561,37 @@ async function captureInspectionFrame(vehicleId, targetId) {
       if (worldState) scene.updateWorld(worldState, activeVehicleId, 0);
     }
     const frame = { ...(await pending), ...ticket.metadata };
-    appendCameraFrame(frame);
-    refreshCameraSelector();
-    $("camera-frame-select").value = String(cameraDataset.length - 1);
-    showCameraFrame(frame);
+    checkContext();
     const report = await requestApi({
-      type: "inspectionSubmit",
+      type: submit,
       vehicleId,
       value: { captureId, frame },
     });
     captureId = undefined;
-    void checkInspectionImage();
+    checkContext();
+    appendCameraFrame(frame);
+    refreshCameraSelector();
+    $("camera-frame-select").value = String(cameraDataset.length - 1);
+    showCameraFrame(frame);
+    if (isNist) {
+      nistState = report;
+      syncNistEvidence();
+      nistVerifiedImages.add(frame.captureId);
+      showNistImage(frame);
+    } else void checkInspectionImage();
     return report;
   } finally {
     if (captureId)
       try {
+        if (replay || externalActive) await requestApi({ type: "pause" }, true);
         await requestApi({
-          type: "inspectionCancel",
+          type: cancel,
           vehicleId,
           value: { captureId },
-        });
+        }, true);
       } catch {}
     inspectionBusy = false;
+    nistBusy = false;
     cameraBusy = false;
     renderInspection();
     updateCameraStatus();
@@ -3805,6 +3854,85 @@ automaticCameraControls = createAutomaticCameraControls({
   getContext: automaticCameraContext,
 });
 updateCameraStatus();
+
+function syncNistEvidence() {
+  if (nistEvidenceSessionId !== nistState?.sessionId) {
+    nistEvidenceSessionId = nistState?.sessionId ?? null;
+    nistVerifiedImages = new Set();
+  }
+}
+function nistContext() {
+  syncNistEvidence();
+  const supported = [...MULTIROTOR_AIRFRAMES, 'vtol'].includes(config.airframe);
+  const available = !!worldState && !replay && !externalActive;
+  const canStart = available && supported && latest?.status === 'landed' && !storageLimited && !worldTermination && worldState.tick < 360000;
+  const captures = nistState?.captures || [];
+  const retainedIds = new Set(cameraDataset.map(frame => frame.captureId));
+  const verified = captures.filter(c => nistVerifiedImages.has(c.captureId)).length;
+  return {
+    available, canStart, canScore: available, laneReady: !!worldConfig?.scene.nistLane, vehicleId: activeVehicleId,
+    vehicleName: worldConfig?.vehicles.find(v => v.id === activeVehicleId)?.name,
+    worldTick: worldState?.tick ?? 0, landed: latest?.status === 'landed', epoch: nistEpoch,
+    reason: replay ? '重播可檢視既有紀錄，不能新增操作。' : externalActive ? '請切回內建模擬。'
+      : !supported ? '此練習需要多旋翼或懸停 VTOL。' : !available || storageLimited || worldTermination || worldState.tick >= 360000 ? '請先重設已終止的實驗。' : '',
+    canCapture: available && !storageLimited && !worldTermination && worldState.tick < 360000 && !!scene && activeVehicleId === nistState?.vehicleId && !cameraBusy && !nistBusy && !cameraDatasetBusy && !surveyApplying &&
+      !automaticCamera?.getState().active && !automaticCamera?.getState().pending &&
+      cameraDataset.length < CAMERA_DATASET_MAX_FRAMES && cameraDatasetBytes + cameraConfig.width * cameraConfig.height * 9 <= CAMERA_DATASET_MAX_BYTES,
+    evidence: { required: captures.length, verified, missing: captures.length - verified, retained: captures.filter(c => retainedIds.has(c.captureId)).length },
+  };
+}
+function showNistImage(frame) {
+  const canvas = $('nist-image');
+  canvas.width = frame.width; canvas.height = frame.height;
+  canvas.getContext('2d').putImageData(new ImageData(cameraPreview(frame, 'rgb'), frame.width, frame.height), 0, 0);
+  $('nist-image-view').open = true;
+  $('nist-image-label').textContent = `目標影像 · 載具 ${frame.sourceVehicleId} · ${frame.time.toFixed(3)} 秒 · ${frame.captureId}`;
+}
+async function prepareNistLane() {
+  if (!(await confirmAction('載入場地會重設目前實驗，只保留選中的飛行器，並採用低密度光達與雷達設定。請先匯出需要保留的飛行紀錄。確定繼續？'))) return;
+  const source = worldConfig.vehicles.find(v => v.id === activeVehicleId);
+  const value = createNistTrainingWorld(source);
+  await requestApi({ type: 'resetWorld', value, activeVehicleId: source.id });
+  return requestApi({ type: 'nistReport', vehicleId: source.id });
+}
+async function verifyNistDatasets(files) {
+  if (!files.length || files.length > 36) throw new Error('請選擇 1 至 36 份影像資料卷。');
+  const epoch = nistEpoch, verifier = createNistEvidenceVerifier(nistReportToJson(nistState));
+  await verifier.addFrames(cameraDataset);
+  for (const file of files) {
+    if (file.size > CAMERA_DATASET_MAX_IMPORT_BYTES) throw new Error('影像資料卷超過 40 MiB 匯入上限。');
+    await verifier.addFrames(parseCameraDataset(await file.text()));
+    if (epoch !== nistEpoch) throw new Error('實驗已切換，本次核對已取消。');
+  }
+  if (verifier.result().sessionId !== nistState?.sessionId) throw new Error('練習已切換，本次核對已取消。');
+  for (const id of verifier.result().matchedCaptureIds) nistVerifiedImages.add(id);
+  nistPanel.refresh(nistState);
+  const result = verifier.result();
+  return { message: `已核對 ${files.length} 份資料集：${result.matchedCaptureIds.length}/${result.requiredCaptureIds.length} 張影像符合報告。` };
+}
+nistPanel = createNistPanel({
+  prepareLane: prepareNistLane,
+  start: value => requestApi({ type: 'nistStart', vehicleId: activeVehicleId, value }),
+  capture: slotId => captureNistFrame(nistState.vehicleId, slotId),
+  score: value => requestApi({ type: 'nistScore', vehicleId: nistState.vehicleId, value }),
+  landing: value => requestApi({ type: 'nistLanding', vehicleId: nistState.vehicleId, value }),
+  end: () => requestApi({ type: 'nistEnd', vehicleId: nistState.vehicleId }),
+  report: async () => {
+    const status = replay ? nistState : await requestApi({ type: 'nistReport', vehicleId: nistState.vehicleId });
+    download(nistReportToJson(status), 'json', 'application/json', 'flight-lab-nist-report.json');
+  },
+  preview: id => {
+    const frame = cameraDataset.find(frame => frame.captureId === id);
+    if (!frame) throw new Error('影像已分卷匯出；請在感測器工作區匯入對應資料卷後檢視。');
+    showNistImage(frame);
+  },
+  exportDataset: () => $('camera-export').onclick(),
+  clearDataset: async () => {
+    if (cameraDatasetDirty) throw new Error('請先匯出目前影像資料卷，再清空。');
+    await $('camera-clear').onclick();
+  },
+  verifyDatasets: verifyNistDatasets, getContext: nistContext,
+});
 
 const isLocalCompanion = isCompanionOrigin(window.location);
 $("hil-remote-notice").hidden = isLocalCompanion;

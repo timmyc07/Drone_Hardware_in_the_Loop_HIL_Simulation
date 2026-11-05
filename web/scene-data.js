@@ -4,7 +4,7 @@ import { validateCustomGates } from "./training.js";
 import { DEFAULT_TERRAIN, validateTerrain, createTerrain } from "./terrain.js";
 import { validateGeography } from "./geography.js";
 export const SCENE_MAX_IMPORT_BYTES = 512 * 1024;
-export const SCENE_VERSION = 6;
+export const SCENE_VERSION = 7;
 const freeze = (value) => {
   Object.freeze(value);
   for (const child of Object.values(value))
@@ -19,6 +19,7 @@ export const DEFAULT_SCENE = freeze({
   obstacles: [],
   customGates: [],
   inspectionTargets: [],
+  nistLane: false,
 });
 function exact(value, keys, label) {
   if (
@@ -54,6 +55,7 @@ export function validateScene(value = DEFAULT_SCENE) {
       "obstacles",
       "customGates",
       "inspectionTargets",
+      "nistLane",
     ],
     "scene",
   );
@@ -72,6 +74,8 @@ export function validateScene(value = DEFAULT_SCENE) {
     throw new Error(
       "DEM terrain requires its geographic origin and source metadata",
     );
+  if (typeof value.nistLane !== "boolean" || (value.nistLane && (terrain.kind !== "flat" || geography !== null)))
+    throw new Error("NIST 場地需要零高度平地且不得設定地理參考");
   const surface = createTerrain(terrain);
   if (
     geography &&
@@ -104,6 +108,7 @@ export function validateScene(value = DEFAULT_SCENE) {
     obstacles,
     customGates,
     inspectionTargets,
+    nistLane: value.nistLane,
   };
 }
 export function parseSceneJson(text) {

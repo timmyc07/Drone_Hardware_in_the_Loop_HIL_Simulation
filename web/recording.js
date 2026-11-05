@@ -1,3 +1,4 @@
+import { NIST_EVENT_TYPES, createNistSession, validateNistEventValue } from './nist.js';
 import { createSimulation, validateConfig, bodyToNedAngles } from "./sim.js";
 import {
   DEFAULT_SENSOR_CONFIG,
@@ -31,8 +32,8 @@ import {
   validateGimbalState,
 } from "./gimbal.js";
 
-export const RECORDING_VERSION = 16;
-export const MODEL_VERSION = "0.11.0";
+export const RECORDING_VERSION = 17;
+export const MODEL_VERSION = "0.12.0";
 const MODES = ["attitude", "position", "mission", "rtl", "land", "takeoff"];
 const TAKEOFF_PHASES = [
   "idle",
@@ -492,6 +493,7 @@ function flight(value) {
 function event(input, sim, initialScene) {
   object(input);
   const result = { time: number(input.time, 0, 1800.001), type: input.type };
+  if (NIST_EVENT_TYPES.includes(input.type)) return {...result,value:validateNistEventValue(input.type,input.value)};
   switch (input.type) {
     case "inspection": {
       exactKeys(
@@ -829,6 +831,7 @@ export function validateSensorFrame(value, sensorConfig = {}) {
 
 const GLOBAL_EVENTS = ["scene", "wind", "render"];
 const VEHICLE_EVENTS = [
+  ...NIST_EVENT_TYPES,
   "targets",
   "gust",
   "mode",
@@ -1012,7 +1015,7 @@ export function validateRecording(value) {
   object(value);
   if (value.version !== RECORDING_VERSION)
     throw new Error(
-      "Unsupported recording version: version 16 required; legacy recordings are not supported",
+      "Unsupported recording version: version 17 required; legacy recordings are not supported",
     );
   exactKeys(
     value,
@@ -1350,6 +1353,34 @@ export function validateRecording(value) {
     )
   )
     throw new Error("Collision requires the final stopped world frame");
+  const nist = createNistSession();
+  let nistScene = world.scene;
+  const exposureFrames = new Map(samples.map(frame => [frame.tick,frame]));
+  const evidenceIds = new Set();
+  const nistGimbals = new Map(world.vehicles.map(v => [v.id, structuredClone(v.setup.gimbal)]));
+  for (const e of events) {
+    if (e.type === "gimbal") nistGimbals.set(e.vehicleId,e.value);
+    if (["inspection","nistCapture"].includes(e.type)) {
+      if (evidenceIds.has(e.value.captureId)) throw new Error("拍攝識別碼重複");
+      evidenceIds.add(e.value.captureId);
+    }
+    if (e.type === "scene") {
+      if (nist.getState().phase === "running") throw new Error("NIST 練習期間不得更換場景");
+      nistScene = e.value;
+    }
+    if (NIST_EVENT_TYPES.includes(e.type)) {
+      const frame = exposureFrames.get(e.tick);
+      if (!frame) throw new Error("NIST 事件缺少對應完整世界影格");
+      if (e.type === "nistEnd" && e.value.reason === "time-limit") {
+        const session=nist.getState();
+        if (e.tick !== Math.min(360000,session.startTick + session.durationSeconds*200)) throw new Error("NIST 結束時刻不符合時間上限");
+      }
+      nist.apply(e,nistExposureFrame(frame,e,nistGimbals.get(e.vehicleId)),nistScene);
+    }
+  }
+  const finalSession = nist.getState(lastTick);
+  if (finalSession.phase === "running" && (termination !== null || lastTick === 360000 || samples.at(-1).vehicles.find(v => v.id === finalSession.vehicleId)?.snapshot.status === "crashed")) throw new Error("NIST 練習缺少模擬終止事件");
+  if (finalSession.phase === "running" && lastTick >= finalSession.startTick + finalSession.durationSeconds*200) throw new Error("NIST 練習缺少時間上限結束事件");
   return {
     format: "flight-lab",
     version: RECORDING_VERSION,
@@ -1421,6 +1452,29 @@ export function recordingWorldAt(record, index) {
       inspection: frame.vehicles[i].snapshot.inspection,
     })),
   };
+}
+function nistExposureFrame(frame, event, gimbal) {
+  if (event.type !== "nistCapture") return frame;
+  const acquired = event.value.metadata.gimbal;
+  for (const key of ["mode","target","maxRate"])
+    if (!inspectionEqual(acquired[key],gimbal[key])) throw new Error("NIST 雲台設定不符合曝光事件順序");
+  const source = frame.vehicles.find(v => v.id === event.vehicleId);
+  if (!source || !inspectionEqual(acquired.actual,source.snapshot.gimbal.actual)) throw new Error("NIST 雲台姿態不符合曝光時刻");
+  return {...frame, vehicles:frame.vehicles.map(v => v.id !== event.vehicleId ? v : ({...v,snapshot:{...v.snapshot,gimbal:acquired}}))};
+}
+export function recordingNistState(record, index) {
+  if (!Number.isInteger(index) || index < 0 || index >= record.samples.length) throw new Error("NIST 重播影格索引不正確");
+  const tick = record.samples[index].tick, session = createNistSession();
+  const frames = new Map(record.samples.map(frame => [frame.tick, frame]));
+  let scene = record.world.scene;
+  const gimbals = new Map(record.world.vehicles.map(v => [v.id, v.setup.gimbal]));
+  for (const event of record.events) {
+    if (event.tick > tick) break;
+    if (event.type === "scene") scene = event.value;
+    if (event.type === "gimbal") gimbals.set(event.vehicleId,event.value);
+    if (NIST_EVENT_TYPES.includes(event.type)) session.apply(event, nistExposureFrame(frames.get(event.tick),event,gimbals.get(event.vehicleId)), scene);
+  }
+  return session.getState(tick);
 }
 export function recordingInspectionReport(record, index, vehicleId) {
   const state = recordingWorldAt(record, index);

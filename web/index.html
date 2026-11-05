@@ -62,6 +62,7 @@
         <button class="active" data-workspace="flight">飛行實驗</button
         ><button data-workspace="mission">任務規劃</button
         ><button data-workspace="instructor">教官排程</button
+        ><button data-workspace="nist">NIST 練習</button
         ><button data-workspace="training">訓練場</button
         ><button data-workspace="scene">場景編輯</button
         ><button data-workspace="inspection">設施巡檢</button
@@ -153,6 +154,41 @@
         <p id="instructor-status">尚無排程</p>
         <ol id="instructor-receipts"></ol>
       </section>
+      <section id="nist-workspace" class="panel workspace-extra" hidden>
+        <h2>NIST 練習</h2>
+        <p>依 NIST Level 1 公開步驟練習；人工判讀，不提供認證。完整綠環、旋轉、路線及至少一腳位於降落圓內均由人工判定。</p>
+        <p>場地範本使用較低密度的光達與雷達資料，讓飛行紀錄可保留更久；可在管理參數調整，密集資料會較早達到儲存上限。</p>
+        <p id="nist-availability"></p>
+        <fieldset id="nist-form">
+          <div class="feature-actions">
+            <button id="nist-prepare" type="button">載入 NIST 場地</button>
+            <label>時限 <select id="nist-duration"><option value="300">5 分鐘</option><option value="600" selected>10 分鐘</option><option value="custom">自訂分鐘</option></select></label>
+            <label>自訂分鐘 <input id="nist-custom" type="number" min="0.5" max="30" step="any" value="5"></label>
+            <button id="nist-start" type="button">開始練習</button>
+            <button id="nist-end" type="button">結束練習</button>
+          </div>
+          <p>開始後綁定目前載具，不會自動起飛。步驟請手動選擇及操作。</p>
+          <label>步驟 <select id="nist-step"></select></label>
+          <p id="nist-instruction"></p>
+          <div id="nist-slots"></div>
+          <div id="nist-landing"></div>
+          <details id="nist-image-view">
+            <summary>拍攝影像</summary>
+            <p id="nist-image-label">尚未拍攝。</p>
+            <canvas id="nist-image" width="320" height="240" aria-label="NIST 拍攝原圖"></canvas>
+          </details>
+          <div class="feature-actions">
+            <button id="nist-report" type="button">匯出報告 JSON</button>
+            <button id="nist-export" type="button">匯出目前影像資料卷</button>
+            <button id="nist-clear" type="button">清空已匯出影像</button>
+            <label>核對影像資料卷 <input id="nist-files" type="file" multiple></label>
+          </div>
+        </fieldset>
+        <p>影像上限為 30 張或 24 MiB；完整 36 圖可分卷匯出。報告不含原圖。</p>
+        <p id="nist-evidence"></p>
+        <p id="nist-status" aria-live="polite"></p>
+        <p id="nist-message" role="status"></p>
+      </section>
       <section id="training-workspace" class="panel workspace-extra" hidden>
         <h2>訓練場 <span>PRACTICE</span></h2>
         <p>獨立練習與模擬評分，不代表正式認證。</p>
@@ -230,6 +266,7 @@
         <p>障礙盒會影響碰撞與測距；訓練門僅作評分標記，不會阻擋光達。</p>
         <p id="scene-dirty" role="status">已套用</p>
         <label>場景名稱 <input id="scene-name" maxlength="80" /></label>
+        <label><input id="scene-nist-lane" type="checkbox">NIST Level 1 器材（需零高程平地）</label>
         <label
           >地圖範圍
           <select id="scene-map-range">

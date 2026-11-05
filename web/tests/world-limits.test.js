@@ -1,3 +1,5 @@
+import { createNistTrainingWorld } from '../nist-setup.js';
+import { replayWorldRecording } from '../../tools/replay-world.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Worker } from "node:worker_threads";
@@ -119,7 +121,7 @@ function fleet(count, { ground = false, sensors = lowRays } = {}) {
   return input;
 }
 function assertFinalWorld(record, stopped) {
-  assert.equal(record.version, 16);
+  assert.equal(record.version, 17);
   assert.equal(record.samples.at(-1).tick, stopped.world.tick);
   assert.equal(record.samples.at(-1).time, stopped.world.time);
   assert.equal(record.sensorFrames.at(-1).tick, stopped.world.tick);
@@ -409,3 +411,30 @@ test(
     assert.equal((await h.call({type:"instructorApply",value:nextPlan})).phase,"armed");
   },
 );
+
+
+test('NIST training defaults retain every 200 Hz step and 20 Hz flight frame for an active ten-minute session', {timeout:240000}, async t=>{
+  const started=performance.now(), h=await harness(t);
+  const source=defaultWorldConfig().vehicles[0], input=createNistTrainingWorld(source), vehicleId=input.vehicles[0].id;
+  assert.equal(input.vehicles[0].config.batteryBasePower,source.config.batteryBasePower);
+  assert.equal(input.vehicles[0].config.batteryMotorPower,source.config.batteryMotorPower);
+  await h.call({type:'resetWorld',value:input});
+  await h.call({type:'nistStart',vehicleId,value:{durationSeconds:600}});
+  await h.call({type:'takeoff',vehicleId});
+  await h.call({type:'position',vehicleId,value:{north:0,east:0,altitude:3}});
+  await h.call({type:'speed',value:4});await h.call({type:'play'});
+  const stopped=await h.untilStopped(1600);
+  assert.deepEqual(h.errors,[]);
+  assert.equal(stopped.world.tick,120000);assert.equal(stopped.running,false);assert.equal(h.latest.storageLimited,false);
+  assert.equal(stopped.nist.phase,'ended');assert.equal(stopped.nist.endTick,120000);assert.equal(stopped.nist.termination,'time-limit');
+  assert.equal(h.latest.sampleCount,12001);
+  const vehicle=stopped.world.vehicles[0].snapshot;
+  assert.equal(vehicle.status,'flying');assert.ok(Math.abs(vehicle.position[2]+3)<.1);assert.ok(vehicle.battery.soc<1 && vehicle.battery.soc>0);
+  const raw=await h.call({type:'apiExport'});
+  const retainedBytes=Buffer.byteLength(JSON.stringify(raw.samples))+Buffer.byteLength(JSON.stringify(raw.sensorFrames))-2+(raw.events.length?Buffer.byteLength(JSON.stringify(raw.events))-1:0);
+  assert.ok(retainedBytes<DATA_LIMIT,`NIST ten-minute recording exceeded 96 MiB: ${retainedBytes}`);
+  assert.equal(raw.samples.length,12001);assert.deepEqual(raw.samples.map(f=>f.tick),Array.from({length:12001},(_,i)=>i*10));
+  const record=validateRecording(raw);assertFinalWorld(record,stopped);
+  const replay=replayWorldRecording(record);assert.equal(replay.passed,true);
+  t.diagnostic(JSON.stringify({fixture:'NIST training default quadrotor, actual 3 m position hold, stock battery power',steps:120000,frames:12001,retainedBytes,limitBytes:DATA_LIMIT,spareBytes:DATA_LIMIT-retainedBytes,nistEndTick:stopped.nist.endTick,finalAltitudeM:-vehicle.position[2],finalBatterySoc:vehicle.battery.soc,replay,elapsedWallSeconds:(performance.now()-started)/1000}));
+});

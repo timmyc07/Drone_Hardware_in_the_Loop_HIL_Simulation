@@ -1,3 +1,4 @@
+import { createNistLaneCollider } from "./nist-geometry.js";
 import { obstacleContainsVehicle } from "./obstacle-geometry.js";
 import { createSimulation, validateConfig, DEFAULT_CONFIG } from "./sim.js";
 import { DEFAULT_SCENE, validateScene } from "./scene-data.js";
@@ -196,6 +197,8 @@ export function validateWorldConfig(input) {
       spawn.east,
       -surface.sample(spawn.north, spawn.east).heightM - spawn.altitude,
     ];
+    if (scene.nistLane && createNistLaneCollider().overlaps(position, radius))
+      throw new Error("Initial vehicle envelope intersects NIST apparatus");
     for (const box of scene.obstacles) {
       if (obstacleContainsVehicle(box, position, radius))
         throw new Error("Initial vehicle envelope intersects an obstacle");
@@ -274,11 +277,13 @@ export function createWorld(input) {
       sim = simulation(spec.config, spec.setup, scene, spec.spawn, spec.home);
     sim.setScenario(spec.scenario);
     sim.setObstacles(scene.obstacles);
+    sim.setNistLane(scene.nistLane === true);
     if (spec.setup.mission.length) sim.setMission(spec.setup.mission);
     sim.setMode(spec.setup.mode);
     const suite = createSensorSuite(spec.setup.sensors, spec.config.seed);
     suite.setTerrain(scene.terrain);
     suite.setObstacles(scene.obstacles);
+    suite.setNistLane(scene.nistLane === true);
     const trainer = createTrainer(
       spec.setup.training,
       spec.config.airframe,
@@ -479,6 +484,7 @@ export function createWorld(input) {
         const suite = createSensorSuite(config, v.spec.config.seed);
         suite.setTerrain(scene.terrain);
         suite.setObstacles(scene.obstacles);
+        suite.setNistLane(scene.nistLane === true);
         v.suite = suite;
         v.spec.setup.sensors = config;
       } else if (type === "sensorFault") {
@@ -573,6 +579,11 @@ export function createWorld(input) {
       JSON.stringify(next.terrain) !== JSON.stringify(scene.terrain)
     )
       throw new Error("Geography or terrain changes require a world reset");
+    if (next.nistLane) {
+      for (const v of vehicles)
+        if (createNistLaneCollider().overlaps(v.sim.snapshot().position, v.radius))
+          throw new Error(`NIST apparatus would intersect vehicle ${v.spec.id}`);
+    }
     if (JSON.stringify(next.obstacles) !== JSON.stringify(scene.obstacles)) {
       for (const v of vehicles) {
         const position = v.sim.snapshot().position;
@@ -610,8 +621,10 @@ export function createWorld(input) {
         }
         v.sim.setTerrain(next.terrain);
         v.sim.setObstacles(next.obstacles);
+        v.sim.setNistLane(next.nistLane === true);
         v.suite.setTerrain(next.terrain);
         v.suite.setObstacles(next.obstacles);
+        v.suite.setNistLane(next.nistLane === true);
       }
       scene = next;
       for (const v of vehicles) v.receipts = [];

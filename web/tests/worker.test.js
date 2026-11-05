@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { createWorld, defaultWorldConfig } from "../world.js";
 import { validateRecording } from "../recording.js";
 import { DEFAULT_CAMERA_CONFIG, hashCameraFrame } from "../camera.js";
+import { replayWorldRecording } from "../../tools/replay-world.mjs";
 
 async function harness(t, deferHash = false, limits = null) {
   let url = new URL("../worker.js", import.meta.url).href;
@@ -16,6 +17,7 @@ async function harness(t, deferHash = false, limits = null) {
     if (limits.time) source = source.replace("LIMIT = 1800", `LIMIT = ${limits.time}`);
     if (limits.events) source = source.replaceAll("100000", String(limits.events));
     if (limits.bytes) source = source.replace("DATA_LIMIT = 96 * 1024 * 1024", `DATA_LIMIT = ${limits.bytes}`);
+    if (limits.seedEvents) source = source.replaceAll("events = [];", `events = Array.from({length:${limits.seedEvents}}, () => ({type:"render",value:true,tick:0,time:0}));`);
     url = `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
   }
   const worker = new Worker(
@@ -39,7 +41,7 @@ async function harness(t, deferHash = false, limits = null) {
     globalThis.onmessage=null;
     parentPort.on('message',data=>{
       if(data.releaseHash){releaseDigest?.();parentPort.postMessage({type:'advanced',requestId:data.requestId});}
-      else if(data.advance!==undefined){for(let i=0;i<data.advance;i++){now+=100;tick();}parentPort.postMessage({type:'advanced',requestId:data.requestId});}
+      else if(data.advance!==undefined){for(let i=0;i<data.advance;i++){now+=data.advanceMs ?? 100;tick();}parentPort.postMessage({type:'advanced',requestId:data.requestId});}
       else globalThis.onmessage({data});
     });
     await import(${JSON.stringify(url)});
@@ -93,7 +95,7 @@ async function harness(t, deferHash = false, limits = null) {
   return {
     send,
     call,
-    advance: (count) => send({ advance: count }),
+    advance: (count, advanceMs = 100) => send({ advance: count, advanceMs }),
     hashStarted,
     releaseHash: () => send({ releaseHash: true }),
     get latest() {
@@ -159,7 +161,7 @@ function replay(record) {
   function apply(event) {
     if (event.type === "scene") world.setScene(event.value);
     else if (event.type === "wind") world.setWind(event.value);
-    else if (event.type !== "render")
+    else if (event.type !== "render" && !event.type.startsWith("nist"))
       world.command(event.vehicleId, event.type, event.value, event.fault);
   }
 }
@@ -401,7 +403,7 @@ test("radar exports identify the requested vehicle and retain delayed acquisitio
     "number",
   );
   const record = validateRecording(raw);
-  assert.equal(record.version, 16);
+  assert.equal(record.version, 17);
   replay(record);
 });
 
@@ -433,7 +435,7 @@ test("proximity exports preserve the requested vehicle, delayed pose and fault s
   assert.ok(faulted.reading.rangesM.every(v => v === null));
   assert.ok(faulted.reading.tooClose.every(v => v === false));
   const record = validateRecording(await h.call({ type: "apiExport" }));
-  assert.equal(record.version, 16);
+  assert.equal(record.version, 17);
   assert.equal(record.sensorFrames.at(-1).vehicles[1].sensors.faults.proximity, true);
   replay(record);
 });
@@ -568,7 +570,7 @@ test("inspection lease freezes the whole fleet, rejects mutations and mismatched
   );
 });
 
-test("successful inspection submissions hash actual buffers and retain replayable schema16 receipts without resuming an explicit pause", async (t) => {
+test("successful inspection submissions hash actual buffers and retain replayable schema17 receipts without resuming an explicit pause", async (t) => {
   const h = await harness(t);
   await h.call({ type: "resetWorld", value: inspectionFleet() });
   await h.call({ type: "play" });
@@ -596,7 +598,7 @@ test("successful inspection submissions hash actual buffers and retain replayabl
   assert.equal(inspected.world.vehicles[1].snapshot.inspection.attempts, 0);
   assert.equal((await submitInspection(h, lease, frame)).ok, false);
   const record = validateRecording(await h.call({ type: "apiExport" }));
-  assert.equal(record.version, 16);
+  assert.equal(record.version, 17);
   const event = record.events.find((event) => event.type === "inspection");
   assert.equal(event.tick, lease.world.tick);
   assert.equal(event.value.sha256, expectedHash);
@@ -670,7 +672,7 @@ test("reset or cancel while the real buffer digest is pending cannot commit stal
   }
 });
 
-test('instructor schedules native schema16 events in tick order independent of speed, rendering, selection and pause', async (t) => {
+test('instructor schedules native schema17 events in tick order independent of speed, rendering, selection and pause', async (t) => {
   const records=[];
   for (const fast of [false,true]) {
     const h=await harness(t);
@@ -694,7 +696,7 @@ test('instructor schedules native schema16 events in tick order independent of s
     assert.deepEqual(status.receipts.map(r=>r.tick),[2,2,3,4,5]);
     const record=validateRecording(await h.call({type:'apiExport'}));
     replay(record);
-    assert.equal(record.version,16);assert.equal(Object.hasOwn(record,'instructor'),false);
+    assert.equal(record.version,17);assert.equal(Object.hasOwn(record,'instructor'),false);
     assert.deepEqual(record.events.filter(e=>e.type!=='render').map(({time,...e})=>e),plan.events);
     records.push(record);
   }
@@ -798,4 +800,143 @@ test('instructor applies lift motor and pusher faults to a VTOL through native c
   const record=validateRecording(await h.call({type:'apiExport'}));
   assert.deepEqual(record.events.map(({time,...event})=>event),events);
   replay(record);
+});
+
+test('NIST frozen captures retain exact evidence and sparse manual scores with strict record replay', async t => {
+  const h=await harness(t), input=fleet(1);input.scene.nistLane=true;
+  await h.call({type:'resetWorld',value:input});
+  const vehicleId=input.vehicles[0].id;
+  await h.call({type:'nistStart',vehicleId,value:{durationSeconds:30}});
+  assert.equal((await h.send({type:'nistScore',vehicleId,value:{slotId:'s01-1',value:1}})).ok,false);
+  await h.call({type:'play'});await h.advance(1);
+  assert.equal(h.latest.nist.phase,'running');
+  const lease=await h.call({type:'nistCaptureBegin',vehicleId,value:{slotId:'s01-1',config:DEFAULT_CAMERA_CONFIG}});
+  await h.advance(3);
+  assert.equal((await h.call({type:'inspectWorld'})).world.tick,lease.world.tick);
+  assert.equal((await h.send({type:'scene',value:input.scene})).ok,false);
+  const frame=protocolFrame(lease.metadata), sha256=await hashCameraFrame(frame);
+  const status=await h.call({type:'nistCaptureSubmit',vehicleId,value:{captureId:lease.captureId,frame}});
+  assert.equal(status.captures[0].sha256,sha256);
+  await h.call({type:'pause'});
+  const gimbal=structuredClone(input.vehicles[0].setup.gimbal);gimbal.target.pitch=-.3;
+  await h.call({type:'gimbal',vehicleId,value:gimbal});
+  await h.call({type:'nistEnd',vehicleId});
+  const scored=await h.call({type:'nistScore',vehicleId,value:{slotId:'s01-1',value:1}});
+  assert.equal(scored.totalScore,1);assert.equal(scored.assessment,'manual');
+  assert.equal((await h.send({type:'nistCaptureBegin',vehicleId,value:{slotId:'s01-2',config:DEFAULT_CAMERA_CONFIG}})).ok,false);
+  const record=validateRecording(await h.call({type:'apiExport'}));
+  assert.deepEqual(record.events.filter(e=>e.type.startsWith('nist')).map(e=>e.type),['nistStart','nistCapture','nistEnd','nistScore']);
+  assert.equal(record.samples[0].vehicles[0].snapshot.nist,undefined);
+  replay(record);
+  const bad=structuredClone(record);bad.events.find(e=>e.type==='nistCapture').value.metadata.pose.positionNed[0]+=1;
+  assert.throws(()=>validateRecording(bad));
+  await h.call({type:'resetWorld',value:input});
+  assert.equal((await h.call({type:'nistReport',vehicleId})).phase,'idle');
+});
+
+test('NIST duration uses simulation ticks, ends precisely and retains queryable evidence',async t=>{
+  const h=await harness(t), input=fleet(1);input.scene.nistLane=true;
+  await h.call({type:'resetWorld',value:input});const vehicleId=input.vehicles[0].id;
+  await h.call({type:'nistStart',vehicleId,value:{durationSeconds:30}});
+  await h.advance(5);assert.equal((await h.call({type:'nistReport',vehicleId})).elapsedSeconds,0);
+  await h.call({type:'play'});await h.advance(305);
+  const state=await h.call({type:'inspectWorld'});
+  assert.equal(state.nist.phase,'ended');assert.equal(state.nist.endTick,6000);assert.equal(state.nist.termination,'time-limit');assert.equal(state.running,false);
+  const record=validateRecording(await h.call({type:'apiExport'}));replay(record);
+});
+
+test('NIST reserves a final sparse end event when recording reaches its command limit',async t=>{
+  const h=await harness(t,false,{events:4}), input=fleet(1);input.scene.nistLane=true;
+  await h.call({type:'resetWorld',value:input});const vehicleId=input.vehicles[0].id;
+  await h.call({type:'nistStart',vehicleId,value:{durationSeconds:30}});
+  await h.call({type:'gust',vehicleId});await h.call({type:'gust',vehicleId});
+  const status=await h.call({type:'nistReport',vehicleId});
+  assert.equal(status.phase,'ended');assert.equal(status.termination,'storage-limit');
+  const record=validateRecording(await h.call({type:'apiExport'}));
+  assert.equal(record.events.length,4);assert.equal(record.events.at(-1).type,'nistEnd');
+  assert.equal((await h.send({type:'play'})).ok,false);
+});
+
+test('NIST scoring at the real 100000 event boundary cannot corrupt the export',async t=>{
+  const h=await harness(t,false,{seedEvents:99996}), input=fleet(1);input.scene.nistLane=true;
+  await h.call({type:'resetWorld',value:input});const vehicleId=input.vehicles[0].id;
+  await h.call({type:'nistStart',vehicleId,value:{durationSeconds:30}});
+  const lease=await h.call({type:'nistCaptureBegin',vehicleId,value:{slotId:'s01-1',config:DEFAULT_CAMERA_CONFIG}});
+  await h.call({type:'nistCaptureSubmit',vehicleId,value:{captureId:lease.captureId,frame:protocolFrame(lease.metadata)}});
+  await h.call({type:'gust',vehicleId});
+  const before=await h.call({type:'inspectWorld'}), record=await h.call({type:'apiExport'});
+  assert.equal(record.events.length,100000);assert.equal(before.nist.termination,'storage-limit');
+  assert.equal((await h.send({type:'nistScore',vehicleId,value:{slotId:'s01-1',value:1}})).ok,false);
+  const after=await h.call({type:'inspectWorld'});
+  assert.equal(after.running,before.running);assert.deepEqual(after.world,before.world);assert.deepEqual(after.nist,before.nist);
+  const exported=await h.call({type:'apiExport'});assert.deepEqual(exported,record);
+  assert.equal(replayWorldRecording(validateRecording(JSON.parse(JSON.stringify(exported)))).passed,true);
+});
+
+test('NIST byte-limited sessions still allow scores while event capacity remains',async t=>{
+  const h=await harness(t,false,{bytes:50000}), input=fleet(1);input.scene.nistLane=true;
+  await h.call({type:'resetWorld',value:input});const vehicleId=input.vehicles[0].id;
+  await h.call({type:'nistStart',vehicleId,value:{durationSeconds:30}});
+  const lease=await h.call({type:'nistCaptureBegin',vehicleId,value:{slotId:'s01-1',config:DEFAULT_CAMERA_CONFIG}});
+  await h.call({type:'nistCaptureSubmit',vehicleId,value:{captureId:lease.captureId,frame:protocolFrame(lease.metadata)}});
+  await h.call({type:'play'});await h.advance(30);
+  assert.equal((await h.call({type:'nistReport',vehicleId})).termination,'storage-limit');
+  assert.equal((await h.call({type:'nistScore',vehicleId,value:{slotId:'s01-1',value:1}})).totalScore,1);
+  replay(validateRecording(await h.call({type:'apiExport'})));
+});
+
+test('rejected NIST starts, ends and capture slots preserve the running world and current session',async t=>{
+  const h=await harness(t), input=fleet(2);input.scene.nistLane=true;
+  await h.call({type:'resetWorld',value:input});await h.call({type:'play'});
+  async function unchanged(command) {
+    const before=await h.call({type:'inspectWorld'});
+    assert.equal((await h.send(command)).ok,false);
+    const after=await h.call({type:'inspectWorld'});
+    assert.equal(after.running,before.running);assert.deepEqual(after.nist,before.nist);assert.deepEqual(after.world,before.world);
+  }
+  await unchanged({type:'nistEnd',vehicleId:'drone-1'});
+  await unchanged({type:'nistStart',vehicleId:'drone-1',value:{durationSeconds:29}});
+  await unchanged({type:'nistCaptureBegin',vehicleId:'drone-1',value:{slotId:'missing',config:DEFAULT_CAMERA_CONFIG}});
+  await h.call({type:'nistStart',vehicleId:'drone-1',value:{durationSeconds:30}});
+  await unchanged({type:'nistEnd',vehicleId:'drone-2'});
+  await unchanged({type:'nistStart',vehicleId:'drone-2',value:{durationSeconds:30}});
+  await unchanged({type:'nistCaptureBegin',vehicleId:'drone-1',value:{slotId:'missing',config:DEFAULT_CAMERA_CONFIG}});
+  await unchanged({type:'nistCaptureBegin',vehicleId:'drone-2',value:{slotId:'s01-1',config:DEFAULT_CAMERA_CONFIG}});
+  assert.equal((await h.call({type:'nistEnd',vehicleId:'drone-1'})).phase,'ended');
+  assert.equal((await h.call({type:'inspectWorld'})).running,false);
+});
+
+test('fixed-wing NIST start is rejected without pausing or creating a session',async t=>{
+  const h=await harness(t), input=structuredClone(defaultWorldConfig({airframe:'fixedwing',startOnGround:true}));input.scene.nistLane=true;
+  await h.call({type:'resetWorld',value:input});await h.call({type:'play'});
+  const before=await h.call({type:'inspectWorld'});
+  const reply=await h.send({type:'nistStart',vehicleId:input.vehicles[0].id,value:{durationSeconds:600}});
+  assert.equal(reply.ok,false);assert.match(reply.error,/原地懸停/);
+  const after=await h.call({type:'inspectWorld'});
+  assert.equal(after.running,true);assert.deepEqual(after.nist,before.nist);assert.deepEqual(after.world,before.world);
+});
+
+test('NIST deadline pushes its final state even when the last callback is below the publish interval',async t=>{
+  const h=await harness(t),input=fleet(1);input.scene.nistLane=true;
+  await h.call({type:'resetWorld',value:input});const vehicleId=input.vehicles[0].id;
+  await h.call({type:'nistStart',vehicleId,value:{durationSeconds:30}});await h.call({type:'play'});
+  await h.advance(4300,7);
+  // 7 ms callbacks publish every 56 ms; the final deadline callback occurs 42 ms after the prior push.
+  assert.equal(h.latest.nist.phase,'ended');assert.equal(h.latest.nist.endTick,6000);
+  assert.equal(h.latest.world.tick,6000);assert.equal(h.latest.running,false);assert.equal(h.latest.nist.termination,'time-limit');
+  const record=validateRecording(await h.call({type:'apiExport'}));assert.equal(record.samples.at(-1).tick,6000);
+});
+
+test('NIST apparatus collision pushes the exact final crash state without a following inspection request',async t=>{
+  const h=await harness(t),input=fleet(1);input.scene.nistLane=true;
+  input.scene.obstacles=[{north:0,east:0,width:1,depth:1,baseAltitude:1,height:.2}];
+  await h.call({type:'resetWorld',value:input});const vehicleId=input.vehicles[0].id;
+  await h.call({type:'nistStart',vehicleId,value:{durationSeconds:30}});
+  await h.call({type:'takeoff',vehicleId});await h.call({type:'play'});
+  await h.advance(1000,7);
+  assert.equal(h.latest.nist.phase,'ended');assert.equal(h.latest.running,false);assert.equal(h.latest.nist.termination,'vehicle-collision');
+  assert.equal(h.latest.world.vehicles[0].snapshot.status,'crashed');assert.equal(h.latest.world.tick,h.latest.nist.endTick);
+  assert.ok(h.latest.world.tick>0&&h.latest.world.tick<6000);
+  assert.notEqual(Math.round(h.latest.timing.wallSeconds*1000/7)%8,0,'crash fixture must end between the ordinary 56 ms publishes');
+  const record=validateRecording(await h.call({type:'apiExport'}));assert.equal(record.samples.at(-1).tick,h.latest.nist.endTick);
 });

@@ -44,6 +44,7 @@ export function createSceneEditor({ apply, confirm, download, notify }) {
           : "已套用";
     for (const id of [
       "scene-name",
+      "scene-nist-lane",
       "scene-tool",
       "scene-add-obstacle",
       "scene-add-gate",
@@ -115,6 +116,7 @@ export function createSceneEditor({ apply, confirm, download, notify }) {
     invalidInputs.clear();
     if (invalidTerrain) invalidInputs.add($("terrain-heights"));
     $("scene-name").value = draft.name;
+    $("scene-nist-lane").checked = draft.nistLane;
     const terrain = draft.terrain;
     if (!invalidTerrain) {
       $("terrain-north").value = terrain.kind === "flat" ? "" : terrain.north;
@@ -254,6 +256,11 @@ export function createSceneEditor({ apply, confirm, download, notify }) {
     selected = { kind, index: list.length - 1 };
     render();
   }
+  $("scene-nist-lane").onchange = (event) => {
+    if (readonly) return;
+    draft.nistLane = event.target.checked;
+    render();
+  };
   $("scene-name").oninput = (event) => {
     draft.name = event.target.value;
     updateStatus();

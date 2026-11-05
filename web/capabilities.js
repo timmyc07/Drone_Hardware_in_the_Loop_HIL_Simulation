@@ -1,6 +1,11 @@
 // 公開資料盤點；狀態描述本專案，不代表外部產品狀態。
 export const SOURCES = [
   {
+    name: "NIST Level 1 基礎操控計分表 2023A",
+    url: "https://www.nist.gov/document/nist-level-1-scoresheets-2-pages-v2023a",
+    kind: "官方政府資料",
+  },
+  {
     name: "PX4 故障注入與恢復",
     url: "https://github.com/PX4/PX4-Autopilot/blob/5468dd100a69796dfdea8d99921d091f188799e4/docs/en/debug/failure_injection.md",
     kind: "開源文件",
@@ -491,7 +496,7 @@ export const CAPABILITIES = [
     category: "環境",
     title: "障礙物",
     description:
-      "固定場景障礙以 0.25 m 飛機包絡做掃掠 AABB 碰撞，非網格精確碰撞。",
+      "障礙盒採機型包絡的擴張 AABB；NIST 器材以共享三角面及掃掠球檢查碰撞，均未經實機校準。",
     status: "partial",
     sources: ["https://www.velocidrone.com/features"],
   },
@@ -740,9 +745,9 @@ export const CAPABILITIES = [
     id: "nist",
     category: "訓練與評估",
     title: "標準化練習",
-    description: "依 NIST 訓練課程執行觀測練習。",
-    status: "planned",
-    sources: ["https://zephyr-sim.com/nist-tutorial"],
+    description: "提供固定 SI 場地、30 步／36 張影像的 Level 1 練習、人工評分與分卷影像核對；不提供自動路線判定或認證。",
+    status: "partial",
+    sources: ["https://www.nist.gov/document/nist-level-1-scoresheets-2-pages-v2023a", "https://zephyr-sim.com/nist-tutorial"],
   },
   {
     id: "racing-gates",
@@ -830,7 +835,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "JSON 重播",
     description:
-      "版本 16 JSON 保存全機隊、場景與事件；支援時間軸跳轉、逐幀和依載具／類型定位事件，拒絕版本 1 至 15。",
+      "版本 17 JSON 保存全機隊、場景與事件；支援時間軸跳轉、逐幀和依載具／類型定位事件，拒絕版本 1 至 16。",
     status: "partial",
     sources: [
       "https://www.liftoff-game.com/news/full-release-liftoff-micro-drones",
@@ -904,7 +909,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "程式控制 API",
     description:
-      "同頁 API 2.6 支援指定載具、自動拍攝、六向近接資料匯出及教官排程，共用世界時鐘、場景與風；外部 SITL 使用獨立本機服務。",
+      "同頁 API 2.7 支援指定載具、自動拍攝、六向近接、教官排程及 NIST 練習，共用世界時鐘、場景與風；外部 SITL 使用獨立本機服務。",
     status: "partial",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/apis.md"],
   },

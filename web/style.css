@@ -1690,3 +1690,12 @@ select:disabled {
 .instructor-row label { display: flex; flex-direction: column; align-items: start; }
 .instructor-row input[type="number"] { width: 7rem; }
 #instructor-form { border: 0; padding: 0; margin: 0; min-width: 0; }
+
+#nist-form { border: 0; padding: 0; margin: 0; min-width: 0; }
+#nist-form select, #nist-form input { max-width: 100%; }
+#nist-step { width: min(100%, 34rem); }
+#nist-custom { width: 6rem; }
+.nist-slot { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: .5rem 0; }
+#nist-landing button { margin: 0 .4rem .4rem 0; }
+#nist-image { display: block; width: min(100%, 640px); height: auto; image-rendering: pixelated; }
+#nist-image-label { overflow-wrap: anywhere; }

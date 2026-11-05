@@ -1,3 +1,4 @@
+import { createNistSession, NIST_SLOTS } from "./nist.js";
 import { createInstructorScheduler } from "./instructor.js";
 import { createWorld, defaultWorldConfig } from "./world.js";
 import { exportRadarData } from "./radar.js";
@@ -22,6 +23,7 @@ const DT = 0.005,
   LIMIT = 1800,
   DATA_LIMIT = 96 * 1024 * 1024;
 const instructor = createInstructorScheduler();
+const nist = createNistSession();
 let world = createWorld(defaultWorldConfig());
 let initialWorld = world.configuration;
 let activeVehicleId = initialWorld.vehicles[0].id;
@@ -80,8 +82,10 @@ const VEHICLE_READS = [
   "inspectionSubmit",
   "inspectionCancel",
   "inspectionReport",
+  "nistStart", "nistCaptureBegin", "nistCaptureSubmit", "nistCaptureCancel", "nistScore", "nistLanding", "nistEnd", "nistReport",
 ];
 const READS = [
+  "nistReport",
   "instructorStatus",
   "instructorReport",
   "instructorCancel",
@@ -93,7 +97,7 @@ const READS = [
   "inspectScene",
   "selectVehicle",
   ...VEHICLE_READS.filter(
-    (type) => !["inspectionBegin", "inspectionSubmit"].includes(type),
+    (type) => !["inspectionBegin", "inspectionSubmit", "nistStart", "nistCaptureBegin", "nistCaptureSubmit", "nistScore", "nistLanding", "nistEnd"].includes(type),
   ),
 ];
 function state() {
@@ -134,6 +138,7 @@ function inspectedState(vehicleId = activeVehicleId) {
     setup: { ...v.setup, scene: value.scene },
     running,
     instructor: instructor.getState(),
+    nist: nist.getState(value.tick),
     termination,
     timing: {
       ...runtime(),
@@ -189,6 +194,7 @@ function capture() {
     running = false;
     storageLimited = true;
     instructor.cancel("storage-limit");
+    endNist("storage-limit");
   }
 }
 function reset(value, id) {
@@ -199,6 +205,7 @@ function reset(value, id) {
     throw new Error("找不到指定載具");
   inspectionCapture = null;
   instructor.reset();
+  nist.reset();
   world = next;
   initialWorld = configuration;
   activeVehicleId = nextId;
@@ -223,7 +230,7 @@ function reset(value, id) {
 function recordEvent(data) {
   const value = world.snapshot();
   const event = { tick: value.tick, time: value.time, type: data.type };
-  if (VEHICLE_COMMANDS.includes(data.type)) event.vehicleId = data.vehicleId;
+  if (VEHICLE_COMMANDS.includes(data.type) || data.type.startsWith("nist")) event.vehicleId = data.vehicleId;
   if (
     ![
       "gust",
@@ -243,11 +250,21 @@ function recordEvent(data) {
   events.push(event);
   recordBytes += JSON.stringify(event).length + 1;
   capture();
-  if (events.length >= 100000) {
+  if (events.length >= 100000 - (nist.vehicleId() ? 1 : 0)) {
     running = false;
     storageLimited = true;
     instructor.cancel("storage-limit");
+    endNist("storage-limit");
   }
+}
+function applyNist(type, vehicleId, value) {
+  const frame = world.snapshot();
+  nist.apply({type,vehicleId,value,tick:frame.tick,time:frame.time},frame,world.configuration.scene);
+  recordEvent({type,vehicleId,value});
+}
+function endNist(reason) {
+  const session = nist.getState();
+  if (session.phase === "running") applyNist("nistEnd",session.vehicleId,{reason});
 }
 function recording() {
   // Every command and export retains one atomic frame for the entire world.
@@ -283,13 +300,13 @@ onmessage = async ({ data }) => {
     )
       throw new Error("無效的程式介面請求編號");
     if (
-      (storageLimited || events.length >= 100000) &&
-      !READS.includes(data.type)
+      (events.length >= 100000 && !READS.includes(data.type)) ||
+      (storageLimited && ![...READS,"nistScore"].includes(data.type))
     )
       throw new Error("紀錄資料已達上限，請匯出後重設");
     if (
       inspectionCapture &&
-      ![...READS.filter(type => type !== "instructorCancel"), "inspectionSubmit", "inspectionCancel"].includes(data.type)
+      ![...READS.filter(type => type !== "instructorCancel"), "inspectionSubmit", "inspectionCancel", "nistCaptureSubmit", "nistCaptureCancel"].includes(data.type)
     )
       throw new Error("巡檢拍攝中，請等待影像完成或取消拍攝");
     if (
@@ -316,6 +333,35 @@ onmessage = async ({ data }) => {
       publish();
     } else
       switch (data.type) {
+        case "nistStart":
+        case "nistScore":
+        case "nistLanding":
+        case "nistEnd":
+        case "nistReport": {
+          if (data.requestId === undefined) throw new Error("NIST 操作需要請求編號");
+          if (data.type === "nistReport") {
+            postMessage({type:"apiReply",requestId:data.requestId,ok:true,value:nist.getState(world.snapshot().tick)});
+            return;
+          }
+          let value = data.value;
+          if (data.type === "nistStart") {
+            if (events.length >= 99999 || termination || world.snapshot().collisions.length || world.snapshot().time >= LIMIT) throw new Error("本次模擬已終止，請重設");
+            if (!value || Object.keys(value).join(',') !== 'durationSeconds') throw new Error("NIST 開始欄位不正確");
+            value = {sessionId:crypto.randomUUID(),durationSeconds:value.durationSeconds};
+          } else if (data.type === "nistLanding") {
+            if (!value || Object.keys(value).sort().join(',') !== 'phase,value') throw new Error("NIST 降落欄位不正確");
+            const source = selected(state(),data.vehicleId).snapshot;
+            value = {...value,positionNed:source.position,bodyQuaternionWxyz:source.quaternion,status:source.status};
+          } else if (data.type === "nistEnd") {
+            if (value !== undefined && (Object.keys(value).length !== 0)) throw new Error("NIST 結束欄位不正確");
+            value = {reason:"manual"};
+          }
+          applyNist(data.type,data.vehicleId,value);
+          if (data.type === "nistEnd") running = false;
+          publish();
+          postMessage({type:"apiReply",requestId:data.requestId,ok:true,value:nist.getState(world.snapshot().tick)});
+          return;
+        }
         case "instructorApply":
         case "instructorCancel":
         case "instructorStatus":
@@ -353,23 +399,31 @@ onmessage = async ({ data }) => {
           running = false;
           publish();
           break;
+        case "nistCaptureBegin":
         case "inspectionBegin": {
           if (data.requestId === undefined) throw new Error("拍攝需要請求編號");
           if (inspectionCapture) throw new Error("已有巡檢拍攝正在進行");
           const value = state(),
             v = selected(value, data.vehicleId);
+          const isNist = data.type === "nistCaptureBegin";
           if (
             !data.value ||
-            Object.keys(data.value).sort().join(",") !== "config,targetId"
+            Object.keys(data.value).sort().join(",") !== (isNist ? "config,slotId" : "config,targetId")
           )
             throw new Error("無效的巡檢拍攝設定");
-          if (
+          if (!isNist && (
             !value.scene.inspectionTargets.some(
               (target) => target.id === data.value.targetId,
             )
-          )
+          ))
             throw new Error("找不到巡檢目標");
-          if (world.inspectionReport(v.id).receipts.length >= 100)
+          if (isNist) {
+            const session = nist.getState(value.tick);
+            if (session.phase !== "running" || session.vehicleId !== v.id ||
+                !NIST_SLOTS.some(slot => slot.id === data.value.slotId) ||
+                session.captures.some(c => c.slotId === data.value.slotId)) throw new Error("NIST 拍攝槽不正確或已使用");
+          }
+          if (!isNist && world.inspectionReport(v.id).receipts.length >= 100)
             throw new Error("巡檢拍攝已達100次，請匯出後重設");
           const config = validateCameraConfig(data.value.config),
             captureId = crypto.randomUUID();
@@ -387,6 +441,8 @@ onmessage = async ({ data }) => {
             captureId,
             vehicleId: v.id,
             targetId: data.value.targetId,
+            kind: isNist ? "nist" : "inspection",
+            slotId: data.value.slotId,
             metadata,
             config,
             resume: running,
@@ -403,25 +459,29 @@ onmessage = async ({ data }) => {
           });
           return;
         }
+        case "nistCaptureCancel":
         case "inspectionCancel": {
           const lease = inspectionCapture;
           if (
             !lease ||
             lease.vehicleId !== data.vehicleId ||
-            data.value?.captureId !== lease.captureId
+            data.value?.captureId !== lease.captureId ||
+            lease.kind !== (data.type === "nistCaptureCancel" ? "nist" : "inspection")
           )
             throw new Error("巡檢拍攝已失效");
           releaseInspection(lease);
           publish();
           break;
         }
+        case "nistCaptureSubmit":
         case "inspectionSubmit": {
           const lease = inspectionCapture;
           if (
             !lease ||
             lease.vehicleId !== data.vehicleId ||
             data.value?.captureId !== lease.captureId ||
-            lease.submitting
+            lease.submitting ||
+            lease.kind !== (data.type === "nistCaptureSubmit" ? "nist" : "inspection")
           )
             throw new Error("巡檢拍攝已失效或重複提交");
           lease.submitting = true;
@@ -439,6 +499,13 @@ onmessage = async ({ data }) => {
               throw new Error("影像不屬於目前巡檢拍攝時刻");
             const sha256 = await hashCameraFrame(frame);
             if (inspectionCapture !== lease) throw new Error("巡檢拍攝已失效");
+            if (lease.kind === "nist") {
+              applyNist("nistCapture",lease.vehicleId,{slotId:lease.slotId,captureId:lease.captureId,metadata:lease.metadata,sha256});
+              releaseInspection(lease);
+              publish();
+              postMessage({type:"apiReply",requestId:data.requestId,ok:true,value:nist.getState(world.snapshot().tick)});
+              return;
+            }
             const value = {
               captureId: lease.captureId,
               targetId: lease.targetId,
@@ -491,6 +558,7 @@ onmessage = async ({ data }) => {
           recordEvent(data);
           break;
         case "scene":
+          if (nist.getState().phase === "running") throw new Error("請先結束 NIST 練習再編輯場景");
           world.setScene(data.value);
           recordEvent({ ...data, value: world.configuration.scene });
           publish();
@@ -675,6 +743,14 @@ function tick() {
     try {
       while (accumulator >= DT && running) {
         const value = world.step(DT);
+        const nistVehicle = nist.vehicleId();
+        if (nistVehicle && value.vehicles.find(v => v.id === nistVehicle)?.snapshot.status === "crashed") {
+          running = false;
+          endNist("vehicle-collision");
+        }
+        const deadline = nist.deadlineTick();
+        if (deadline !== null && value.tick >= deadline) { running = false; endNist("time-limit"); }
+        const nistStopped = nistVehicle !== null && nist.vehicleId() === null;
         termination = null;
         accumulator -= DT;
         if (value.collisions.length) instructor.cancel("vehicle-collision");
@@ -688,6 +764,7 @@ function tick() {
           });
           if (wasArmed && status.phase === "error") {
             running = false;
+            endNist("simulation-error");
             capture();
             publish("instructor-error");
             break;
@@ -697,24 +774,28 @@ function tick() {
         if (value.collisions.length) {
           running = false;
           termination = { reason: "vehicle-collision", time: value.time };
+          endNist("vehicle-collision");
           publish("vehicle-collision");
         } else if (storageLimited || events.length >= 100000) {
           running = false;
           storageLimited = true;
           instructor.cancel("storage-limit");
+          endNist("storage-limit");
           publish("storage-limit");
         }
         else if (value.time >= LIMIT - 1e-8) {
           running = false;
           instructor.cancel("time-limit");
+          endNist("time-limit");
           capture();
           publish("limit");
-        }
+        } else if (nistStopped) publish();
       }
       if (now - lastPublish >= 50) publish();
     } catch (error) {
       running = false;
       instructor.cancel(error.code === "TERRAIN_COVERAGE" ? "terrain-coverage" : "simulation-error");
+      endNist(error.code === "TERRAIN_COVERAGE" ? "terrain-coverage" : "simulation-error");
       if (error.code === "TERRAIN_COVERAGE")
         termination = {
           reason: "terrain-coverage",

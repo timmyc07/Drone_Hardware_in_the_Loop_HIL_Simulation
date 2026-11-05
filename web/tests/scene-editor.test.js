@@ -44,6 +44,7 @@ test("numeric input updates exported draft, retains subsequent edits and support
     "terrain-ridge",
     "terrain-valley",
     "scene-name",
+    "scene-nist-lane",
     "scene-course",
     "scene-tool",
     "scene-add-obstacle",

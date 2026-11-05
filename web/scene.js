@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { createTerrain } from "./terrain.js";
 import { inspectionPanel } from "./inspection.js";
+import { createNistLaneGroup, NIST_LANE } from "./nist-geometry.js";
 import { lidarPoints, MAX_LIDAR_POINTS } from "./sensors.js";
 import { getRotorLayout, MULTIROTOR_AIRFRAMES } from "./rotor-geometry.js";
 import { AIRFRAME_PRESETS, RUNWAY } from "./sim.js";
@@ -19,7 +20,10 @@ export function createScene(container) {
   scene.background = new THREE.Color("#101c2d");
   scene.fog = new THREE.Fog("#101c2d", 600, 1200);
   const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 2000);
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    logarithmicDepthBuffer: true,
+  });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.domElement.setAttribute("aria-label", "Drone flight simulation");
@@ -55,6 +59,48 @@ export function createScene(container) {
   ground.userData.cameraClass = 1;
   scene.add(ground);
 
+  const nist = new THREE.Group();
+  scene.add(nist);
+  let nistEnabled = false;
+  function setNistLane(enabled) {
+    if (enabled === nistEnabled) return;
+    clear(nist);
+    nistEnabled = enabled;
+    runway.visible = !enabled && terrain.runwayCompatible;
+    pad.visible = !enabled && terrain.data.kind !== 'dem';
+    if (!enabled) return;
+    nist.add(createNistLaneGroup({ labelTexture(target) {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 256;
+      const context = canvas.getContext('2d');
+      context.fillStyle = '#fff'; context.fillRect(0, 0, 256, 256);
+      context.fillStyle = '#111'; context.font = 'bold 76px sans-serif';
+      context.textAlign = 'center'; context.textBaseline = 'middle';
+      context.fillText(target.id, 128, 128);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      return texture;
+    } }));
+    const paint = (geometry, color, north = 0, east = 0, map = null) => {
+      const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color, map, side: THREE.DoubleSide }));
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.set(east, 0.001, -north);
+      mesh.userData.cameraClass = 1;
+      nist.add(mesh);
+    };
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 512;
+    const context = canvas.getContext('2d');
+    context.fillStyle = '#f2f2e7'; context.fillRect(0, 0, 512, 512);
+    context.strokeStyle = '#00ad55'; context.lineWidth = 0.02 / NIST_LANE.launchPadSize * 512;
+    context.beginPath(); context.arc(256, 256, (NIST_LANE.launchCircleRadius - 0.01) / NIST_LANE.launchPadSize * 512, 0, Math.PI * 2); context.stroke();
+    context.fillStyle = '#111'; context.font = 'bold 80px sans-serif'; context.textAlign = 'center'; context.textBaseline = 'middle'; context.fillText('L', 256, 256);
+    const padTexture = new THREE.CanvasTexture(canvas); padTexture.colorSpace = THREE.SRGBColorSpace;
+    paint(new THREE.PlaneGeometry(NIST_LANE.launchPadSize, NIST_LANE.launchPadSize), 0xffffff, 0, 0, padTexture);
+    const start = NIST_LANE.launchPadSize / 2;
+    paint(new THREE.PlaneGeometry(0.025, NIST_LANE.length - start), 0xe8db8c, (NIST_LANE.length + start) / 2);
+  }
+
   let terrain = createTerrain();
   let runway, pad;
   function setTerrain(value) {
@@ -74,8 +120,8 @@ export function createScene(container) {
     ground.geometry = geometry;
     terrain = next;
     grid.visible = next.data.kind === "flat";
-    if (runway) runway.visible = next.runwayCompatible;
-    if (pad) pad.visible = next.data.kind !== "dem";
+    if (runway) runway.visible = next.runwayCompatible && !nistEnabled;
+    if (pad) pad.visible = next.data.kind !== "dem" && !nistEnabled;
   }
   setTerrain();
 
@@ -883,6 +929,7 @@ export function createScene(container) {
     setEnvironment,
     setTerrain,
     setObstacles,
+    setNistLane,
     setMission,
     setGates,
     dispose() {

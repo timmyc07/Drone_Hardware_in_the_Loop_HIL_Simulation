@@ -72,7 +72,7 @@ test("scene boundary rejects unknown, missing, sparse and invalid geometry and a
   assert.throws(() => parseSceneJson("中".repeat(SCENE_MAX_IMPORT_BYTES / 2)));
 });
 
-test("scene 6 requires explicit obstacle datum and preserves negative and elevated heights", () => {
+test("scene 7 requires explicit obstacle datum and preserves negative and elevated heights", () => {
   const box = {
     north: 20,
     east: 0,
@@ -139,7 +139,7 @@ test("DEM scene round trips its full grid and provenance and enforces covered ze
   };
   const scene = { ...DEFAULT_SCENE, terrain, geography };
   const text = sceneToJson(scene);
-  assert.equal(JSON.parse(text).version, 6);
+  assert.equal(JSON.parse(text).version, 7);
   assert.deepEqual(parseSceneJson(text), scene);
   assert.ok(new TextEncoder().encode(text).length <= SCENE_MAX_IMPORT_BYTES);
   for (const invalid of [

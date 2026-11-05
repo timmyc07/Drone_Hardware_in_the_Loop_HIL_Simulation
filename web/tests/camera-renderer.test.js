@@ -6,7 +6,11 @@ import { validateCameraFrame } from "../camera.js";
 import { createSimulation } from "../sim.js";
 import { DEFAULT_GIMBAL_SETTINGS } from "../gimbal.js";
 
-function fixture({ defer = false, failPass = -1 } = {}) {
+function fixture({
+  defer = false,
+  failPass = -1,
+  logarithmicDepthBuffer = false,
+} = {}) {
   let target = null,
     clearColor = new THREE.Color("#123456"),
     clearAlpha = 0.4;
@@ -44,6 +48,7 @@ function fixture({ defer = false, failPass = -1 } = {}) {
   ownship.userData.cameraRgbOnly = true;
   const renderer = {
     getContext: () => ({ isContextLost: () => lost }),
+    capabilities: { logarithmicDepthBuffer },
     domElement: new EventTarget(),
     autoClear: false,
     autoClearColor: false,
@@ -325,5 +330,28 @@ test("camera excludes only the selected aircraft and includes its peer in every 
   for (const pass of f.passes) {
     assert.ok(!pass.visible.includes("drone-1"));
     assert.ok(pass.visible.includes("drone-2"));
+  }
+});
+
+test("depth and class passes use the renderer's depth mapping with the capture's near/far planes", async () => {
+  for (const logarithmicDepthBuffer of [false, true]) {
+    const f = fixture({ logarithmicDepthBuffer });
+    const camera = createCameraRenderer(f.renderer, f.scene);
+    await camera.captureCamera(pose, { ...config, nearM: 0.25, farM: 80 }, null, {
+      sourceVehicleId: "drone-1",
+      worldTick: 200,
+      captureId: "11111111-1111-4111-8111-111111111111",
+    });
+    for (const pass of f.passes.slice(1)) {
+      for (const material of pass.materials) {
+        assert.equal(
+          material.defines.CAMERA_LOGARITHMIC_DEPTH === 1,
+          logarithmicDepthBuffer,
+        );
+        assert.equal(material.uniforms.nearM.value, 0.25);
+        assert.equal(material.uniforms.farM.value, 80);
+      }
+    }
+    camera.dispose();
   }
 });

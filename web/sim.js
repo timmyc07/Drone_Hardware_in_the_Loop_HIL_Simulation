@@ -1,3 +1,4 @@
+import { createNistLaneCollider } from "./nist-geometry.js";
 import {
   validateObstacles,
   obstacleBounds,
@@ -349,6 +350,7 @@ export function createSimulation(configuration = {}, options = {}) {
   let armed,
     crashed,
     faults,
+    nistCollider,
     obstacles,
     usedWh,
     battery,
@@ -505,6 +507,7 @@ export function createSimulation(configuration = {}, options = {}) {
       pusherEfficiency: 1,
     };
     obstacles = [];
+    nistCollider = null;
     usedWh = 0;
     safetyReason = "";
     turbulenceState = [0, 0, 0];
@@ -1798,6 +1801,10 @@ export function createSimulation(configuration = {}, options = {}) {
       );
     terrain = next;
   }
+  function setNistLane(enabled) {
+    if (typeof enabled !== "boolean") throw new Error("Invalid NIST lane enabled");
+    nistCollider = enabled ? createNistLaneCollider() : null;
+  }
   function setObstacles(boxes) {
     obstacles = validateObstacles(boxes).map((box) =>
       obstacleBounds(box, collisionRadius),
@@ -2098,6 +2105,7 @@ export function createSimulation(configuration = {}, options = {}) {
   }
   function checkpoint() {
     const ground = terrain;
+    const nistGeometry = nistCollider;
     const restoreGimbal = gimbal.checkpoint();
     const saved = structuredClone({
       state,
@@ -2165,6 +2173,7 @@ export function createSimulation(configuration = {}, options = {}) {
       used = true;
       Object.assign(config, saved.config);
       terrain = ground;
+      nistCollider = nistGeometry;
       restoreGimbal();
       ({
         state,
@@ -2410,15 +2419,21 @@ export function createSimulation(configuration = {}, options = {}) {
         }
       }
     }
+    const nistHit = !crashed && armed
+      ? nistCollider?.sweep(previousPosition, state.slice(0, 3), collisionRadius) ?? null
+      : null;
     if (
       !crashed &&
       armed &&
-      obstacles.some((box) =>
+      (obstacles.some((box) =>
         intersectsBox(previousPosition, state.slice(0, 3), box),
-      )
+      ) || nistHit !== null)
     ) {
       crashed = true;
       navigation.reason = "obstacle-collision";
+      if (nistHit !== null)
+        for (let i = 0; i < 3; i++)
+          state[i] = previousPosition[i] + (state[i] - previousPosition[i]) * nistHit;
       disarm();
       state.splice(3, 3, 0, 0, 0);
       for (let i = 10; i < stateSize; i++) state[i] = 0;
@@ -2630,6 +2645,7 @@ export function createSimulation(configuration = {}, options = {}) {
     disarm: internalCommand(disarm),
     injectFault,
     clearFaults,
+    setNistLane: internalCommand(setNistLane),
     setObstacles: internalCommand(setObstacles),
     setTransition: internalCommand(setTransition),
     abortTakeoff: internalCommand(abortTakeoff),

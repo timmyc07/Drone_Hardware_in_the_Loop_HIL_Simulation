@@ -1,3 +1,4 @@
+import { createNistLaneCollider } from "./nist-geometry.js";
 import {
   PROXIMITY_AXES,
   PROXIMITY_DEFAULT_CONFIG,
@@ -183,11 +184,12 @@ const inverseRotate = (r, v) =>
   [0, 1, 2].map((i) => r[i] * v[0] + r[3 + i] * v[1] + r[6 + i] * v[2]);
 const radians = (degrees) => (degrees * Math.PI) / 180;
 const STATIC_VELOCITY = Object.freeze([0, 0, 0]);
-function nearestHit(origin, direction, obstacles, terrain, min, max, peers) {
+function nearestHit(origin, direction, obstacles, terrain, min, max, peers, nistCollider) {
   const length = Math.hypot(...direction);
   direction = direction.map((v) => v / length);
   let nearest =
     terrain.raycast(origin, direction, 0, max)?.distanceM ?? Infinity;
+  nearest = Math.min(nearest, nistCollider?.ray(origin, direction, max) ?? Infinity);
   let velocityNed = STATIC_VELOCITY;
   for (const bounds of obstacles) {
     const interval = rayAabb(origin, direction, bounds);
@@ -348,6 +350,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
     queues,
     deadlines,
     faults,
+    nistCollider,
     obstacles,
     terrain,
     peers;
@@ -425,6 +428,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
     time = 0;
     lastInputTime = -1;
     obstacles = [];
+    nistCollider = null;
     peers = [];
     terrain = createTerrain();
     faults = Object.fromEntries(SENSOR_NAMES.map((name) => [name, false]));
@@ -449,6 +453,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
           0,
           config.proximityMaxM,
           peers,
+          nistCollider,
         );
         if (hit === null) return null;
         if (hit.distanceM < config.proximityMinM) {
@@ -544,6 +549,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
         config.rangefinderMinM,
         config.rangefinderMaxM,
         peers,
+        nistCollider,
       );
       if (hit === null) return invalid(name, input.time, "no-return", input);
       return {
@@ -567,6 +573,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
           config.lidarMinM,
           config.lidarMaxM,
           peers,
+          nistCollider,
         );
         return hit === null
           ? null
@@ -600,6 +607,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
           config.radarMinM,
           config.radarMaxM,
           peers,
+          nistCollider,
         );
         if (hit === null) continue;
         const length = Math.hypot(...direction);
@@ -697,6 +705,10 @@ export function createSensorSuite(configuration = {}, seed = 42) {
     }
     return snapshot();
   }
+  function setNistLane(enabled) {
+    if (typeof enabled !== "boolean") throw new Error("Invalid NIST lane enabled");
+    nistCollider = enabled ? createNistLaneCollider() : null;
+  }
   function setObstacles(value) {
     obstacles = validateObstacles(value).map((box) => obstacleBounds(box));
   }
@@ -760,6 +772,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
       ),
       deadlines: { ...deadlines },
       faults: { ...faults },
+      nistCollider,
       obstacles,
       terrain,
       peers,
@@ -779,6 +792,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
         queues,
         deadlines,
         faults,
+        nistCollider,
         obstacles,
         terrain,
         peers,
@@ -790,6 +804,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
     update,
     snapshot,
     reset,
+    setNistLane,
     setObstacles,
     setTerrain,
     setPeers,

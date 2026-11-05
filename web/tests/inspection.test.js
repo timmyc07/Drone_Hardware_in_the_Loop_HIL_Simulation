@@ -435,7 +435,7 @@ test("assessment validates camera transforms, dense velocities and peers without
   ]);
 });
 
-test("tower and facade templates are viable physical boxes with matching schema-6 face panels", () => {
+test("tower and facade templates are viable physical boxes with matching schema-7 face panels", () => {
   for (const kind of ["tower", "facade"]) {
     const template = inspectionTemplate(kind),
       cam = clone(camera);
@@ -451,7 +451,7 @@ test("tower and facade templates are viable physical boxes with matching schema-
       ),
     );
     const scene = { ...clone(DEFAULT_SCENE), ...template };
-    assert.equal(SCENE_VERSION, 6);
+    assert.equal(SCENE_VERSION, 7);
     assert.deepEqual(validateScene(scene), scene);
     assert.deepEqual(parseSceneJson(sceneToJson(scene)), scene);
     const artifact = JSON.parse(sceneToJson(scene));

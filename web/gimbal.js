@@ -151,9 +151,10 @@ function rotationQuaternion(matrix) {
 }
 function nearestYaw(yaw, previous) {
   const wrapped = Math.atan2(Math.sin(yaw), Math.cos(yaw));
-  return Math.abs(Math.abs(wrapped) - Math.PI) < 1e-14 &&
-    Math.abs(-wrapped - previous) < Math.abs(wrapped - previous)
-    ? -wrapped : wrapped;
+  if (Math.abs(Math.abs(wrapped) - Math.PI) < 1e-14)
+    return Math.abs(Math.PI - previous) < Math.abs(-Math.PI - previous) - 1e-14
+      ? Math.PI : -Math.PI;
+  return wrapped;
 }
 function solve(relative, previous) {
   const candidates = [];
@@ -168,6 +169,10 @@ function solve(relative, previous) {
   const pitch = Math.atan2(relative[6], horizontal);
   const yaw = Math.atan2(relative[3], relative[0]);
   const roll = Math.atan2(relative[7], relative[8]);
+  // Near a pitch pole, equivalent joint coordinates must not amplify matrix noise.
+  const held = { yaw: previous.yaw, pitch, roll: previous.roll };
+  if (orientationError(gimbalRotation(held), relative) <= 1e-14) return held;
+  add(held.yaw, held.pitch, held.roll);
   if (roll >= GIMBAL_LIMITS.roll[0] && roll <= GIMBAL_LIMITS.roll[1]) {
     // Away from machine-zero poles the feasible Euler representation is exact.
     if (horizontal > 32 * Number.EPSILON)

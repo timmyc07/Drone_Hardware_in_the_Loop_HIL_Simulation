@@ -1,0 +1,260 @@
+{
+  "appVersion": "0.30.0",
+  "date": "2026-11-05",
+  "formats": {
+    "recording": 17,
+    "model": "0.12.0",
+    "api": "2.7",
+    "scene": 7,
+    "cameraDataset": 5,
+    "nistReport": 1,
+    "csvColumns": 199
+  },
+  "scope": "NIST Level 1 manual educational practice, 30 selectable steps, 36 evidence slots, three manual landings. No automatic route qualification, paired-target simultaneous-alignment validation, certification or hardware validation.",
+  "tests": {
+    "command": "npm test",
+    "passed": 499,
+    "failed": 0,
+    "durationMs": 90217.29825,
+    "log": "local/evidence/nist-v030/tests-release-stable-final.log"
+  },
+  "build": {
+    "passed": true,
+    "command": "npm run build",
+    "dependenciesChanged": false
+  },
+  "browser": {
+    "completeCaptureRun": {
+      "passed": true,
+      "artifactFolder": "local/evidence/nist-v030/stable-flight",
+      "captures": 36,
+      "imageSize": [
+        640,
+        480
+      ],
+      "volumes": 5,
+      "frames": 9966,
+      "ticks": 98811,
+      "recordingFileBytes": 43324164,
+      "manualLandingScores": [
+        {
+          "phase": "position",
+          "value": 2,
+          "tick": 33107
+        },
+        {
+          "phase": "left",
+          "value": 1,
+          "tick": 65942
+        },
+        {
+          "phase": "right",
+          "value": 1,
+          "tick": 98811
+        }
+      ],
+      "judgedImages": 0,
+      "totalScore": 4,
+      "assessment": "manual; all image scores intentionally unassigned",
+      "reportMatchesRecordedNistState": true,
+      "replay": {
+        "passed": true,
+        "vehicles": 1,
+        "frames": 9966,
+        "ticks": 98811,
+        "simSeconds": 494.0549999996232,
+        "maximum": {
+          "positionM": 5.329070518200751e-15,
+          "quaternion": 3.552713678800501e-15,
+          "motors": 4.440892098500626e-16,
+          "allState": 2.0296653246987262e-11,
+          "sensors": 1.1656453580144444e-11
+        }
+      },
+      "webReplay": {
+        "reportJsonRoundTripMatches": true,
+        "captures": 36,
+        "landings": 3,
+        "lastTick": 98811,
+        "score": 4,
+        "assessment": "manual"
+      },
+      "allCaptureIdsAndHashesMatched": true,
+      "missingImages": 0
+    },
+    "postEndImageScoring": {
+      "passed": true,
+      "evidence": "local/evidence/nist-v030/corrected-report-post-end-score.json",
+      "singleImageScore": 1,
+      "duplicateButtonDisabled": true,
+      "note": "Same scoring implementation before numerical gimbal-only change; raw evidence preserved."
+    },
+    "fileVerification": {
+      "webPositive": "local/evidence/nist-v030/corrected-web-evidence-verification.json",
+      "webOneByteTamperRejected": "local/evidence/nist-v030/corrected-web-tamper-verification.json",
+      "missingVolumeAndAtomicFailure": "local/evidence/nist-v030/full-evidence-negative-verification.json"
+    },
+    "deadlineGui": {
+      "passed": true,
+      "statusBeforeWorkspaceSwitch": "狀態：已結束 · 綁定載具：drone-1 · 0/40 分 · 已拍 0/36 · 已判讀 0/36 · 30 / 30 秒 · 時間到 · 人工判讀",
+      "status": "狀態：已結束 · 綁定載具：drone-1 · 0/40 分 · 已拍 0/36 · 已判讀 0/36 · 30 / 30 秒 · 時間到 · 人工判讀",
+      "clock": "00:30.00",
+      "pauseButtonVisible": false,
+      "actions": "Start trial and takeoff; takeoff shows flight workspace. Worker updated hidden NIST status to ended at 30s before switching back. No manual pause, inspect, or API call.",
+      "evidence": "local/evidence/nist-v030/deadline-gui-final.json"
+    },
+    "responsive": {
+      "width": 390,
+      "documentWidth": 390,
+      "horizontalOverflow": false,
+      "viewportRestored": true,
+      "screenshot": "local/evidence/nist-v030/nist-mobile-390.png"
+    },
+    "tenMinuteActualBrowserHold": {
+      "passed": true,
+      "vehicles": 1,
+      "frames": 12002,
+      "ticks": 120000,
+      "simSeconds": 599.9999999995268,
+      "maximum": {
+        "positionM": 3.241851231905457e-14,
+        "quaternion": 2.263282445326875e-14,
+        "motors": 4.551914400963142e-15,
+        "allState": 5.4569682106375694e-12,
+        "sensors": 2.1174173525650986e-12
+      }
+    }
+  },
+  "geometry": {
+    "sharedMesh": true,
+    "bucketCount": 15,
+    "depthToleranceM": 0.0015,
+    "productionGpuThreePassRegression": {
+      "passed": true,
+      "results": [
+        {
+          "logarithmicDepthBuffer": false,
+          "class": 5,
+          "depthM": 4.236000061035156,
+          "cpuDepthM": 4.2357541568684365,
+          "heightM": 0.00852540345434498,
+          "rgb": [
+            0,
+            255,
+            0,
+            255
+          ],
+          "rgbMatchesCPU": false,
+          "passed": true
+        },
+        {
+          "logarithmicDepthBuffer": true,
+          "class": 5,
+          "depthM": 4.236000061035156,
+          "cpuDepthM": 4.2357541568684365,
+          "heightM": 0.00852540345434498,
+          "rgb": [
+            255,
+            0,
+            255,
+            255
+          ],
+          "rgbMatchesCPU": true,
+          "passed": true
+        }
+      ]
+    },
+    "strictCenterRayComparison": {
+      "strictPassed": false,
+      "frameCount": 36,
+      "totalClass5Pixels": 146390,
+      "centerRayCompared": 146367,
+      "centerRayAgreementWithin1_5mm": 146338,
+      "centerRayMisses": 23,
+      "centerRayDepthMismatches": 29,
+      "rawMaxDepthDifferenceM": 0.26798835497097073,
+      "zeroClass5Frames": [
+        "33e65be1-2a4b-4d13-b55b-bb76060a72de"
+      ],
+      "class5DiscrepancyLocalization": {
+        "count": 52,
+        "maxMinimumProjectedEdgeDistancePixels": 0.0026392256708987942,
+        "allMatchOriginalDepthToleranceWithinAxisJitterPixels": 0.001953125
+      },
+      "neighborPixels": 16316,
+      "neighborStrictDiscrepancies": 11,
+      "neighborSubpixelBoundaryConsistent": 11,
+      "neighborUnresolvedFloorOcclusion": 0,
+      "allDiscrepancyMaxMinimumProjectedEdgeDistancePixels": 0.0026392256708987942,
+      "allDiscrepanciesMatchDepthOrClassWithAxisJitterPixels": 0.001953125,
+      "examplesFile": "stable-gpu-cpu-geometry-locations.json",
+      "rawResultFile": "stable-gpu-cpu-geometry.json",
+      "assessment": "Strict center-ray result remains false. Every discrepancy is localized to a projected triangle boundary and matches original 1.5mm tolerance with at most +/-1/512 pixel axis jitter. No unresolved non-boundary floor occlusion remains. Raw center-ray maxima are preserved."
+    },
+    "note": "Strict pixel-center gate is false and preserved. All remaining discrepancies lie on projected triangle boundaries and match within +/-1/512 pixel per-axis jitter at the unchanged 1.5mm depth tolerance; no unexplained floor occlusion remains. This is not an exact per-pixel CPU/GPU identity claim."
+  },
+  "capacity": {
+    "fixture": "NIST training default quadrotor, actual 3 m position hold, stock battery power",
+    "steps": 120000,
+    "frames": 12001,
+    "retainedBytes": 41195020,
+    "limitBytes": 100663296,
+    "spareBytes": 59468276,
+    "physicalDtSeconds": 0.005,
+    "flightSampleIntervalTicks": 10,
+    "note": "Capacity fixture is a stock-battery 3m hover, not complete maneuver qualification; current full suite and actual browser hold replay also pass."
+  },
+  "capabilityCatalog": {
+    "total": 72,
+    "statuses": {
+      "implemented": 8,
+      "partial": 55,
+      "external": 8,
+      "planned": 1
+    }
+  },
+  "regressionsFixed": [
+    "20km flat-ground clip-depth interpolation incorrectly occluded low posts; production RGB and raw depth/classes now use consistent per-fragment logarithmic depth.",
+    "Near-pole Euler decomposition amplified ULP noise; preserve equivalent minimum-travel joints and canonical equal-travel +/-pi endpoint. No global replay tolerance changed.",
+    "NIST automatic stop now publishes the terminal state even inside the 50ms state throttle.",
+    "Hard 100000-event limit rejects post-end scoring before corrupting export; byte-limit scoring remains allowed while event space exists."
+  ],
+  "preservedFailedEvidence": [
+    "local/evidence/nist-v030/full-gpu-cpu-geometry-summary.json",
+    "local/evidence/nist-v030/corrected-world-replay.json",
+    "local/evidence/nist-v030/corrected-world-replay-diagnostic.json"
+  ],
+  "limits": [
+    "Manual planned poses, gimbal targeting and four control-point arc approximations exercise UI, storage and replay; no formal simultaneous paired-target, path, rotation or landing certification.",
+    "Bucket taper, supports and mounting dimensions are a declared fabrication variant, not official NIST CAD.",
+    "Pixel-boundary raster ambiguity remains explicitly reported; native hardware and calibrated optical models were not tested.",
+    "Old scene1-6 and recording1-16 are rejected; no compatibility adapter.",
+    "Full market capability goal remains incomplete; catalog counts are not a market coverage percentage."
+  ],
+  "sourceHashes": {
+    "web/nist.js": "89ae5790bb8521f919752810ce0081e4fb7b01995cbe94dff691048c7c65362b",
+    "web/nist-geometry.js": "9670f86cbeabde81b87f5e6aeca734ddf6415bfb0ecdcb52d35653423d08ddb3",
+    "web/nist-evidence.js": "8e9172f1d8b878453abb2092407493403ce82a79867ebee112971ae9e36f9beb",
+    "web/nist-setup.js": "be764c6538707b126becc3f4dff5dc59311c3fcd1b13e2767fab0e9b87c6873d",
+    "web/nist-panel.js": "76fa043e05d3331fdaa70cdfe1966524961b70cda0f33e86fa1a2cda16287e86",
+    "web/worker.js": "39f86baa2e0634e9ab0750281a24642f9d311a9e084b702bddb4009d70d78d33",
+    "web/recording.js": "bb6e37ce2ab1a65bd0e3957a6b64f23918ac2597a7c584413f75cdfd72b949e1",
+    "web/main.js": "65b18b74580599c818f826bf21e3c5b4cdfd150d8d82a71698faa9e690814419",
+    "web/camera-renderer.js": "b1b472f6a8f780c5ea0f6f1fbbacb069c051394fae9583b42767a3406dbb1931",
+    "web/gimbal.js": "aa48e51c8ae4de336d241df7a19ed091968cc8b1d23638e550009306f685abd8",
+    "web/scene.js": "312b07da2542650bc59b6e29c90309cde3ffee11ae1bff8e32ddd74923d24d50",
+    "web/scene-data.js": "92e9b8580c51df0a56ce39b580ed508d79a82b7fa02d239c655ac74ffcf33fb5",
+    "tools/replay-world.mjs": "102fff09bcc02c74c1dcb6d1d91ec83f17a09490f4b2751433ab658fec065209",
+    "tools/verify-nist.mjs": "b25f8f6a3c391ca383eb38be8593a9d5980aa9cca088806a32da6d2c32d21686"
+  },
+  "artifactSha256": {
+    "local/evidence/nist-v030/stable-flight/stable-world-recording.json": "f8b2a88613380fec0b00b76ff3cdaf9a8680d5affeb204932418b785e206197c",
+    "local/evidence/nist-v030/stable-flight/stable-report-unscored-images.json": "359f86870f20f72c680523e6ed03d13ee7b3f906684a941954806dd64f2199ff",
+    "local/evidence/nist-v030/stable-flight/stable-replayed-report.json": "359f86870f20f72c680523e6ed03d13ee7b3f906684a941954806dd64f2199ff",
+    "local/evidence/nist-v030/stable-flight/stable-camera-volume-1.json": "dc3875a26ac326bd8e201d2711f03b7e75c1911cec46e8082295b9e333cea497",
+    "local/evidence/nist-v030/stable-flight/stable-camera-volume-2.json": "c955f8a06199566ca36367276a63ca3ed17d84b47b63ed5862b32adb6ab78e30",
+    "local/evidence/nist-v030/stable-flight/stable-camera-volume-3.json": "4838a7ac33e3c1dec0e74003963712919536e9e2aec374670ad0accc40c1721e",
+    "local/evidence/nist-v030/stable-flight/stable-camera-volume-4.json": "fa4a78693ce0c9d3a88a944c38edbdbe4871a5b60521c9eef8498102483c7bc1",
+    "local/evidence/nist-v030/stable-flight/stable-camera-volume-5.json": "fcb234c2d7d132c81cb52ed814987ee4228530fe9fc89aed5d388f616377c8b6"
+  }
+}
