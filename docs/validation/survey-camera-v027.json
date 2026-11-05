@@ -1,0 +1,322 @@
+{
+  "appVersion": "0.27.0",
+  "date": "2026-11-05",
+  "scope": "Fixed-plane nadir camera survey planning and existing distance acquisition; educational geometry, no actual coverage guarantee.",
+  "formats": {
+    "model": "0.11.0",
+    "recording": 15,
+    "cameraDataset": 5,
+    "api": "2.4",
+    "scene": 6,
+    "csvColumns": 174
+  },
+  "tests": {
+    "passed": 428,
+    "failed": 0,
+    "durationMs": 47184.525792,
+    "command": "npm test",
+    "rawLog": "local/evidence/survey-camera-v027/release-tests.log"
+  },
+  "planning": {
+    "polygon": [
+      {
+        "north": 4,
+        "east": -8
+      },
+      {
+        "north": 20,
+        "east": -8
+      },
+      {
+        "north": 20,
+        "east": 8
+      },
+      {
+        "north": 4,
+        "east": 8
+      }
+    ],
+    "angleDeg": 37,
+    "camera": {
+      "cameraConfig": {
+        "width": 320,
+        "height": 240,
+        "horizontalFovDeg": 90,
+        "nearM": 0.1,
+        "farM": 200
+      },
+      "altitudeM": 10,
+      "planeAltitudeM": 0,
+      "frontOverlapPct": 70,
+      "sideOverlapPct": 60,
+      "heightAbovePlaneM": 10,
+      "footprintAcrossM": 19.999999999999996,
+      "footprintAlongM": 14.999999999999996,
+      "gsdMPerPixel": 0.062499999999999986,
+      "spacingM": 7.999999999999999,
+      "triggerDistanceM": 4.5
+    },
+    "waypoints": 6,
+    "transects": 3,
+    "actualSpacingM": 7.469069510396486,
+    "routeLengthM": 54.278884661082536,
+    "idealPhotoEstimate": 13
+  },
+  "browser": {
+    "passed": true,
+    "applyDidNotStartFlight": true,
+    "configuredGimbal": {
+      "mode": "ned",
+      "yawDeg": 37,
+      "pitchDeg": 90,
+      "rollDeg": 0
+    },
+    "configuredCapture": {
+      "mode": "distance",
+      "intervalM": 4.5,
+      "maxFrames": 30
+    },
+    "cameraFovChange": {
+      "fromDeg": 90,
+      "toDeg": 80,
+      "invalidatedCameraPreview": true,
+      "preservedDraftWaypoints": 6,
+      "replannedWaypoints": 8,
+      "restoredToDeg": 90
+    },
+    "activeCaptureBlocksCameraPlanApply": true,
+    "mobile": {
+      "mapExtent": "座標範圍 ±30 m；實際航點須在圍欄內。",
+      "pageWidth": 390,
+      "status": "航點 6，航段 3，面積 256.0 m²，長度 54.3 m，實際線距 7.469 m。 預估範圍 20.000 × 15.000 m，GSD 6.25 cm/px，距離拍攝間距 4.500 m，估計 13 張照片（不含進場與實際誤差，非上界；資料集上限 30 張）。",
+      "useDisabled": false,
+      "viewport": 390
+    },
+    "footprintMapExtentM": {
+      "beforeFix": 23,
+      "afterFix": 30
+    },
+    "finalScreenshot": "local/evidence/survey-camera-v027/planner-final.png"
+  },
+  "flight": {
+    "missionCompleted": true,
+    "actualPhotos": 16,
+    "passed": true,
+    "vehicles": 1,
+    "frames": 1454,
+    "ticks": 14529,
+    "simSeconds": 72.64500000000642,
+    "maximum": {
+      "positionM": 4.440892098500626e-15,
+      "quaternion": 9.575673587391975e-16,
+      "motors": 4.440892098500626e-16,
+      "allState": 1.3915341101622403e-11,
+      "sensors": 1.4921397450962104e-12
+    },
+    "automaticStoppedManually": true,
+    "actualHorizontalIntervalsM": [
+      4.5396576828278254,
+      4.594592638343697,
+      4.574110329080982,
+      4.570760979346495,
+      4.649064937523896,
+      4.778751029601803,
+      4.544609059337791,
+      4.567452672209313,
+      4.704789232815969,
+      4.799035651602409,
+      4.646379449183222,
+      4.766337511822378,
+      4.576495372395165,
+      4.8288441025913755,
+      4.520048881677468
+    ]
+  },
+  "cameraAcquisition": {
+    "passed": true,
+    "maxMetadataDifference": 2.4202861936828413e-14,
+    "totalGroundPixels": 1228800,
+    "maxGroundPlaneErrorM": 0.012525799576303953,
+    "firstActualFootprint": {
+      "captureId": "ab2b5ea0-25f9-4036-9b9c-f7ef00aad46b",
+      "time": 0.5300000000000004,
+      "heightM": 0.9122722559697617,
+      "nadirDeviationDeg": 10.746178830870823,
+      "areaM2": 2.742898579522296,
+      "corners": [
+        [
+          1.617460239166054,
+          -0.4498730148545389
+        ],
+        [
+          0.4019425086976409,
+          1.3421023104021266
+        ],
+        [
+          -0.6447304764294584,
+          0.31787504158152136
+        ],
+        [
+          0.2582507604599702,
+          -1.034124442519609
+        ]
+      ]
+    },
+    "lastActualFootprint": {
+      "captureId": "4502bb89-b04d-4c1b-a965-ffde6723b30d",
+      "time": 35.474999999999696,
+      "heightM": 10.00010472412019,
+      "nadirDeviationDeg": 0.8128075578559755,
+      "areaM2": 300.1781600562525,
+      "corners": [
+        [
+          22.883458757206462,
+          4.898843429408401
+        ],
+        [
+          10.645434480194163,
+          20.95688920936913
+        ],
+        [
+          -1.143745671094587,
+          11.846674859465274
+        ],
+        [
+          10.701915994281862,
+          -4.045967279573615
+        ]
+      ]
+    },
+    "frameHashes": [
+      {
+        "captureId": "ab2b5ea0-25f9-4036-9b9c-f7ef00aad46b",
+        "worldTick": 106,
+        "time": 0.5300000000000004,
+        "sha256": "3dbb113f54df7dc645a12c1a9c187f9efda301b20c08b8e7711771e89ed03469"
+      },
+      {
+        "captureId": "92db907d-bab4-4eda-8d4c-9ecc69a944d9",
+        "worldTick": 411,
+        "time": 2.0549999999999784,
+        "sha256": "9143a13593741f9a0963ebde0d4d19d9574a15dd2680559a7db43feb97135ec7"
+      },
+      {
+        "captureId": "3446a0e4-f0f2-48fc-b370-69af924c2e97",
+        "worldTick": 748,
+        "time": 3.7399999999999425,
+        "sha256": "196840ff3a6d7940153a06e48dc2cd0865788b8a7accdd74eda677ffffaedcee"
+      },
+      {
+        "captureId": "cfdb3ee2-eed8-4f14-98d5-1112bce924ea",
+        "worldTick": 1086,
+        "time": 5.4299999999999065,
+        "sha256": "ff3484181d1f0baa70ffc02df29a449b31136fd5b6a6898604db3d1ced4a89ff"
+      },
+      {
+        "captureId": "7c01cfd1-0d5d-48a4-bdb9-1395cfaf360a",
+        "worldTick": 1586,
+        "time": 7.929999999999853,
+        "sha256": "06c4d3b8b2c65ac070a75e0a5c9183ba699983a09107c1f176bef38e47c1e7c6"
+      },
+      {
+        "captureId": "11029e00-927a-46dc-a7f4-f6441f932253",
+        "worldTick": 2044,
+        "time": 10.220000000000198,
+        "sha256": "ded4115342a1e5fe9cc7b713237e9b9e5c2ca256b0bbbee073b2d73ade7f0957"
+      },
+      {
+        "captureId": "508ca09b-f815-4e18-8ec6-6b96247f5dd1",
+        "worldTick": 2448,
+        "time": 12.240000000000514,
+        "sha256": "17c05b3a04aab75f4cf33e4733aae3610bfa0bc50a6ee6b446b6e90563fa2ea3"
+      },
+      {
+        "captureId": "1ab9a806-fa25-454d-82c8-177eefcdbb10",
+        "worldTick": 2860,
+        "time": 14.300000000000836,
+        "sha256": "0a8331e78caf85db1a97d4224769ba499ca47b96e51774f527c5cde2262a586c"
+      },
+      {
+        "captureId": "956a4b8b-c502-4864-ac37-5ffb2fcfd72e",
+        "worldTick": 3378,
+        "time": 16.890000000000924,
+        "sha256": "de6d03fdff40d4975da9058653b8ee83a99cb5ae0f2c696ceadf2f22d1a6fa4c"
+      },
+      {
+        "captureId": "26d07f67-be85-4d7d-931a-4e8ff12ba449",
+        "worldTick": 3774,
+        "time": 18.87000000000053,
+        "sha256": "56b74e9a617aa36cd80d0bacad7f40af1061f30914e282376668bd59e72bdc2a"
+      },
+      {
+        "captureId": "9004b7da-8e0d-4912-ba7d-5c43e2b8e1c8",
+        "worldTick": 4180,
+        "time": 20.900000000000126,
+        "sha256": "b92838346376e6a9494662e9b1b9db236fc84e21415e3ae9b027986982cc9cb0"
+      },
+      {
+        "captureId": "50767485-023e-4e99-8365-5be8d43c3fd4",
+        "worldTick": 4592,
+        "time": 22.959999999999717,
+        "sha256": "abe97f68f256c7fada44067382a52932cafc53ddc22b075c1ad79047fe411753"
+      },
+      {
+        "captureId": "0f1ae339-1ea9-4bac-a748-89f5cf47ecff",
+        "worldTick": 5226,
+        "time": 26.129999999999086,
+        "sha256": "4a8a4f55c5a3ce88b5e01651e63c9bb6ee271e5dd97e3bc1d7188142a7aabe9a"
+      },
+      {
+        "captureId": "d0de0634-9e23-4e2f-ae87-36a7735ed272",
+        "worldTick": 5615,
+        "time": 28.0749999999987,
+        "sha256": "4ab1eb1926c2d4032ce0361ac61e2376a6e3360aca21369a958d51402aa6a62a"
+      },
+      {
+        "captureId": "23253c42-2a58-4d8a-8189-185be480ea80",
+        "worldTick": 6051,
+        "time": 30.254999999998265,
+        "sha256": "12a6737ab238a8943b2bf36a3b162c82f92ce9488dba662891e98e5f21223bc0"
+      },
+      {
+        "captureId": "4502bb89-b04d-4c1b-a965-ffde6723b30d",
+        "worldTick": 7095,
+        "time": 35.474999999999696,
+        "sha256": "9ed7248c43be331ef76c2aa6a4e16f11d87d695ed60b6cea937ad7368445406e"
+      }
+    ]
+  },
+  "files": {
+    "survey-flight.json": {
+      "bytes": 20015318,
+      "sha256": "1023aeae4c80cc12f4fe5dca215bf904e07b7c664adde74bd530a3b3de20a907"
+    },
+    "survey-dataset.json": {
+      "bytes": 14768063,
+      "sha256": "d4b197c0339b2154d1ccbad9d3cda4ea93657e630b9c07383d319f378942bcff"
+    },
+    "planned-waypoints.json": {
+      "bytes": 550,
+      "sha256": "d586c09a813ec72c46dc94922682bf33824452efd8ed642f06ad08a3cf34bb44"
+    }
+  },
+  "builds": {
+    "flightBrowserAsset": "index-qZfNssmc.js",
+    "finalBrowserAsset": "index-BoBrDQQw.js",
+    "identicalPhysicsWorker": "worker-BBnXsl6m.js",
+    "difference": "Only survey map extent framing changed after the captured flight; final UI was reloaded and checked at desktop and 390px width, then the complete suite passed."
+  },
+  "evidenceDirectory": "local/evidence/survey-camera-v027/",
+  "limitations": [
+    "Nadir footprint, GSD and overlap use a fixed reference plane and ideal pinhole optics. Actual attitude, altitude, entry, turns, controller error and 2 Hz wall-clock acquisition can differ.",
+    "The real test estimated 13 route photos and acquired 16 including entry and actual flight-path deviation. The first photo was at 0.912 m height while climbing; it is not a 10 m planned survey image.",
+    "The preview footprint is at the first planned waypoint, not an already acquired image; map extent remains limited to ±500 m.",
+    "Applying stages ordinary waypoint drafts and sets a gimbal target plus distance capture controls. It starts neither flight nor acquisition; mission completion does not automatically stop capture.",
+    "Datasets retain the existing 30 frame / 24 MiB limits. Plans are not persisted or exported as survey plans; route JSON contains ordinary waypoints only.",
+    "No terrain-adaptive overlap, obstacle avoidance, mosaicking, orthophotos, calibrated real-camera model, new native SITL or hardware testing."
+  ],
+  "sources": [
+    "https://github.com/mavlink/qgroundcontrol/blob/36436db319c731b70ab25dd3178896c4c22c75f6/src/MissionManager/CameraCalc.cc",
+    "https://github.com/mavlink/qgroundcontrol/blob/36436db319c731b70ab25dd3178896c4c22c75f6/docs/en/qgc-user-guide/plan_view/pattern_survey.md"
+  ]
+}

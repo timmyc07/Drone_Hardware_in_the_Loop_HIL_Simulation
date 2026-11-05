@@ -53,6 +53,25 @@ test("validates settings, including blank values, and starts with selected setti
   assert.deepEqual(starts, [{ mode: "distance", interval: 0.25, maxFrames: 30 }]);
 });
 
+test("survey distance settings update the next capture without starting and respect pending work", () => {
+  const { elements: e, controls, starts } = setup();
+  controls.setDistance(2.7, 12);
+  assert.equal(e.mode.value, "distance");
+  assert.equal(e.interval.value, "2.7");
+  assert.equal(e.limit.value, "12");
+  assert.match(e["interval-label"].textContent, /公尺/);
+  assert.equal(starts.length, 0);
+  for (const values of [[0.2, 12], [Infinity, 12], [3, 0], [3, 1.5]])
+    assert.throws(() => controls.setDistance(...values));
+  assert.equal(e.interval.value, "2.7");
+  controls.refresh({ ...idle, pending: true });
+  assert.throws(() => controls.setDistance(5, 30));
+  assert.equal(e.interval.value, "2.7");
+  controls.refresh(idle);
+  e.start.dispatch("click");
+  assert.deepEqual(starts, [{ mode: "distance", interval: 2.7, maxFrames: 12 }]);
+});
+
 test("refresh locks active and pending controls, allows stop and preserves edits", () => {
   const result = setup();
   const { elements: e, controls } = result;

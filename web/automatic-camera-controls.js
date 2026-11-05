@@ -83,5 +83,19 @@ export function createAutomaticCameraControls({ start, stop, getContext }) {
   stopButton.addEventListener("click", () => stop());
   updateMode();
   refresh(current);
-  return { refresh };
+  return {
+    refresh,
+    setDistance(distanceM, maxFrames) {
+      if (current.active || current.pending)
+        throw new Error("請先停止自動拍攝並等待目前影像完成。");
+      if (!Number.isFinite(distanceM) || distanceM < 0.25 || distanceM > 500 ||
+          !Number.isInteger(maxFrames) || maxFrames < 1 || maxFrames > 30)
+        throw new Error("無效的距離拍攝設定。");
+      mode.value = "distance";
+      interval.value = String(distanceM);
+      limit.value = String(maxFrames);
+      updateMode();
+      clearFeedback();
+    },
+  };
 }

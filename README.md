@@ -2,6 +2,8 @@
 
 瀏覽器中的無人機飛行模擬器，可操作飛行、規劃航點、練習任務並記錄與回放資料。線上入口：[Drone Flight Lab](https://drone-flight-lab-reikous.chen-yu-ting0718-05.chatgpt.site)。
 
+0.27 版新增[相機測繪規劃](docs/測繪網格任務.md)，可依相機與重疊率估算固定平面航線及拍攝間距；套用後仍須開始任務與自動拍攝。428 項測試、6 航點實際飛行與 16 張影像核對見 [survey-camera-v027.json](docs/validation/survey-camera-v027.json)。
+
 0.26 版新增[自動拍攝](docs/相機資料說明.md)，可依模擬時間或水平移動距離將影像加入獨立資料集。419 項測試、實際影像與長時間重播驗證見 [automatic-camera-v026.json](docs/validation/automatic-camera-v026.json)。
 
 0.25 版新增[測繪網格任務](docs/測繪網格任務.md)，可由一般及凹形區域產生航線，預覽後取代航點草稿。

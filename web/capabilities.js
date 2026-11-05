@@ -364,10 +364,11 @@ export const CAPABILITIES = [
     category: "控制與航行",
     title: "測繪網格航線",
     description:
-      "一般與凹形多邊形產生蛇形航線，含區內幾何連接；最多 50 個普通航點。可搭配自動拍攝，但未整合覆蓋規劃，無避障或覆蓋率保證。",
+      "一般與凹形多邊形產生最多 50 個航點；可依相機與重疊率估算平面足跡、解析度及間距，並設定正下視雲台與距離拍攝。無避障或實際覆蓋率保證。",
     status: "partial",
     sources: [
       "https://github.com/mavlink/qgroundcontrol/blob/36436db319c731b70ab25dd3178896c4c22c75f6/docs/en/qgc-user-guide/plan_view/pattern_survey.md",
+      "https://github.com/mavlink/qgroundcontrol/blob/36436db319c731b70ab25dd3178896c4c22c75f6/src/MissionManager/CameraCalc.cc",
     ],
   },
   {

@@ -1,17 +1,19 @@
 import { buildSurveyRoute } from "./survey.js";
+import { calculateSurveyCamera, surveyFootprint } from "./survey-camera.js";
 
 export function createSurveyEditor({ getContext, onChange, onUse }) {
   const $ = (id) => document.getElementById(id);
   const drafts = new Map();
   const ids = [
     "survey-tool", "survey-spacing", "survey-angle", "survey-altitude",
-    "survey-reverse", "survey-add", "survey-example", "survey-preview", "survey-clear",
+    "survey-reverse", "survey-camera-enabled", "survey-plane-altitude", "survey-front-overlap", "survey-side-overlap", "survey-add", "survey-example", "survey-preview", "survey-clear",
   ];
-  let current, key, limits, readonly, blocked;
+  let current, key, limits, readonly, blocked, cameraBlocked, cameraAvailable, pending = false;
+  const cameraKey = (c) => JSON.stringify(c.cameraConfig);
   const contextLimits = (c) => JSON.stringify([c.home, c.radius, c.minAltitude, c.maxAltitude]);
   const canEdit = () => {
     const c = getContext();
-    return !c.readonly && !c.blocked && c.vehicleId === key && contextLimits(c) === limits;
+    return !pending && !c.readonly && !c.blocked && c.vehicleId === key && contextLimits(c) === limits;
   };
   function invalidate() {
     current.preview = null;
@@ -24,7 +26,10 @@ export function createSurveyEditor({ getContext, onChange, onUse }) {
     $("survey-altitude").min = c.minAltitude;
     $("survey-altitude").max = c.maxAltitude;
     for (const id of ids) $(id).disabled = disabled;
-    $("survey-use").disabled = disabled || !current.preview;
+    $("survey-spacing").disabled = disabled || current.cameraEnabled;
+    $("survey-use").textContent = current.cameraEnabled ? "套用航點與拍攝設定" : "取代航點草稿";
+    $("survey-use").disabled = disabled || !current.preview ||
+      (current.cameraEnabled && (!c.cameraAvailable || c.cameraBlocked || current.cameraKey !== cameraKey(c)));
     for (const row of $("survey-vertices").children) {
       for (const label of [...row.children].slice(0, 2)) label.children[0].disabled = disabled;
       row.children[2].disabled = disabled;
@@ -36,6 +41,8 @@ export function createSurveyEditor({ getContext, onChange, onUse }) {
       $("survey-" + name).value = current[name];
     }
     $("survey-reverse").checked = current.reverse;
+    $("survey-camera-enabled").checked = current.cameraEnabled;
+    for (const [id, name] of [["plane-altitude", "planeAltitude"], ["front-overlap", "frontOverlap"], ["side-overlap", "sideOverlap"]]) $("survey-" + id).value = current[name];
     const rows = current.polygon.map((point, index) => {
       const row = document.createElement("div");
       row.className = "survey-vertex";
@@ -73,23 +80,29 @@ export function createSurveyEditor({ getContext, onChange, onUse }) {
     updateDisabled();
   }
   function summary(result) {
-    return `航點 ${result.waypoints.length}，航段 ${result.transects.length}，面積 ${result.areaM2.toFixed(1)} m²，長度 ${result.routeLengthM.toFixed(1)} m，實際間距 ${result.actualSpacingM.toFixed(1)} m。`;
+    const base = `航點 ${result.waypoints.length}，航段 ${result.transects.length}，面積 ${result.areaM2.toFixed(1)} m²，長度 ${result.routeLengthM.toFixed(1)} m，實際線距 ${result.actualSpacingM.toFixed(3)} m。`;
+    if (!result.cameraPlan) return base;
+    const p = result.cameraPlan;
+    return `${base} 預估範圍 ${p.footprintAcrossM.toFixed(3)} × ${p.footprintAlongM.toFixed(3)} m，GSD ${(p.gsdMPerPixel * 100).toFixed(2)} cm/px，距離拍攝間距 ${p.triggerDistanceM.toFixed(3)} m，估計 ${Math.floor(result.routeLengthM / p.triggerDistanceM) + 1} 張照片（不含進場與實際誤差，非上界；資料集上限 30 張）。${getContext().cameraAvailable ? "" : "僅內建相機模式可套用。"}`;
   }
   function refresh() {
     const c = getContext();
     const nextLimits = contextLimits(c);
     const vehicleChanged = !current || key !== c.vehicleId;
     const overlayChanged = vehicleChanged || limits !== nextLimits || readonly !== c.readonly;
-    const disabledChanged = readonly !== c.readonly || blocked !== c.blocked;
-    if (!overlayChanged && !disabledChanged) return false;
+    const cameraChanged = current && current.cameraKey !== cameraKey(c);
+    const disabledChanged = readonly !== c.readonly || blocked !== c.blocked || cameraBlocked !== c.cameraBlocked || cameraAvailable !== c.cameraAvailable;
+    if (!overlayChanged && !disabledChanged && !cameraChanged) return false;
     if (vehicleChanged) {
       key = c.vehicleId;
       if (!drafts.has(key)) {
-        drafts.set(key, { polygon: [], spacing: "6", angle: "0", altitude: "6", reverse: false, tool: "waypoint", preview: null });
+        drafts.set(key, { polygon: [], spacing: "6", angle: "0", altitude: "6", reverse: false, cameraEnabled: false, planeAltitude: "0", frontOverlap: "70", sideOverlap: "60", tool: "waypoint", preview: null });
       }
       current = drafts.get(key);
       $("survey-status").textContent = current.preview ? summary(current.preview) : "請建立區域並預覽航線。";
     }
+    if (current.cameraKey !== undefined && current.cameraKey !== cameraKey(c) && current.cameraEnabled && current.preview) invalidate();
+    current.cameraKey = cameraKey(c);
     if (current.limits !== undefined && current.limits !== nextLimits && current.preview) invalidate();
     if (c.readonly) {
       $("survey-status").textContent = "重播唯讀，測繪草稿不會套用至紀錄。";
@@ -102,9 +115,12 @@ export function createSurveyEditor({ getContext, onChange, onUse }) {
     limits = nextLimits;
     readonly = c.readonly;
     blocked = c.blocked;
+    cameraBlocked = c.cameraBlocked;
+    cameraAvailable = c.cameraAvailable;
+    if (!c.readonly && current.preview && !vehicleChanged) $("survey-status").textContent = summary(current.preview);
     if (vehicleChanged) render();
     else updateDisabled();
-    return overlayChanged;
+    return overlayChanged || !!cameraChanged;
   }
   function addPoint(point) {
     if (current.polygon.length >= 20) {
@@ -124,6 +140,15 @@ export function createSurveyEditor({ getContext, onChange, onUse }) {
       if (!canEdit()) return;
       current[name] = name === "reverse" ? $("survey-reverse").checked : $("survey-" + name).value;
       invalidate();
+      onChange();
+    };
+  }
+  for (const [id, name] of [["camera-enabled", "cameraEnabled"], ["plane-altitude", "planeAltitude"], ["front-overlap", "frontOverlap"], ["side-overlap", "sideOverlap"]]) {
+    $("survey-" + id).oninput = () => {
+      if (!canEdit()) return;
+      current[name] = name === "cameraEnabled" ? $("survey-" + id).checked : $("survey-" + id).value;
+      invalidate();
+      updateDisabled();
       onChange();
     };
   }
@@ -153,20 +178,23 @@ export function createSurveyEditor({ getContext, onChange, onUse }) {
     if (!canEdit()) return;
     try {
       const number = (value) => value === "" ? NaN : Number(value);
+      const c = getContext();
+      const plan = current.cameraEnabled ? calculateSurveyCamera(c.cameraConfig, { altitudeM: number(current.altitude), planeAltitudeM: number(current.planeAltitude), frontOverlapPct: number(current.frontOverlap), sideOverlapPct: number(current.sideOverlap) }) : null;
       const result = buildSurveyRoute(
         current.polygon.map((p) => ({ north: number(p.north), east: number(p.east) })),
         {
-          spacingM: number(current.spacing),
+          spacingM: plan ? plan.spacingM : number(current.spacing),
           angleDeg: number(current.angle),
           altitudeM: number(current.altitude),
           reverse: current.reverse,
         },
       );
-      const c = getContext();
+      if (plan) result.cameraPlan = { ...plan, angleDeg: number(current.angle) };
       if (result.waypoints.some((p) =>
         Math.hypot(p.north - c.home[0], p.east - c.home[1]) > c.radius ||
         p.altitude < c.minAltitude || p.altitude > c.maxAltitude
       )) throw new Error("航線超出返航點半徑或高度限制。");
+      current.cameraKey = cameraKey(c);
       current.preview = result;
       $("survey-status").textContent = summary(result);
     } catch (error) {
@@ -176,10 +204,26 @@ export function createSurveyEditor({ getContext, onChange, onUse }) {
     updateDisabled();
     onChange();
   };
-  $("survey-use").onclick = () => {
-    if (!canEdit() || !current.preview) return;
-    onUse(structuredClone(current.preview.waypoints));
-    $("survey-status").textContent = "已更新航點草稿，仍須套用／開始任務。";
+  $("survey-use").onclick = async () => {
+    const c = getContext();
+    if (!canEdit() || !current.preview || (current.cameraEnabled &&
+      (!c.cameraAvailable || c.cameraBlocked || current.cameraKey !== cameraKey(c)))) return;
+    const draft = current;
+    pending = true;
+    updateDisabled();
+    try {
+      const points = structuredClone(draft.preview.waypoints);
+      if (draft.cameraEnabled) await onUse(points, structuredClone(draft.preview.cameraPlan));
+      else await onUse(points);
+      if (current === draft && getContext().vehicleId === key && !getContext().readonly) $("survey-status").textContent = draft.cameraEnabled
+        ? "已設定正下視雲台與距離拍攝，仍須開始任務與自動拍攝。"
+        : "已更新航點草稿，仍須套用／開始任務。";
+    } catch (error) {
+      if (current === draft && getContext().vehicleId === key && !getContext().readonly) $("survey-status").textContent = error.message;
+    } finally {
+      pending = false;
+      updateDisabled();
+    }
   };
   refresh();
   return {
@@ -187,9 +231,13 @@ export function createSurveyEditor({ getContext, onChange, onUse }) {
     extent() {
       if (getContext().readonly) return 0;
       const coordinates = current.polygon.flatMap((p) => [p.north, p.east]);
+      if (current.preview?.cameraPlan) {
+        const plan = current.preview.cameraPlan;
+        for (const point of surveyFootprint(current.preview.waypoints[0], plan.angleDeg, plan)) coordinates.push(point.north, point.east);
+      }
       return Math.max(0, ...coordinates.flatMap((value) => {
         const n = value === "" ? NaN : Number(value);
-        return Number.isFinite(n) && Math.abs(n) <= 500 ? [Math.abs(n)] : [];
+        return Number.isFinite(n) && (current.preview?.cameraPlan || Math.abs(n) <= 500) ? [Math.abs(n)] : [];
       }));
     },
     mapClick({ north, east }) {
@@ -223,6 +271,16 @@ export function createSurveyEditor({ getContext, onChange, onUse }) {
       }
       if (current.preview) {
         const route = current.preview.waypoints;
+        if (current.preview.cameraPlan) {
+          const corners = surveyFootprint(route[0], current.preview.cameraPlan.angleDeg, current.preview.cameraPlan);
+          ctx.beginPath();
+          corners.forEach((p, i) => i ? ctx.lineTo(x(p.east), y(p.north)) : ctx.moveTo(x(p.east), y(p.north)));
+          ctx.closePath();
+          ctx.fillStyle = "rgba(255, 226, 120, .25)";
+          ctx.fill();
+          ctx.strokeStyle = "#ffe278";
+          ctx.stroke();
+        }
         ctx.beginPath();
         route.forEach((p, i) => i ? ctx.lineTo(x(p.east), y(p.north)) : ctx.moveTo(x(p.east), y(p.north)));
         ctx.strokeStyle = "#bd8cff";

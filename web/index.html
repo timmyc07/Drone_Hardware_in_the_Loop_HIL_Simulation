@@ -79,7 +79,7 @@
         <details class="survey-editor">
           <summary>測繪網格</summary>
           <p>依序點選地圖或輸入座標建立區域，再預覽並取代航點草稿。</p>
-          <p>高度使用基準面；僅產生航線，未含避障、自動拍照或覆蓋率保證。進入首點的航段與實際轉彎不保證留在區域內。</p>
+          <p>高度使用基準面；相機規劃假設正下視與固定平面，不考慮地形，也不保證覆蓋率或避障。進入首點的航段與實際轉彎不保證留在區域內。</p>
           <label>地圖工具 <select id="survey-tool"><option value="waypoint">新增航點</option><option value="polygon">繪製測繪區域</option></select></label>
           <details id="survey-boundary">
             <summary>區域頂點（可編輯）</summary>
@@ -89,6 +89,10 @@
             <label>間距 (m) <input id="survey-spacing" type="number" min="0.5" max="200" step="any"></label>
             <label>角度 (°，0 為南北，90 為東西) <input id="survey-angle" type="number" min="0" max="180" step="any"></label>
             <label>高度 (m) <input id="survey-altitude" type="number" min="-1000" max="1500" step="any"></label>
+            <label><input id="survey-camera-enabled" type="checkbox"> 依相機與重疊率規劃</label>
+            <label>平面高度 (m) <input id="survey-plane-altitude" type="number" min="-1000" max="1500" step="any"></label>
+            <label>航向重疊率 (%) <input id="survey-front-overlap" type="number" min="0" max="95" step="any"></label>
+            <label>旁向重疊率 (%) <input id="survey-side-overlap" type="number" min="0" max="95" step="any"></label>
             <label><input id="survey-reverse" type="checkbox"> 反轉航線</label>
           </div>
           <div class="feature-actions">
@@ -98,7 +102,7 @@
             <button id="survey-use">取代航點草稿</button>
             <button id="survey-clear">清空區域</button>
           </div>
-          <p>圖例：青色實線為測繪航段，紫色虛線為連接路線。</p>
+          <p>圖例：青色實線為測繪航段，紫色虛線為連接路線，淡黃色矩形為理想第一張照片範圍。</p>
           <p id="survey-status" aria-live="polite"></p>
         </details>
         <canvas

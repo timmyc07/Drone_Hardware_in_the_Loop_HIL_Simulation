@@ -94,6 +94,9 @@ let worldState;
 let worldConfig;
 let automaticCamera;
 let automaticCameraControls;
+let cameraBusy = false;
+let cameraDatasetBusy = false;
+let surveyApplying = false;
 let activeVehicleId = "drone-1";
 const vehicleHistories = new Map();
 const vehicleDrafts = new Map();
@@ -1710,6 +1713,10 @@ function missionContext() {
           1500,
           missionTerrain.sample(...home).heightM + vehicleConfig.geofenceHeight,
         ),
+    cameraConfig,
+    cameraAvailable: automaticCameraContext().available,
+    cameraBlocked: surveyApplying || cameraBusy || cameraDatasetBusy ||
+      !!automaticCamera?.getState().active || !!automaticCamera?.getState().pending,
   };
 }
 function drawMission() {
@@ -1845,13 +1852,53 @@ function renderWaypoints() {
 surveyEditor = createSurveyEditor({
   getContext: missionContext,
   onChange: drawMission,
-  onUse: (points) => {
+  onUse: useSurveyPlan,
+});
+async function useSurveyPlan(points, plan) {
+  if (!plan) {
     waypoints = points;
     renderWaypoints();
-  },
-});
+    return;
+  }
+  const context = missionContext();
+  if (!context.cameraAvailable || context.cameraBlocked || surveyApplying || !latest?.gimbal)
+    throw new Error("請先停止拍攝、等待相機完成並回到內建模擬。");
+  if (JSON.stringify(plan.cameraConfig) !== JSON.stringify(cameraConfig))
+    throw new Error("相機設定已變更，請重新預覽測繪航線。");
+  const remaining = Math.min(
+    CAMERA_DATASET_MAX_FRAMES - cameraDataset.length,
+    Math.floor((CAMERA_DATASET_MAX_BYTES - cameraDatasetBytes) /
+      (cameraConfig.width * cameraConfig.height * 9)),
+  );
+  if (remaining < 1) throw new Error("相機資料集已滿，請先匯出並清除。");
+  const vehicleId = activeVehicleId, epoch = cameraEpoch;
+  surveyApplying = true;
+  updateCameraStatus();
+  updateMissionControls();
+  renderGimbal();
+  try {
+    await requestApi({
+      type: "gimbal", vehicleId,
+      value: {
+        mode: "ned",
+        target: { yaw: plan.angleDeg / DEG, pitch: Math.PI / 2, roll: 0 },
+        maxRate: { ...latest.gimbal.maxRate },
+      },
+    });
+    if (epoch !== cameraEpoch || vehicleId !== activeVehicleId || replay || externalActive)
+      throw new Error("載具或實驗已切換，請在目前載具重新預覽並套用。");
+    automaticCameraControls.setDistance(plan.triggerDistanceM, remaining);
+    waypoints = points;
+    renderWaypoints();
+  } finally {
+    surveyApplying = false;
+    updateCameraStatus();
+    updateMissionControls();
+    renderGimbal();
+  }
+}
 map.onclick = (event) => {
-  if (!missionEditable() || invalidWaypointInputs.size || missionBusy) return;
+  if (!missionEditable() || invalidWaypointInputs.size || missionBusy || surveyApplying) return;
   const rect = map.getBoundingClientRect();
   const point = {
     north:
@@ -1893,7 +1940,7 @@ $("mission-export").onclick = () => {
 };
 function updateMissionControls() {
   if (surveyEditor?.refresh()) drawMission();
-  const editable = missionEditable();
+  const editable = missionEditable() && !surveyApplying;
   const limits = missionContext();
   document
     .querySelectorAll("#waypoint-list input, #waypoint-list button")
@@ -1967,6 +2014,7 @@ function updateMissionControls() {
   $("flight-mission-status").hidden = !missionStatus;
 }
 async function applyMission(start) {
+  if (surveyApplying) return toast("測繪拍攝設定正在套用，請稍候。");
   if (invalidWaypointInputs.size) return toast("請先修正航點數值。");
   if (externalActive) {
     const controls = externalMissionControls(
@@ -3046,14 +3094,13 @@ for (const item of CAMERA_CLASSES) {
   cameraLegend.append(label);
 }
 let cameraFrame;
-let cameraBusy = false;
 let displayedGimbalSettings = "";
 function renderGimbal() {
   const g =
     externalActive && latest?.controlSource !== "external"
       ? undefined
       : latest?.gimbal;
-  const disabled = !!replay || externalActive || !g;
+  const disabled = !!replay || externalActive || !g || surveyApplying;
   document
     .querySelectorAll(
       "#gimbal-controls input, #gimbal-controls select, #gimbal-controls button",
@@ -3111,7 +3158,6 @@ let cameraLastLive = 0;
 let cameraDataset = [];
 let cameraDatasetBytes = 0;
 let cameraDatasetDirty = false;
-let cameraDatasetBusy = false;
 function populateCameraConfig(value) {
   const resolution = $("camera-resolution"),
     size = `${value.width}x${value.height}`;
@@ -3130,6 +3176,7 @@ function populateCameraConfig(value) {
     $(id).value = value[key];
 }
 function applyCameraConfig(value) {
+  if (surveyApplying) throw new Error("測繪拍攝設定正在套用，請稍候。");
   if (
     !value ||
     typeof value !== "object" ||
@@ -3162,7 +3209,7 @@ function clearCameraPreview() {
 }
 function updateCameraStatus() {
   const automatic = automaticCamera?.getState();
-  const reserved = automatic?.active || automatic?.pending;
+  const reserved = automatic?.active || automatic?.pending || surveyApplying;
   const full =
     cameraDataset.length >= CAMERA_DATASET_MAX_FRAMES ||
     cameraDatasetBytes + cameraConfig.width * cameraConfig.height * 9 >
@@ -3184,6 +3231,7 @@ function updateCameraStatus() {
   $("camera-capture").disabled = !!replay || cameraBusy || reserved || cameraDatasetBusy;
   $("camera-live").disabled = !!replay || reserved || cameraDatasetBusy;
   if (automatic) automaticCameraControls?.refresh(automatic);
+  if (surveyEditor?.refresh()) drawMission();
 }
 function showCameraFrame(frame) {
   cameraFrame = frame;
@@ -3206,6 +3254,7 @@ function showCameraFrame(frame) {
   updateCameraStatus();
 }
 async function captureCameraFrame(vehicleId = activeVehicleId) {
+  if (surveyApplying) throw new Error("測繪拍攝設定正在套用，請稍候。");
   if (cameraDatasetBusy) throw new Error("相機資料集正在處理，請稍候。");
   if (replay) throw new Error("重播時無法拍攝新影像。");
   if (!externalActive && vehicleId !== activeVehicleId)
@@ -3366,7 +3415,7 @@ $("inspection-export").onclick = async () => {
 };
 async function captureInspectionFrame(vehicleId, targetId) {
   if (
-    replay || externalActive || inspectionBusy || cameraBusy || cameraDatasetBusy ||
+    replay || externalActive || inspectionBusy || cameraBusy || cameraDatasetBusy || surveyApplying ||
     automaticCamera?.getState().active || automaticCamera?.getState().pending
   )
     throw new Error("目前無法拍攝巡檢影像");
@@ -3534,7 +3583,7 @@ $("camera-export").onclick = () => {
   }
 };
 $("camera-clear").onclick = async () => {
-  if (cameraBusy || cameraDatasetBusy || automaticCamera.getState().active || automaticCamera.getState().pending) return;
+  if (surveyApplying || cameraBusy || cameraDatasetBusy || automaticCamera.getState().active || automaticCamera.getState().pending) return;
   cameraDatasetBusy = true;
   updateCameraStatus();
   try {
@@ -3553,7 +3602,7 @@ $("camera-clear").onclick = async () => {
   }
 };
 $("camera-import").onclick = () => {
-  if (cameraBusy || cameraDatasetBusy || automaticCamera.getState().active || automaticCamera.getState().pending) return;
+  if (surveyApplying || cameraBusy || cameraDatasetBusy || automaticCamera.getState().active || automaticCamera.getState().pending) return;
   cameraEpoch++;
   $("camera-live").checked = false;
   $("camera-import-file").click();
@@ -3562,7 +3611,7 @@ $("camera-import-file").onchange = async (event) => {
   const file = event.target.files?.[0];
   event.target.value = "";
   if (!file) return;
-  if (cameraBusy || cameraDatasetBusy || automaticCamera.getState().active || automaticCamera.getState().pending)
+  if (surveyApplying || cameraBusy || cameraDatasetBusy || automaticCamera.getState().active || automaticCamera.getState().pending)
     return toast("相機正在拍攝或處理資料集，請停止並等待後再匯入。");
   cameraEpoch++;
   $("camera-live").checked = false;
@@ -3604,6 +3653,7 @@ function updateCameraLive(now) {
     replay ||
     cameraBusy ||
     cameraDatasetBusy ||
+    surveyApplying ||
     automaticCamera?.getState().active ||
     now - cameraLastLive < 500
   )
@@ -3618,7 +3668,7 @@ function automaticCameraContext() {
   return {
     available: !!scene && !!latest && !!worldState && !replay && !externalActive &&
       !["crashed", "failsafe"].includes(latest.status),
-    busy: cameraBusy || cameraDatasetBusy,
+    busy: cameraBusy || cameraDatasetBusy || surveyApplying,
     reason: replay
       ? "重播時不可開始新拍攝。"
       : externalActive
