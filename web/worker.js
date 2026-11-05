@@ -1,3 +1,4 @@
+import { createInstructorScheduler } from "./instructor.js";
 import { createWorld, defaultWorldConfig } from "./world.js";
 import { exportRadarData } from "./radar.js";
 import { exportProximityData } from "./proximity.js";
@@ -20,6 +21,7 @@ import {
 const DT = 0.005,
   LIMIT = 1800,
   DATA_LIMIT = 96 * 1024 * 1024;
+const instructor = createInstructorScheduler();
 let world = createWorld(defaultWorldConfig());
 let initialWorld = world.configuration;
 let activeVehicleId = initialWorld.vehicles[0].id;
@@ -80,6 +82,9 @@ const VEHICLE_READS = [
   "inspectionReport",
 ];
 const READS = [
+  "instructorStatus",
+  "instructorReport",
+  "instructorCancel",
   "resetWorld",
   "pause",
   "export",
@@ -128,6 +133,7 @@ function inspectedState(vehicleId = activeVehicleId) {
     scenario: v.scenario,
     setup: { ...v.setup, scene: value.scene },
     running,
+    instructor: instructor.getState(),
     termination,
     timing: {
       ...runtime(),
@@ -182,6 +188,7 @@ function capture() {
   if (recordBytes >= DATA_LIMIT) {
     running = false;
     storageLimited = true;
+    instructor.cancel("storage-limit");
   }
 }
 function reset(value, id) {
@@ -191,6 +198,7 @@ function reset(value, id) {
   if (!configuration.vehicles.some((v) => v.id === nextId))
     throw new Error("找不到指定載具");
   inspectionCapture = null;
+  instructor.reset();
   world = next;
   initialWorld = configuration;
   activeVehicleId = nextId;
@@ -235,6 +243,11 @@ function recordEvent(data) {
   events.push(event);
   recordBytes += JSON.stringify(event).length + 1;
   capture();
+  if (events.length >= 100000) {
+    running = false;
+    storageLimited = true;
+    instructor.cancel("storage-limit");
+  }
 }
 function recording() {
   // Every command and export retains one atomic frame for the entire world.
@@ -276,7 +289,7 @@ onmessage = async ({ data }) => {
       throw new Error("紀錄資料已達上限，請匯出後重設");
     if (
       inspectionCapture &&
-      ![...READS, "inspectionSubmit", "inspectionCancel"].includes(data.type)
+      ![...READS.filter(type => type !== "instructorCancel"), "inspectionSubmit", "inspectionCancel"].includes(data.type)
     )
       throw new Error("巡檢拍攝中，請等待影像完成或取消拍攝");
     if (
@@ -303,6 +316,21 @@ onmessage = async ({ data }) => {
       publish();
     } else
       switch (data.type) {
+        case "instructorApply":
+        case "instructorCancel":
+        case "instructorStatus":
+        case "instructorReport": {
+          if (data.requestId === undefined) throw new Error("教官操作需要請求編號");
+          if (data.type === "instructorApply" &&
+              (termination || world.snapshot().collisions.length || world.snapshot().time >= LIMIT - 1e-8))
+            throw new Error("本次模擬已終止，請重設世界後再套用教官計畫");
+          const result = data.type === "instructorApply"
+            ? instructor.apply(data.value, world.snapshot().tick, world.configuration.vehicles)
+            : data.type === "instructorCancel" ? instructor.cancel() : instructor.getState();
+          if (["instructorApply", "instructorCancel"].includes(data.type)) publish();
+          postMessage({type:"apiReply", requestId:data.requestId, ok:true, value:result});
+          return;
+        }
         case "resetWorld":
           reset(data.value, data.activeVehicleId);
           break;
@@ -649,14 +677,36 @@ function tick() {
         const value = world.step(DT);
         termination = null;
         accumulator -= DT;
+        if (value.collisions.length) instructor.cancel("vehicle-collision");
+        else {
+          const wasArmed = instructor.getState().phase === "armed";
+          const status = instructor.run(value.tick, command => {
+            if (storageLimited || events.length >= 100000) throw new Error("紀錄資料已達上限，教官事件已停止");
+            if (command.type === "wind") world.setWind(command.value);
+            else world.command(command.vehicleId, command.type, command.value, command.fault);
+            recordEvent(command);
+          });
+          if (wasArmed && status.phase === "error") {
+            running = false;
+            capture();
+            publish("instructor-error");
+            break;
+          }
+        }
         if (value.tick % 10 === 0 || value.collisions.length) capture();
         if (value.collisions.length) {
           running = false;
           termination = { reason: "vehicle-collision", time: value.time };
           publish("vehicle-collision");
-        } else if (storageLimited) publish("storage-limit");
+        } else if (storageLimited || events.length >= 100000) {
+          running = false;
+          storageLimited = true;
+          instructor.cancel("storage-limit");
+          publish("storage-limit");
+        }
         else if (value.time >= LIMIT - 1e-8) {
           running = false;
+          instructor.cancel("time-limit");
           capture();
           publish("limit");
         }
@@ -664,6 +714,7 @@ function tick() {
       if (now - lastPublish >= 50) publish();
     } catch (error) {
       running = false;
+      instructor.cancel(error.code === "TERRAIN_COVERAGE" ? "terrain-coverage" : "simulation-error");
       if (error.code === "TERRAIN_COVERAGE")
         termination = {
           reason: "terrain-coverage",

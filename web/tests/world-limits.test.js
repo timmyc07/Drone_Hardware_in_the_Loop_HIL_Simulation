@@ -154,6 +154,7 @@ test(
       type: "resetWorld",
       value: fleet(1, { ground: true, sensors: { ...lowRays, dropout: 1 } }),
     });
+    await h.call({type:"instructorApply",value:{name:"最後一刻",events:[{tick:360000,type:"wind",value:{speed:0,direction:0}}]}});
     await h.call({ type: "speed", value: 4 });
     await h.call({ type: "play" });
     const stopped = await h.untilStopped(4600);
@@ -166,6 +167,8 @@ test(
     assert.equal(stopped.running, false);
     assert.ok(Math.abs(stopped.world.time - 1800) < 1e-7);
     assert.equal(stopped.world.tick, 360000);
+    assert.equal(stopped.instructor.phase, "complete");
+    assert.deepEqual(stopped.instructor.receipts, [{index:0,tick:360000,status:"applied",error:""}]);
     assert.equal(h.latest.sampleCount, 36001);
     const replay = await h.send({ type: "play" });
     assert.equal(replay.ok, false);
@@ -176,6 +179,7 @@ test(
       (raw.events.length ? Buffer.byteLength(JSON.stringify(raw.events)) - 1 : 0);
     t.diagnostic(`30 minute retained ${retainedBytes} bytes across ${raw.samples.length} frames at tick ${stopped.world.tick}`);
     const record = validateRecording(raw);
+    assert.deepEqual(record.events, [{tick:360000,time:stopped.world.time,type:"wind",value:{speed:0,direction:0}}]);
     assert.equal(record.samples.length, 36001);
     assertFinalWorld(record, stopped);
     await h.advance(10);
@@ -222,12 +226,17 @@ test(
       ];
     });
     await h.call({ type: "resetWorld", value: input });
+    await h.call({type:"instructorApply",value:{name:"容量後不執行",events:[{tick:360000,type:"wind",value:{speed:0,direction:0}}]}});
     await h.call({ type: "speed", value: 4 });
     await h.call({ type: "play" });
     const stopped = await h.untilStopped(1000, 10);
     assert.equal(stopped.running, false);
     assert.equal(h.latest.storageLimited, true);
     assert.equal(h.latest.message, "storage-limit");
+    assert.equal(stopped.instructor.phase, "cancelled");
+    assert.equal(stopped.instructor.reason, "storage-limit");
+    assert.deepEqual(stopped.instructor.receipts, []);
+    assert.equal((await h.call({type:"instructorCancel"})).phase, "cancelled");
     assert.ok(stopped.world.time > 0 && stopped.world.time < 1800);
     for (const command of [
       { type: "play" },
@@ -355,6 +364,7 @@ test(
     assert.equal(failed, true);
     assert.deepEqual(reference.snapshot(), lastCommitted);
     await h.call({ type: "resetWorld", value: input });
+    await h.call({type:"instructorApply",value:{name:"地形停止",events:[{tick:360000,type:"wind",value:{speed:0,direction:0}}]}});
     await h.call({
       type: "targets",
       vehicleId: "drone-2",
@@ -364,6 +374,14 @@ test(
     const stopped = await h.untilStopped(100);
     assert.equal(stopped.running, false);
     assert.equal(h.latest.message, "terrain-limit");
+    assert.equal(stopped.instructor.phase, "cancelled");
+    assert.equal(stopped.instructor.reason, "terrain-coverage");
+    assert.deepEqual(stopped.instructor.receipts, []);
+    const nextPlan={name:"地形終止後拒絕",events:[{tick:360000,type:"wind",value:{speed:0,direction:0}}]};
+    assert.equal((await h.send({type:"instructorApply",value:nextPlan})).ok,false);
+    assert.deepEqual(await h.call({type:"instructorStatus"}),stopped.instructor);
+    assert.deepEqual(await h.call({type:"instructorReport"}),stopped.instructor);
+    assert.deepEqual(await h.call({type:"instructorCancel"}),stopped.instructor);
     assert.deepEqual(stopped.termination, {
       reason: "terrain-coverage",
       time: lastCommitted.time,
@@ -387,5 +405,7 @@ test(
         .at(-1)
         .vehicles.every((v) => v.sensors.gps.verticalDatum === "orthometric"),
     );
+    await h.call({type:"resetWorld",value:input});
+    assert.equal((await h.call({type:"instructorApply",value:nextPlan})).phase,"armed");
   },
 );

@@ -1,12 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Worker } from "node:worker_threads";
+import { readFile } from "node:fs/promises";
 import { createWorld, defaultWorldConfig } from "../world.js";
 import { validateRecording } from "../recording.js";
 import { DEFAULT_CAMERA_CONFIG, hashCameraFrame } from "../camera.js";
 
-async function harness(t, deferHash = false) {
-  const url = new URL("../worker.js", import.meta.url).href;
+async function harness(t, deferHash = false, limits = null) {
+  let url = new URL("../worker.js", import.meta.url).href;
+  if (limits) {
+    // Exercise terminal branches with the real worker clock without running thirty minutes.
+    let source = await readFile(new URL(url), "utf8");
+    source = source.replace(/from "(\.\/[^"]+)"/g, (_, path) => `from "${new URL(path, url).href}"`);
+    if (limits.rejectInstructor) source = source.replace('if (command.type === "wind") world.setWind(command.value);', 'if (command.type === "gust") throw new Error("test command failure"); if (command.type === "wind") world.setWind(command.value);');
+    if (limits.time) source = source.replace("LIMIT = 1800", `LIMIT = ${limits.time}`);
+    if (limits.events) source = source.replaceAll("100000", String(limits.events));
+    if (limits.bytes) source = source.replace("DATA_LIMIT = 96 * 1024 * 1024", `DATA_LIMIT = ${limits.bytes}`);
+    url = `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
+  }
   const worker = new Worker(
     `
     import {parentPort} from 'node:worker_threads';
@@ -301,11 +312,15 @@ test("collision pauses the whole world and its final frame remains exportable", 
       value: { north: 0, east: 0, altitude: 2 },
     });
   }
+  await h.call({type:"instructorApply",value:{name:"碰撞停止",events:[{tick:360000,type:"wind",value:{speed:0,direction:0}}]}});
   await h.call({ type: "play" });
   await h.advance(150);
   const final = await h.call({ type: "inspectWorld" });
   assert.equal(final.running, false);
   assert.equal(final.termination.reason, "vehicle-collision");
+  assert.equal(final.instructor.phase, "cancelled");
+  assert.equal(final.instructor.reason, "vehicle-collision");
+  assert.deepEqual(final.instructor.receipts, []);
   assert.equal(final.world.collisions.length, 1);
   assert.ok(final.world.vehicles.every((v) => v.snapshot.status === "crashed"));
   assert.equal((await h.send({ type: "play" })).ok, false);
@@ -313,6 +328,13 @@ test("collision pauses the whole world and its final frame remains exportable", 
   const record = validateRecording(await h.call({ type: "apiExport" }));
   assert.equal(record.samples.at(-1).tick, final.world.tick);
   replay(record);
+  const nextPlan={name:"終止後拒絕",events:[{tick:360000,type:"wind",value:{speed:0,direction:0}}]};
+  assert.equal((await h.send({type:"instructorApply",value:nextPlan})).ok,false);
+  assert.deepEqual(await h.call({type:"instructorStatus"}),final.instructor);
+  assert.deepEqual(await h.call({type:"instructorReport"}),final.instructor);
+  assert.deepEqual(await h.call({type:"instructorCancel"}),final.instructor);
+  await h.call({type:"resetWorld",value:fleet(1)});
+  assert.equal((await h.call({type:"instructorApply",value:nextPlan})).phase,"armed");
 });
 
 test("radar exports identify the requested vehicle and retain delayed acquisition data without inventing returns", async (t) => {
@@ -646,4 +668,134 @@ test("reset or cancel while the real buffer digest is pending cannot commit stal
     assert.equal(inspected.world.vehicles[0].snapshot.inspection.attempts, 0);
     assert.equal((await h.call({ type: "apiExport" })).events.length, 0);
   }
+});
+
+test('instructor schedules native schema16 events in tick order independent of speed, rendering, selection and pause', async (t) => {
+  const records=[];
+  for (const fast of [false,true]) {
+    const h=await harness(t);
+    await h.call({type:'resetWorld',value:fleet(2)});
+    const plan={name:'定時故障',events:[
+      {tick:2,vehicleId:'drone-2',type:'sensorFault',value:{sensor:'gps',failed:true}},
+      {tick:2,type:'wind',value:{speed:3,direction:90}},
+      {tick:3,vehicleId:'drone-2',type:'sensorFault',value:{sensor:'gps',failed:false}},
+      {tick:4,vehicleId:'drone-1',type:'fault',fault:'link',value:{lost:true}},
+      {tick:5,vehicleId:'drone-1',type:'clearFaults'},
+    ]};
+    assert.equal((await h.call({type:'instructorApply',value:plan})).phase,'armed');
+    assert.equal((await h.send({type:'instructorApply',value:plan})).ok,false);
+    await h.call({type:'selectVehicle',vehicleId:'drone-2'});
+    await h.advance(2);
+    assert.equal((await h.call({type:'inspectWorld'})).world.tick,0);
+    if(fast){await h.call({type:'speed',value:4});await h.call({type:'render',value:false});}
+    await h.call({type:'play'});await h.advance(fast?1:4);await h.call({type:'pause'});
+    const state=await h.call({type:'inspectWorld'}), status=await h.call({type:'instructorStatus'});
+    assert.equal(status.phase,'complete');assert.deepEqual(state.instructor,status);
+    assert.deepEqual(status.receipts.map(r=>r.tick),[2,2,3,4,5]);
+    const record=validateRecording(await h.call({type:'apiExport'}));
+    replay(record);
+    assert.equal(record.version,16);assert.equal(Object.hasOwn(record,'instructor'),false);
+    assert.deepEqual(record.events.filter(e=>e.type!=='render').map(({time,...e})=>e),plan.events);
+    records.push(record);
+  }
+  assert.deepEqual(records[0].samples.at(-1),records[1].samples.at(-1));
+});
+
+test('instructor cancellation, lease freezing and atomic reset cannot leave ghost events', async(t)=>{
+  const h=await harness(t);await h.call({type:'resetWorld',value:inspectionFleet()});
+  const plan={name:'取消',events:[{tick:2,vehicleId:'drone-1',type:'gust'},{tick:100,vehicleId:'drone-1',type:'clearFaults'}]};
+  await h.call({type:'instructorApply',value:plan});
+  const lease=await h.call({type:'inspectionBegin',vehicleId:'drone-1',value:{targetId:'panel',config:DEFAULT_CAMERA_CONFIG}});
+  assert.equal((await h.send({type:'instructorCancel'})).ok,false);
+  assert.equal((await h.send({type:'instructorApply',value:plan})).ok,false);
+  await h.advance(1);assert.equal((await h.call({type:'instructorStatus'})).nextIndex,0);
+  await h.call({type:'inspectionCancel',vehicleId:'drone-1',value:{captureId:lease.captureId}});
+  await h.call({type:'play'});await h.advance(1);await h.call({type:'pause'});
+  assert.equal((await h.call({type:'instructorStatus'})).receipts.length,1);
+  const before=await h.call({type:'instructorStatus'});
+  assert.equal((await h.send({type:'resetWorld',value:{}})).ok,false);
+  assert.deepEqual(await h.call({type:'instructorStatus'}),before);
+  const cancelled=await h.call({type:'instructorCancel'});assert.equal(cancelled.phase,'cancelled');
+  await h.call({type:'play'});await h.advance(6);await h.call({type:'pause'});
+  assert.equal((await h.call({type:'apiExport'})).events.length,1);
+  await h.call({type:'resetWorld',value:fleet(1)});
+  assert.equal((await h.call({type:'instructorStatus'})).phase,'idle');
+  await h.call({type:'play'});await h.advance(6);await h.call({type:'pause'});
+  assert.equal((await h.call({type:'apiExport'})).events.length,0);
+});
+
+test('instructor executes the terminal time tick before stopping and cancels later events',async(t)=>{
+  const h=await harness(t,false,{time:0.01});
+  await h.call({type:'resetWorld',value:fleet(1)});
+  await h.call({type:'instructorApply',value:{name:'時間邊界',events:[{tick:2,type:'wind',value:{speed:2,direction:0}},{tick:3,vehicleId:'drone-1',type:'gust'}]}});
+  await h.call({type:'play'});await h.advance(1);
+  const state=await h.call({type:'inspectWorld'});
+  assert.equal(state.world.tick,2);assert.equal(state.running,false);assert.equal(state.instructor.phase,'cancelled');
+  assert.equal(state.instructor.reason,'time-limit');assert.equal(state.instructor.receipts.length,1);
+  const record=validateRecording(await h.call({type:'apiExport'}));assert.equal(record.events.length,1);replay(record);
+});
+
+test('instructor event capacity records the final allowed mutation and cancels same-tick pending events',async(t)=>{
+  const h=await harness(t,false,{events:2});await h.call({type:'resetWorld',value:fleet(1)});
+  await h.call({type:'instructorApply',value:{name:'容量',events:[
+    {tick:1,type:'wind',value:{speed:1,direction:0}},
+    {tick:1,type:'wind',value:{speed:2,direction:0}},
+    {tick:1,type:'wind',value:{speed:3,direction:0}},
+  ]}});
+  await h.call({type:'play'});await h.advance(1);
+  const status=await h.call({type:'instructorStatus'}),state=await h.call({type:'inspectWorld'});
+  assert.equal(status.phase,'cancelled');assert.equal(status.reason,'storage-limit');assert.equal(status.receipts.length,2);
+  assert.equal(state.worldConfig.wind.speed,2);assert.equal(state.running,false);
+  assert.equal((await h.send({type:'instructorApply',value:{name:'禁止',events:[{tick:2,type:'wind',value:{speed:3,direction:0}}]}})).ok,false);
+  assert.equal((await h.call({type:'instructorCancel'})).phase,'cancelled');
+  const record=validateRecording(await h.call({type:'apiExport'}));assert.equal(record.events.length,2);replay(record);
+});
+
+test('instructor byte capacity cancels future events while keeping the recorded mutation replayable',async(t)=>{
+  const h=await harness(t,false,{bytes:50000});await h.call({type:'resetWorld',value:fleet(1)});
+  await h.call({type:'instructorApply',value:{name:'容量',events:[{tick:1,type:'wind',value:{speed:2,direction:90}},{tick:100000,type:'wind',value:{speed:9,direction:0}}]}});
+  await h.call({type:'play'});await h.advance(30);
+  const state=await h.call({type:'inspectWorld'});assert.equal(state.running,false);assert.equal(state.instructor.phase,'cancelled');assert.equal(state.instructor.reason,'storage-limit');
+  assert.equal(state.worldConfig.wind.speed,2);
+  const record=validateRecording(await h.call({type:'apiExport'}));assert.equal(record.events.length,1);replay(record);
+});
+
+test('instructor callback failure pauses the world without rolling back earlier same-tick events or running later ones',async(t)=>{
+  const h=await harness(t,false,{rejectInstructor:true});await h.call({type:'resetWorld',value:fleet(1)});
+  await h.call({type:'instructorApply',value:{name:'錯誤停止',events:[
+    {tick:1,type:'wind',value:{speed:1,direction:0}},
+    {tick:1,vehicleId:'drone-1',type:'gust'},
+    {tick:1,type:'wind',value:{speed:3,direction:0}},
+  ]}});
+  await h.call({type:'play'});await h.advance(1);
+  const state=await h.call({type:'inspectWorld'});
+  assert.equal(state.running,false);assert.equal(state.world.tick,1);assert.equal(state.worldConfig.wind.speed,1);
+  assert.equal(h.latest.message,'instructor-error');assert.equal(state.instructor.phase,'error');
+  assert.deepEqual(state.instructor.receipts.map(receipt=>receipt.status),['applied','failed']);
+  await h.advance(3);assert.deepEqual(await h.call({type:'instructorStatus'}),state.instructor);
+  await h.call({type:'play'});await h.advance(1);await h.call({type:'pause'});
+  const resumed=await h.call({type:'inspectWorld'});
+  assert.ok(resumed.world.tick>1);assert.equal(resumed.worldConfig.wind.speed,1);
+  assert.deepEqual(resumed.instructor,state.instructor);
+  const record=validateRecording(await h.call({type:'apiExport'}));assert.equal(record.events.length,1);replay(record);
+});
+
+test('instructor applies lift motor and pusher faults to a VTOL through native commands with exact replay',async(t)=>{
+  const h=await harness(t),input=fleet(1);
+  input.vehicles[0].config.airframe='vtol';
+  await h.call({type:'resetWorld',value:input});
+  const events=[
+    {tick:1,vehicleId:'drone-1',type:'fault',fault:'motor',value:{index:3,efficiency:0.25}},
+    {tick:1,vehicleId:'drone-1',type:'fault',fault:'pusher',value:{efficiency:0.4}},
+  ];
+  await h.call({type:'instructorApply',value:{name:'複合推進故障',events}});
+  await h.call({type:'play'});await h.advance(1);await h.call({type:'pause'});
+  const state=await h.call({type:'inspectWorld'});
+  assert.equal(state.instructor.phase,'complete');
+  assert.deepEqual(state.instructor.receipts.map(receipt=>receipt.status),['applied','applied']);
+  assert.deepEqual(state.snapshot.faults.motorEfficiency,[1,1,1,0.25]);
+  assert.equal(state.snapshot.faults.pusherEfficiency,0.4);
+  const record=validateRecording(await h.call({type:'apiExport'}));
+  assert.deepEqual(record.events.map(({time,...event})=>event),events);
+  replay(record);
 });

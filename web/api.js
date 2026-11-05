@@ -18,7 +18,7 @@ export function createFlightApi(request, onState) {
   const vehicleAction = (type) => (vehicleId) =>
     send({ type, vehicleId: id(vehicleId) });
   return Object.freeze({
-    version: "2.5",
+    version: "2.6",
     getWorldState: () => send({ type: "inspectWorld" }),
     getState: vehicleRead("inspect"),
     getSensors: vehicleRead("inspectSensors"),
@@ -74,6 +74,9 @@ export function createFlightApi(request, onState) {
         value: { sensor, failed },
       }),
     exportRecording: () => send({ type: "apiExport" }),
+    applyInstructorPlan: (value) => send({ type: "instructorApply", value }),
+    cancelInstructorPlan: () => send({ type: "instructorCancel" }),
+    getInstructorStatus: () => send({ type: "instructorStatus" }),
     subscribe: (callback) => {
       if (typeof callback !== "function")
         throw new TypeError("callback must be a function");

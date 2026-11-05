@@ -11,7 +11,7 @@ test("vehicle operations require and preserve explicit vehicle IDs", async () =>
     },
     () => () => {},
   );
-  assert.equal(api.version, "2.5");
+  assert.equal(api.version, "2.6");
   await api.getState("one");
   const target = { altitude: 3 };
   await api.setTargets("two", target);
@@ -62,6 +62,22 @@ test("automatic camera uses an explicit source and returns independent session s
   ]);
   assert.equal(status.saved, 2);
   assert.throws(() => api.startAutomaticCamera(undefined, settings), /vehicleId/);
+});
+
+test("instructor plans are global commands and isolate submitted plans and returned reports", async () => {
+  const calls = [], status = { phase: "armed", receipts: [] };
+  const api = createFlightApi(async command => { calls.push(command); return status; }, () => () => {});
+  const plan = { name: "教官測試", events: [{ tick: 200, vehicleId: "one", type: "gust" }] };
+  const returned = await api.applyInstructorPlan(plan);
+  plan.events[0].tick = 999;
+  returned.receipts.push({ index: 0 });
+  await api.getInstructorStatus();
+  await api.cancelInstructorPlan();
+  assert.deepEqual(calls, [
+    { type: "instructorApply", value: { name: "教官測試", events: [{ tick: 200, vehicleId: "one", type: "gust" }] } },
+    { type: "instructorStatus" }, { type: "instructorCancel" },
+  ]);
+  assert.equal(status.receipts.length, 0);
 });
 
 test("subscriptions isolate delivered state and can be removed", () => {

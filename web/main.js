@@ -14,6 +14,7 @@ import { exportVehiclePointCloud } from "./pointcloud.js";
 import { exportRadarData } from "./radar.js";
 import { exportProximityData, PROXIMITY_BOUNDS } from "./proximity.js";
 import { createProximityPanel } from "./proximity-panel.js";
+import { createInstructorPanel } from "./instructor-panel.js";
 import {
   createHilClient,
   isCompanionOrigin,
@@ -96,6 +97,8 @@ let worldState;
 let worldConfig;
 let automaticCamera;
 let automaticCameraControls;
+let instructorPanel, instructorState;
+let instructorEpoch = 0;
 let cameraBusy = false;
 let cameraDatasetBusy = false;
 let surveyApplying = false;
@@ -578,6 +581,7 @@ function setPlaying(value) {
   $("view-status").innerHTML =
     `<span class="dot"></span>${externalActive ? (hilState?.controller?.verified === true && hilState?.stats?.sensorPackets > 0 && hilState?.stats?.actuatorPackets > 0 ? `${hilControllerName()} SITL 閉環 · 植物模型真值` : `${hilControllerName()} 介接中`) : label}`;
   observeAutomaticCamera();
+  instructorPanel?.refresh(instructorState);
 }
 
 const targets = [
@@ -1160,6 +1164,8 @@ worker.onmessage = ({ data }) => {
   }
   worldState = data.world;
   worldConfig = data.worldConfig;
+  instructorState = data.instructor;
+  if (data.message === "reset") instructorEpoch++;
   if (!worldConfig.scene.geography)
     for (const item of worldConfig.vehicles)
       vehicleSensorOrigins.set(
@@ -1257,6 +1263,8 @@ worker.onmessage = ({ data }) => {
     toast("已完成 30 分鐘實驗並暫停，請匯出紀錄後重設。");
   if (data.message === "storage-limit")
     toast("紀錄接近 96 MiB 資料上限，已暫停，請匯出後重設。");
+  if (data.message === "instructor-error")
+    toast("教官排程執行失敗，模擬已暫停；請查看教官排程的逐筆結果。");
   const state = {
     world: data.world,
     activeVehicleId: data.activeVehicleId,
@@ -1266,6 +1274,7 @@ worker.onmessage = ({ data }) => {
     running: data.running,
     termination: data.termination,
     timing: data.timing,
+    instructor: data.instructor,
   };
   for (const callback of apiSubscribers) {
     try {
@@ -2412,6 +2421,27 @@ $("model-preset").onchange = (event) => {
     $(`config-${key}`).value = value * field[5];
   }
 };
+function instructorContext() {
+  const available = !!worldState && !replay && !externalActive;
+  const canApply = !storageLimited && !worldTermination &&
+    !worldState?.collisions?.length && (worldState?.tick ?? 0) < 360000;
+  return {
+    available, canApply, epoch: instructorEpoch,
+    reason: replay ? "重播只顯示已錄製事件。"
+      : externalActive ? "外部飛控模式不執行內建教官排程。"
+      : !worldState ? "模擬器正在準備。"
+      : !canApply ? "實驗已到達終止或容量上限，請匯出後重設。" : "",
+    worldTick: worldState?.tick ?? 0,
+    vehicles: worldConfig?.vehicles || [],
+    activeVehicleId, running,
+  };
+}
+instructorPanel = createInstructorPanel({
+  apply: (plan) => requestApi({ type: "instructorApply", value: plan }),
+  cancel: () => requestApi({ type: "instructorCancel" }),
+  getContext: instructorContext,
+  download: (text, filename) => download(text, "json", "application/json", filename),
+});
 for (const button of document.querySelectorAll("[data-workspace]"))
   button.onclick = () => {
     for (const item of document.querySelectorAll("[data-workspace]")) {
@@ -2421,6 +2451,7 @@ for (const button of document.querySelectorAll("[data-workspace]"))
     for (const name of [
       "mission",
       "training",
+      "instructor",
       "scene",
       "inspection",
       "sensors",
@@ -2430,6 +2461,7 @@ for (const button of document.querySelectorAll("[data-workspace]"))
       $(`${name}-workspace`).hidden = button.dataset.workspace !== name;
     document.querySelector(".workspace").hidden =
       button.dataset.workspace === "catalog";
+    instructorPanel.refresh(instructorState);
   };
 const category = $("catalog-category"),
   status = $("catalog-status");

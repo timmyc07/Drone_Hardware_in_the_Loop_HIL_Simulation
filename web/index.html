@@ -61,6 +61,7 @@
       <nav class="workspace-tabs" aria-label="工作區">
         <button class="active" data-workspace="flight">飛行實驗</button
         ><button data-workspace="mission">任務規劃</button
+        ><button data-workspace="instructor">教官排程</button
         ><button data-workspace="training">訓練場</button
         ><button data-workspace="scene">場景編輯</button
         ><button data-workspace="inspection">設施巡檢</button
@@ -124,6 +125,33 @@
           套用任務會切換至任務模式；開始任務會同時啟動模擬。
         </p>
         <p id="mission-status" aria-live="polite"></p>
+      </section>
+      <section id="instructor-workspace" class="panel workspace-extra" hidden>
+        <h2>教官排程</h2>
+        <p>依世界模擬時間執行事件；取消只移除未來事件，不會恢復已發生的故障。</p>
+        <p id="instructor-availability"></p>
+        <fieldset id="instructor-form">
+          <label>計畫名稱 <input id="instructor-name" maxlength="80" value="教官計畫"></label>
+          <div id="instructor-rows"></div>
+          <div class="feature-actions">
+            <button id="instructor-add" type="button">新增事件</button>
+            <button id="instructor-example" type="button">GPS 故障範例</button>
+            <button id="instructor-sort" type="button">依時間排序</button>
+            <button id="instructor-preview" type="button">預覽並驗證</button>
+            <button id="instructor-import" type="button">匯入計畫 JSON</button>
+            <input id="instructor-file" type="file" accept="application/json,.json" hidden>
+            <button id="instructor-export" type="button">匯出計畫 JSON</button>
+          </div>
+        </fieldset>
+        <p id="instructor-message" role="status"></p>
+        <div class="feature-actions">
+          <button id="instructor-apply" type="button" disabled>套用並重設教官紀錄</button>
+          <button id="instructor-cancel" type="button" disabled>取消未來事件</button>
+          <button id="instructor-report" type="button">匯出執行報告 JSON</button>
+        </div>
+        <h3>實際執行狀態</h3>
+        <p id="instructor-status">尚無排程</p>
+        <ol id="instructor-receipts"></ol>
       </section>
       <section id="training-workspace" class="panel workspace-extra" hidden>
         <h2>訓練場 <span>PRACTICE</span></h2>

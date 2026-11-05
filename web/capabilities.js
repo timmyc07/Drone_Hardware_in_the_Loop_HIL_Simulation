@@ -1,6 +1,11 @@
 // 公開資料盤點；狀態描述本專案，不代表外部產品狀態。
 export const SOURCES = [
   {
+    name: "PX4 故障注入與恢復",
+    url: "https://github.com/PX4/PX4-Autopilot/blob/5468dd100a69796dfdea8d99921d091f188799e4/docs/en/debug/failure_injection.md",
+    kind: "開源文件",
+  },
+  {
     name: "QGroundControl 測繪規劃",
     url: "https://github.com/mavlink/qgroundcontrol/blob/36436db319c731b70ab25dd3178896c4c22c75f6/docs/en/qgc-user-guide/plan_view/pattern_survey.md",
     kind: "開源文件",
@@ -779,9 +784,10 @@ export const CAPABILITIES = [
     id: "instructor",
     category: "訓練與評估",
     title: "教官操作站",
-    description: "教官控制訓練及監督學員。",
-    status: "planned",
+    description: "同頁定時安排最多 64 筆指定載具的故障、恢復、陣風與全域風事件，支援取消、計畫及執行報告匯出；尚無遠端教官與學員權限隔離。",
+    status: "partial",
     sources: [
+      "https://github.com/PX4/PX4-Autopilot/blob/5468dd100a69796dfdea8d99921d091f188799e4/docs/en/debug/failure_injection.md",
       "https://www.airbus.com/sites/g/files/jlcbta136/files/2023-02/SE-RPAS%20Training%20System.pdf",
     ],
   },
@@ -898,7 +904,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "程式控制 API",
     description:
-      "同頁 API 2.5 支援指定載具、自動拍攝及六向近接資料匯出，共用世界時鐘、場景與風；外部 SITL 使用獨立本機服務。",
+      "同頁 API 2.6 支援指定載具、自動拍攝、六向近接資料匯出及教官排程，共用世界時鐘、場景與風；外部 SITL 使用獨立本機服務。",
     status: "partial",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/apis.md"],
   },

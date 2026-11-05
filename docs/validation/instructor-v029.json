@@ -1,0 +1,140 @@
+{
+  "appVersion": "0.29.0",
+  "date": "2026-11-05",
+  "formats": {
+    "recording": 16,
+    "model": "0.11.0",
+    "api": "2.6",
+    "scene": 6,
+    "cameraDataset": 5,
+    "nativeRecording": 1,
+    "csvColumns": 199,
+    "instructorPlan": 1,
+    "instructorReport": 1
+  },
+  "scope": "Same-page instructor event scheduling in the built-in fixed-step world; no remote roles, student permissions, native flight-controller injection or hardware validation.",
+  "tests": {
+    "command": "npm test",
+    "passed": 458,
+    "failed": 0,
+    "durationMs": 52531.896625,
+    "log": "local/evidence/instructor-v029/tests-final.log",
+    "coverage": [
+      "Strict 1–64 event plans, future tick bounds, airframe and motor index validation, JSON import/export and atomic rejection",
+      "Ordered same-tick fault/recovery/wind execution, speed and selection independence, pause and inspection lease freeze",
+      "Cancellation, reset, stale import epoch, callback failure pause and manual continuation without resuming failed schedule",
+      "Real Worker VTOL motor and pusher events, exact schema16 native event recording and replay",
+      "Collision/DEM/byte/time/event caps cancel remaining events; terminal API application rejected without state mutation"
+    ]
+  },
+  "capacity": {
+    "limitBytes": 100663296,
+    "thirtyMinute": {
+      "passed": true,
+      "physicalSteps": 360000,
+      "frames": 36001,
+      "retainedBytes": 100518781,
+      "scheduledFinalTick": 360000,
+      "scheduledFinalTickReceipt": "applied"
+    },
+    "denseFourVehicle": {
+      "passed": true,
+      "frames": 211,
+      "ticks": 2100,
+      "retainedBytes": 101068635,
+      "note": "Whole final world frame may cross the byte cap; remaining instructor events are cancelled."
+    }
+  },
+  "browser": {
+    "passed": true,
+    "normalFlight": {
+      "passed": true,
+      "planRoundTrip": true,
+      "events": 10,
+      "allEventTicksAndOrderMatch": true,
+      "receiptsMatch": true,
+      "replay": {
+        "passed": true,
+        "vehicles": 1,
+        "frames": 689,
+        "ticks": 6875,
+        "simSeconds": 34.37499999999913,
+        "maximum": {
+          "positionM": 9.159339953157541e-16,
+          "quaternion": 5.464378949326942e-16,
+          "motors": 3.3306690738754696e-16,
+          "allState": 9.094947017729282e-13,
+          "sensors": 9.848122317634989e-12
+        }
+      }
+    },
+    "cancellation": {
+      "passed": true,
+      "cancelledFutureEvents": 2,
+      "appliedAtTick": 6875,
+      "lastPlannedTick": 9875,
+      "finalTick": 34609,
+      "ghostSensorEvents": 0,
+      "maxAltitudeM": 2.7484963342238604,
+      "replay": {
+        "passed": true,
+        "vehicles": 1,
+        "frames": 3463,
+        "ticks": 34609,
+        "simSeconds": 173.04499999991512,
+        "maximum": {
+          "positionM": 1.1518563880486e-15,
+          "quaternion": 6.685952925198149e-16,
+          "motors": 3.3306690738754696e-16,
+          "allState": 1.1427525592466736e-12,
+          "sensors": 9.848122317634989e-12
+        }
+      }
+    },
+    "pause": {
+      "before": "世界時間 0.265 秒（暫停，排程等待模擬時間）",
+      "after": "世界時間 0.265 秒（暫停，排程等待模擬時間）",
+      "passed": true
+    },
+    "reset": {
+      "phase": "idle",
+      "plan": null,
+      "receipts": [],
+      "draftRetained": true
+    },
+    "mobile": {
+      "bodyWidth": 390,
+      "panelWidth": 362,
+      "status": "已取消未來事件：使用者取消",
+      "viewportWidth": 390
+    },
+    "replay": {
+      "availability": "未提供教官排程：重播只顯示已錄製事件。",
+      "status": "未提供",
+      "applyEnabled": false,
+      "reportEnabled": false
+    },
+    "consoleErrors": [],
+    "screenshots": [
+      "local/evidence/instructor-v029/instructor-complete.png",
+      "local/evidence/instructor-v029/instructor-flight.png",
+      "local/evidence/instructor-v029/instructor-mobile.png"
+    ]
+  },
+  "catalog": {
+    "total": 72,
+    "implemented": 8,
+    "partial": 54,
+    "planned": 2,
+    "external": 8,
+    "note": "Counts describe catalogue entries, not market coverage."
+  },
+  "sourceReference": "https://github.com/PX4/PX4-Autopilot/blob/5468dd100a69796dfdea8d99921d091f188799e4/docs/en/debug/failure_injection.md",
+  "rawEvidence": "local/evidence/instructor-v029/",
+  "limitations": [
+    "Sensor faults remain independent observations and do not feed an EKF or the ideal built-in controller.",
+    "Cancelling future events does not restore existing faults, wind or flight mode. Link recovery requires an explicit mode change to leave a latched safety return/landing.",
+    "Flight recording stores actual commands only; pending plans and instructor reports are separate exports.",
+    "No physical HIL, external SITL, remote instructor or student access isolation tested in this release."
+  ]
+}

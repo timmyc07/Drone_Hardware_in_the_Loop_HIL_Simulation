@@ -2,6 +2,8 @@
 
 瀏覽器中的無人機飛行模擬器，可操作飛行、規劃航點、練習任務並記錄與回放資料。線上入口：[Drone Flight Lab](https://drone-flight-lab-reikous.chen-yu-ting0718-05.chatgpt.site)。
 
+0.29 版新增[教官事件排程](docs/教官事件排程.md)，可依世界模擬時間安排故障、恢復及風事件；套用後仍須開始或繼續模擬。範圍與驗證摘要見 [instructor-v029.json](docs/validation/instructor-v029.json)。
+
 0.28 版新增[六向近接測距](docs/近接測距.md)，並修正機隊草稿覆寫感測器設定的問題。442 項測試及雙機實際飛行、盲區、故障與重播核對見 [proximity-v028.json](docs/validation/proximity-v028.json)。此功能供觀察及警示，不執行避障。
 
 0.27 版新增[相機測繪規劃](docs/測繪網格任務.md)，可依相機與重疊率估算固定平面航線及拍攝間距；套用後仍須開始任務與自動拍攝。428 項測試、6 航點實際飛行與 16 張影像核對見 [survey-camera-v027.json](docs/validation/survey-camera-v027.json)。
