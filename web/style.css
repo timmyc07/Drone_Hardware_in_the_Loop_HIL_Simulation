@@ -1587,3 +1587,33 @@ select:disabled {
 .radar-table-wrap { max-height: 16rem; overflow: auto; }
 .radar-table-wrap table { width: 100%; text-align: left; }
 .radar-table-wrap th, .radar-table-wrap td { padding: .35rem .6rem; }
+
+.replay-controls {
+  padding: 10px 17px;
+  background: #111e2e;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+}
+.replay-controls[hidden] { display: none; }
+.replay-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 7px; }
+.replay-range { display: flex; align-items: center; gap: 8px; flex: 1 1 180px; }
+.replay-range input { flex: 1; min-width: 80px; }
+.replay-controls button, .replay-controls input, .replay-controls select { font: inherit; }
+.replay-controls button, .replay-controls input[type="number"], .replay-controls select {
+  max-width: 100%;
+  color: var(--text);
+  background: var(--panel-light);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 8px;
+}
+.replay-controls button:disabled { cursor: default; }
+.replay-controls input[type="number"] { width: 90px; }
+#replay-event-details { overflow-wrap: anywhere; }
+.replay-controls p { margin: 4px 0; }
+#replay-error { color: #ff9c9c; }
+@media (max-width: 600px) {
+  .replay-controls { padding: 10px; }
+  .replay-range { order: -1; flex-basis: 100%; }
+}

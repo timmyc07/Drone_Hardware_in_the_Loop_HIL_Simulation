@@ -1,0 +1,200 @@
+{
+  "release": "0.24.0",
+  "formats": {
+    "model": "0.10.0",
+    "recording": 15,
+    "scene": 6,
+    "camera": 5,
+    "inspectionReport": 2,
+    "api": "2.3",
+    "native": 1
+  },
+  "tests": {
+    "passed": 371,
+    "failed": 0,
+    "durationMs": 48183.782875
+  },
+  "actualFlight": {
+    "passed": true,
+    "checks": 12,
+    "hashes": {
+      "sourceWorld": "c7f1e3e4c69fc98061e2c20112c6030966c5e690bb3bca339dfc1354c1f9451c",
+      "exportedWorld": "c7f1e3e4c69fc98061e2c20112c6030966c5e690bb3bca339dfc1354c1f9451c",
+      "sourceReport": "958337656c107c7fd8336b146645f80ddb783e1e940d1a7b6b87c4a48860665a",
+      "exportedReport": "958337656c107c7fd8336b146645f80ddb783e1e940d1a7b6b87c4a48860665a"
+    },
+    "worldByteIdentical": true,
+    "reportByteIdentical": true,
+    "summary": {
+      "passed": 4,
+      "total": 4,
+      "attempts": 5,
+      "complete": true
+    }
+  },
+  "modelFixture": {
+    "sha256": "27734b270de4804fb3181bd9addb159ea7d493ecf2d4bcd3670f9f672e194519",
+    "exportSha256": "27734b270de4804fb3181bd9addb159ea7d493ecf2d4bcd3670f9f672e194519",
+    "byteIdentical": true,
+    "frames": 249,
+    "events": 11,
+    "termination": {
+      "reason": "vehicle-collision",
+      "tick": 2476,
+      "time": 12.380000000000535
+    },
+    "independentReplay": {
+      "passed": true,
+      "vehicles": 2,
+      "frames": 249,
+      "ticks": 2476,
+      "simSeconds": 12.380000000000535,
+      "maximum": {
+        "positionM": 0,
+        "quaternion": 0,
+        "motors": 0,
+        "allState": 0,
+        "sensors": 0
+      }
+    },
+    "settingRestoration": [
+      {
+        "label": "mixed-settings-after-change",
+        "index": 140,
+        "vehicleId": "drone-2",
+        "scene": "0.24 雙載具重播 · 遠端障礙物",
+        "training": "hover",
+        "gimbalYaw": "22.92",
+        "gimbalPitch": "-11.46",
+        "radar": "來源 drone-2 · 無效（故障） · 量測 7.000 s · 齡期 0.000 s · 故障啟用",
+        "gimbal": "實際偏航 / 俯仰 / 橫滾 22.9 / -11.5 / 0.0° · 追蹤誤差 0.0° · 角度限位 無 · 速度限幅 無"
+      },
+      {
+        "label": "mixed-settings-before-change",
+        "index": 98,
+        "vehicleId": "drone-2",
+        "scene": "預設場景",
+        "training": "free",
+        "gimbalYaw": "0.00",
+        "gimbalPitch": "15.00",
+        "radar": "來源 drone-2 · 無效（無回波） · 量測 4.900 s · 齡期 0.000 s",
+        "gimbal": "實際偏航 / 俯仰 / 橫滾 0.0 / 15.0 / 0.0° · 追蹤誤差 0.0° · 角度限位 無 · 速度限幅 無"
+      },
+      {
+        "label": "mixed-settings-changed-again",
+        "index": 120,
+        "vehicleId": "drone-2",
+        "scene": "預設場景",
+        "training": "hover",
+        "gimbalYaw": "22.92",
+        "gimbalPitch": "-11.46",
+        "radar": "來源 drone-2 · 無效（故障） · 量測 6.000 s · 齡期 0.000 s · 故障啟用",
+        "gimbal": "實際偏航 / 俯仰 / 橫滾 22.9 / -11.5 / 0.0° · 追蹤誤差 0.0° · 角度限位 無 · 速度限幅 無"
+      }
+    ],
+    "uiChecks": [
+      {
+        "label": "mixed-terminal",
+        "index": 248,
+        "position": "影格 249 / 249 · 12.380 秒（範圍 0.000–12.380 秒）",
+        "vehicle": "四旋翼 · E0（drone-1） · quadrotor · crashed · 離地 3.0 m　｜　六旋翼 · E6（drone-2） · hexarotor · crashed · 離地 3.0 m",
+        "altitude": "3.01",
+        "badge": "碰撞停機",
+        "play": "▶ 播放重播",
+        "event": "符合篩選的事件：11；尚未選擇事件。",
+        "inspection": "尚無巡檢目標。"
+      },
+      {
+        "label": "mixed-terminal-hex",
+        "index": 248,
+        "position": "影格 249 / 249 · 12.380 秒（範圍 0.000–12.380 秒）",
+        "vehicle": "四旋翼 · E0（drone-1） · quadrotor · crashed · 離地 3.0 m　｜　六旋翼 · E6（drone-2） · hexarotor · crashed · 離地 3.0 m",
+        "altitude": "3.02",
+        "badge": "碰撞停機",
+        "play": "▶ 播放重播",
+        "event": "符合篩選的事件：11；尚未選擇事件。",
+        "inspection": "尚無巡檢目標。"
+      },
+      {
+        "label": "mixed-first-hex",
+        "index": 0,
+        "position": "影格 1 / 249 · 0.000 秒（範圍 0.000–12.380 秒）",
+        "vehicle": "四旋翼 · E0（drone-1） · quadrotor · landed · 離地 0.0 m　｜　六旋翼 · E6（drone-2） · hexarotor · landed · 離地 0.0 m",
+        "altitude": "0.00",
+        "badge": "紀錄重播",
+        "play": "▶ 播放重播",
+        "event": "符合篩選的事件：11；尚未選擇事件。",
+        "inspection": "尚無巡檢目標。"
+      },
+      {
+        "label": "mixed-scene-event",
+        "index": 140,
+        "position": "影格 141 / 249 · 7.000 秒（範圍 0.000–12.380 秒）",
+        "vehicle": "四旋翼 · E0（drone-1） · quadrotor · flying · 離地 2.0 m　｜　六旋翼 · E6（drone-2） · hexarotor · flying · 離地 2.0 m",
+        "altitude": "1.96",
+        "badge": "紀錄重播",
+        "play": "▶ 播放重播",
+        "event": "事件 1 / 1：場景變更 · 7.000 秒 · 世界",
+        "inspection": "尚無巡檢目標。"
+      },
+      {
+        "label": "mixed-restart-from-end",
+        "index": 19,
+        "position": "影格 20 / 249 · 0.950 秒（範圍 0.000–12.380 秒）",
+        "vehicle": "四旋翼 · E0（drone-1） · quadrotor · flying · 離地 1.0 m　｜　六旋翼 · E6（drone-2） · hexarotor · landed · 離地 0.0 m",
+        "altitude": "0.00",
+        "badge": "紀錄重播",
+        "play": "Ⅱ 暫停模擬",
+        "event": "符合篩選的事件：1；尚未選擇事件。",
+        "inspection": "尚無巡檢目標。"
+      },
+      {
+        "label": "mixed-autoplay-stops-at-end",
+        "index": 248,
+        "position": "影格 249 / 249 · 12.380 秒（範圍 0.000–12.380 秒）",
+        "vehicle": "四旋翼 · E0（drone-1） · quadrotor · crashed · 離地 3.0 m　｜　六旋翼 · E6（drone-2） · hexarotor · crashed · 離地 3.0 m",
+        "altitude": "3.02",
+        "badge": "碰撞停機",
+        "play": "▶ 播放重播",
+        "event": "符合篩選的事件：1；尚未選擇事件。",
+        "inspection": "尚無巡檢目標。"
+      }
+    ]
+  },
+  "resetLiveReplay": {
+    "passed": true,
+    "vehicles": 1,
+    "frames": 899,
+    "ticks": 8976,
+    "simSeconds": 44.88000000000451,
+    "maximum": {
+      "positionM": 0,
+      "quaternion": 0,
+      "motors": 0,
+      "allState": 0,
+      "sensors": 7.105427357601002e-15
+    }
+  },
+  "scaling": {
+    "frames": 36001,
+    "events": 100000,
+    "method": "Binary search verified by bounded indexed reads; not a full maximum-size browser benchmark"
+  },
+  "limits": [
+    "Only recorded internal-controller frames; no interpolation, reintegration, video generation or native recording conversion",
+    "Same-tick events share the final retained atomic frame; command navigation does not invent intermediate states",
+    "GUI inspection proof reused genuine 0.23 GPU capture; no new GPU capture was claimed",
+    "Native process startup was not exercised in this batch; import/start race guards reviewed statically",
+    "Raw inputs, downloads and browser exports stay under ignored project-local local/"
+  ],
+  "targetFieldRestoration": {
+    "passed": true,
+    "frame": "影格 9428 / 10750 · 471.140 秒（範圍 0.000–537.190 秒）",
+    "north": "20",
+    "east": "0",
+    "navigationAltitude": "10",
+    "controlAltitude": "3.5",
+    "northDisabled": true,
+    "altitudeDisabled": true
+  }
+}

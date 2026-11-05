@@ -721,6 +721,54 @@
                 ><span class="dot"></span>200 Hz 模型</span
               >
             </div>
+            <section
+              id="replay-controls"
+              class="replay-controls"
+              aria-label="重播時間軸"
+              hidden
+            >
+              <div class="replay-row">
+                <button id="replay-first" type="button">首幀</button>
+                <button id="replay-previous" type="button">上一幀</button>
+                <label class="replay-range" for="replay-frame"
+                  >紀錄影格
+                  <input
+                    id="replay-frame"
+                    type="range"
+                    min="0"
+                    max="0"
+                    value="0"
+                  />
+                </label>
+                <button id="replay-next" type="button">下一幀</button>
+                <button id="replay-last" type="button">末幀</button>
+              </div>
+              <div class="replay-row">
+                <span id="replay-position" aria-live="polite"></span>
+                <label for="replay-seconds">時間（秒）</label>
+                <input id="replay-seconds" type="number" step="any" />
+                <button id="replay-seek-time" type="button">跳至時間</button>
+                <span id="replay-error" role="status"></span>
+              </div>
+              <div class="replay-row">
+                <label for="replay-event-type">事件類型</label>
+                <select id="replay-event-type">
+                  <option value="">全部類型</option>
+                </select>
+                <label for="replay-event-vehicle">事件對象</label>
+                <select id="replay-event-vehicle">
+                  <option value="">全部機隊與世界事件</option>
+                </select>
+                <button id="replay-event-previous" type="button">
+                  上一事件
+                </button>
+                <button id="replay-event-next" type="button">下一事件</button>
+              </div>
+              <p id="replay-event-details" aria-live="polite"></p>
+              <p class="replay-note">
+                導覽時會暫停回放。顯示錄製影格，沒有插值；同一時間點的事件依原始順序瀏覽，均顯示該時間點最後保留的影格，並非個別事件的中間狀態。
+              </p>
+            </section>
             <div id="viewport" class="viewport">
               <div class="viewport-grid" aria-hidden="true"></div>
               <div class="viewport-top">

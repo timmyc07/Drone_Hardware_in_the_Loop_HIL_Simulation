@@ -794,10 +794,11 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "JSON 重播",
     description:
-      "版本 13 JSON 保存同一世界的全機隊、場景、地理來源與帶載具 ID 的事件；拒絕版本 1 至 12。",
+      "版本 15 JSON 保存全機隊、場景與事件；支援時間軸跳轉、逐幀和依載具／類型定位事件，拒絕版本 1 至 14。",
     status: "partial",
     sources: [
       "https://www.liftoff-game.com/news/full-release-liftoff-micro-drones",
+      "https://github.com/ros2/rosbag2/blob/9e310a6dc4e8c6b52211b628b2bf6f0a4f89dc87/docs/design/rosbag2_playback_time.md",
     ],
   },
   {

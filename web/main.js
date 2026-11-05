@@ -47,6 +47,8 @@ import {
 } from "./training.js";
 import { createSceneEditor } from "./scene-editor.js";
 import { createDemEditor } from "./dem-editor.js";
+import { createReplayControls } from "./replay-controls.js";
+import { replayFrameAtTime } from "./replay.js";
 import { validateScene } from "./scene-data.js";
 import { createTerrain } from "./terrain.js";
 import { CAPABILITIES, SOURCES } from "./capabilities.js";
@@ -104,6 +106,7 @@ let replay;
 let replayPrevious;
 let replayClock = 0;
 let replayIndex = 0;
+const replayControls = createReplayControls({ seek: seekReplayFrame });
 
 let rendering = true;
 let scene;
@@ -114,7 +117,7 @@ let lastRenderedSceneReadonly = false;
 let toastTimer;
 let sampleCount = 0;
 let storageLimited = false;
-let terrainTermination = null;
+let worldTermination = null;
 let runwayCompatible = true;
 let exportedTime = 0;
 const dirty = () =>
@@ -492,6 +495,8 @@ function toast(message) {
 
 function setPlaying(value) {
   running = value;
+  if (replay && !value) replayClock = replay.samples[replayIndex].time;
+  $("replay-position").setAttribute("aria-live", value ? "off" : "polite");
   const takeoffAction = takeoffPlayAction(latest);
   const playLabel = replay
     ? "播放重播"
@@ -526,9 +531,11 @@ function setPlaying(value) {
       : latest?.time > 0
         ? "實驗暫停，資料已保留"
         : "準備就緒，開始你的實驗";
-  if (!externalActive && terrainTermination && !value)
+  if (!externalActive && worldTermination && !value)
     $("run-label").textContent =
-      "已到達高程資料邊界，請調整航線或更換地形範圍。";
+      worldTermination.reason === "vehicle-collision"
+        ? "載具碰撞，世界已停止。"
+        : "已到達高程資料邊界，請調整航線或更換地形範圍。";
   const label =
     latest?.status === "crashed"
       ? "碰撞停機"
@@ -850,12 +857,14 @@ function newExperiment() {
     replayPrevious = undefined;
   }
   replay = undefined;
+  replayControls.setRecording(null);
   document.body.classList.remove("replay");
   setReplayControls(false);
   history = [];
   sampleCount = 0;
   exportedTime = 0;
   storageLimited = false;
+  worldTermination = null;
   resetTargets();
   document
     .querySelectorAll("#target-controls input, #gust")
@@ -986,6 +995,15 @@ function download(text, extension, mime, filename) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+function seekReplayFrame(index) {
+  if (!replay || externalActive) return;
+  if (!Number.isInteger(index) || index < 0 || index >= replay.samples.length)
+    throw new Error("無效的重播影格");
+  replayIndex = index;
+  setPlaying(false);
+  clearCameraPreview();
+  projectReplayWorld(true);
+}
 function exportRecording(kind, recording) {
   if (kind === "csv")
     download(
@@ -1011,6 +1029,10 @@ $("import-file").onchange = async (event) => {
   const file = event.target.files?.[0];
   event.target.value = "";
   if (!file) return;
+  if (externalActive) {
+    toast("請先返回內建模擬，再匯入飛行紀錄。");
+    return;
+  }
   if (file.size > 128 * 1024 * 1024) {
     toast("紀錄檔案超過 128 MiB 上限。");
     return;
@@ -1024,6 +1046,10 @@ $("import-file").onchange = async (event) => {
       ))
     )
       return;
+    if (externalActive) {
+      toast("已進入外部飛控模式，取消匯入紀錄。");
+      return;
+    }
     sendWorker({ type: "pause" });
     clearCameraPreview();
     if (!replay)
@@ -1033,7 +1059,7 @@ $("import-file").onchange = async (event) => {
         scenario,
       };
     replay = record;
-    terrainTermination = record.termination;
+    replayControls.setRecording(record);
     activeVehicleId = record.world.vehicles[0].id;
     document.querySelectorAll("[data-scenario]").forEach((item) => {
       const active = item.dataset.scenario === scenario;
@@ -1133,7 +1159,7 @@ worker.onmessage = ({ data }) => {
   config = data.config;
   scenario = data.scenario;
   renderVehicleRoster();
-  terrainTermination = data.termination;
+  worldTermination = data.termination;
   if (data.sensors) {
     sensors = data.sensors;
     renderSensors();
@@ -1555,21 +1581,21 @@ function animate(now) {
   const elapsed = Math.min((now - previousFrame) / 1000, 0.1);
   previousFrame = now;
   if (replay && running) {
-    replayClock += elapsed * Number($("speed").value);
-    while (
-      replayIndex + 1 < replay.samples.length &&
-      replay.samples[replayIndex + 1].time <= replayClock
+    const lastIndex = replay.samples.length - 1;
+    replayClock = Math.min(
+      replay.samples[lastIndex].time,
+      replayClock + elapsed * Number($("speed").value),
+    );
+    const nextIndex = replayFrameAtTime(replay, replayClock);
+    if (
+      nextIndex !== replayIndex &&
+      (nextIndex === lastIndex || now - uiTime > 50)
     ) {
-      replayIndex++;
-      projectReplayWorld();
-      history.push(latest);
-      if (history.length > 400) history.shift();
-    }
-    if (replayIndex === replay.samples.length - 1) setPlaying(false);
-    if (replayIndex === replay.samples.length - 1 || now - uiTime > 50) {
-      updateTelemetry();
+      replayIndex = nextIndex;
+      projectReplayWorld(true);
       uiTime = now;
     }
+    if (nextIndex === lastIndex) setPlaying(false);
   }
   updatePilot(now);
   updateCameraLive(now);
@@ -2469,7 +2495,7 @@ function setReplayControls(disabled) {
   renderTutorial();
   document
     .querySelectorAll(
-      "#mission-workspace button:not(#mission-export), #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #camera-capture, #camera-add, #camera-live, #flight-mode, [data-command], [data-mode], #position-reference, #position-apply, #fault-apply, #fault-link, #fault-clear, #abort-takeoff, #fault-pusher, #transition-hover, #transition-cruise, #pilot-enable",
+      "#mission-workspace button:not(#mission-export), #training-workspace input, #training-workspace select, #sensor-fault-channel, #sensor-fault-on, #sensor-fault-off, #sensor-export-json, #camera-capture, #camera-add, #camera-live, #flight-mode, [data-command], [data-mode], #position-north, #position-east, #position-altitude, #position-reference, #position-apply, #fault-apply, #fault-link, #fault-clear, #abort-takeoff, #fault-pusher, #transition-hover, #transition-cruise, #pilot-enable",
     )
     .forEach((element) => {
       element.disabled = disabled;
@@ -2531,6 +2557,8 @@ function showReplayEvent(type, value) {
 }
 function projectReplayWorld(resetHistory = false) {
   worldState = recordingWorldAt(replay, replayIndex);
+  worldTermination =
+    replayIndex === replay.samples.length - 1 ? replay.termination : null;
   const selected =
     worldState.vehicles.find((item) => item.id === activeVehicleId) ||
     worldState.vehicles[0];
@@ -2540,6 +2568,15 @@ function projectReplayWorld(resetHistory = false) {
   config = selected.config;
   scenario = selected.scenario;
   sensorConfig = selected.setup.sensors;
+  $("position-north").value = latest.navigation.targetPosition[0];
+  $("position-east").value = latest.navigation.targetPosition[1];
+  $("position-altitude").value = latest.navigation.positionAltitude;
+  for (const target of targets) {
+    const value = latest.target[target.key] * target.factor;
+    $(`target-${target.key}`).value = value;
+    $(`output-${target.key}`).textContent =
+      `${value.toFixed(1)} ${target.unit}`;
+  }
   waypoints = structuredClone(selected.setup.mission);
   if (resetHistory)
     history = replay.samples
@@ -2553,6 +2590,8 @@ function projectReplayWorld(resetHistory = false) {
   renderVehicleRoster();
   renderSensors();
   updateTelemetry();
+  setPlaying(running);
+  replayControls.update(replayIndex);
 }
 
 const sensorLabels = {
@@ -3837,6 +3876,7 @@ $("hil-start").onclick = async () => {
         return;
     }
     const paused = await requestApi({ type: "pause" });
+    if (replay) throw new Error("已進入紀錄重播，請先返回內建模擬。");
     internalSaved = {
       state: paused,
       history: [...history],
