@@ -163,12 +163,12 @@ function safeScene(f) {
 const inspection = (record, index = -1) =>
   record.samples.at(index).vehicles[0].snapshot.inspection;
 
-test("bridge record15 preserves two actual upward exposures at tick7 and independently replays all world states", async () => {
+test("bridge record16 preserves two actual upward exposures at tick7 and independently replays all world states", async () => {
   const f = await observed();
   f.step(13);
   f.capture();
   const clean = validateRecording(f.record);
-  assert.equal(RECORDING_VERSION, 15);
+  assert.equal(RECORDING_VERSION, 16);
   assert.equal(MODEL_VERSION, "0.11.0");
   assert.deepEqual(
     clean.samples.map((frame) => frame.tick),
@@ -315,7 +315,7 @@ test("recorded scene changes reject conservative corner overlaps and accept clea
   );
 });
 
-test("bridge artifacts reject missing base, Scene5, record14 and report1 without compatibility conversion", async () => {
+test("bridge artifacts reject missing base, Scene5, record15 and report1 without compatibility conversion", async () => {
   const f = await observed();
   f.step(13);
   f.capture();
@@ -323,7 +323,7 @@ test("bridge artifacts reject missing base, Scene5, record14 and report1 without
   delete bad.world.scene.obstacles[0].baseAltitude;
   assert.throws(() => validateRecording(bad), /obstacle/i);
   assert.throws(
-    () => validateRecording({ ...f.record, version: 14 }),
+    () => validateRecording({ ...f.record, version: 15 }),
     /version/i,
   );
   const sceneArtifact = JSON.parse(sceneToJson(f.world.configuration.scene));

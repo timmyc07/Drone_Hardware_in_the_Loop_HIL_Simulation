@@ -536,7 +536,7 @@ export const CAPABILITIES = [
     id: "sensor-latency",
     category: "感測與通訊",
     title: "感測延遲",
-    description: "六種虛擬感測器可設定共同延遲；飛控仍使用既有理想觀測。",
+    description: "八種虛擬感測器可設定共同延遲；飛控仍使用既有理想觀測。",
     status: "implemented",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/sensors.md"],
   },
@@ -544,7 +544,7 @@ export const CAPABILITIES = [
     id: "sensor-dropout",
     category: "感測與通訊",
     title: "感測資料遺失",
-    description: "六種虛擬感測器可設定共同丟包及單項故障；故障不影響飛控。",
+    description: "八種虛擬感測器可設定共同丟包及單項故障；故障不影響飛控。",
     status: "implemented",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/sensors.md"],
   },
@@ -644,11 +644,12 @@ export const CAPABILITIES = [
     id: "distance",
     category: "感測與通訊",
     title: "距離感測",
-    description: "提供朝下測距的幾何近似；不含通用多方向距離感測器。",
+    description: "提供朝下測距與前後左右上下的質心單射線近接觀測，含過近、故障及過期警示；非全空間偵測、避障或實機校準。",
     status: "partial",
     sources: [
       "https://github.com/microsoft/AirSim/blob/main/docs/sensors.md",
       "https://www.cyberbotics.com/doc/reference/nodes-and-keywords?version=R2023a",
+      "https://github.com/microsoft/AirSim/blob/1ca93f6f77e4e8a39b2b241c1fe2764da4d7dd41/docs/distance_sensor.md",
     ],
   },
   {
@@ -814,7 +815,7 @@ export const CAPABILITIES = [
     id: "record-csv",
     category: "資料與整合",
     title: "CSV 飛行紀錄",
-    description: "可匯出 174 欄飛行及感測資料 CSV，標示載具 ID 與世界時間步。",
+    description: "可匯出 199 欄飛行及感測資料 CSV，標示載具 ID 與世界時間步。",
     status: "partial",
     sources: ["https://wiki.zephyr-sim.com/help/faqs"],
   },
@@ -823,7 +824,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "JSON 重播",
     description:
-      "版本 15 JSON 保存全機隊、場景與事件；支援時間軸跳轉、逐幀和依載具／類型定位事件，拒絕版本 1 至 14。",
+      "版本 16 JSON 保存全機隊、場景與事件；支援時間軸跳轉、逐幀和依載具／類型定位事件，拒絕版本 1 至 15。",
     status: "partial",
     sources: [
       "https://www.liftoff-game.com/news/full-release-liftoff-micro-drones",
@@ -897,7 +898,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "程式控制 API",
     description:
-      "同頁 API 2.4 支援指定載具及自動拍攝控制，共用世界時鐘、場景與風；外部 SITL 使用獨立本機服務。",
+      "同頁 API 2.5 支援指定載具、自動拍攝及六向近接資料匯出，共用世界時鐘、場景與風；外部 SITL 使用獨立本機服務。",
     status: "partial",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/apis.md"],
   },

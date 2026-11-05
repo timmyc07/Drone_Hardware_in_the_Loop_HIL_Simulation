@@ -1030,7 +1030,16 @@ test("radar noise/dropout/reset/checkpoint are deterministic and radar sampling 
   repeat.setObstacles([radarWall]);
   assert.deepEqual(repeat.update(state()), first);
   assert.ok(Object.isFrozen(SENSOR_NAMES));
-  assert.equal(SENSOR_NAMES.at(-1), "radar");
+  assert.deepEqual(SENSOR_NAMES, [
+    "gps",
+    "barometer",
+    "magnetometer",
+    "rangefinder",
+    "lidar",
+    "opticalFlow",
+    "radar",
+    "proximity",
+  ]);
 });
 
 test("the maximum radar beam budget produces bounded real returns with separate range and signed-velocity noise", () => {

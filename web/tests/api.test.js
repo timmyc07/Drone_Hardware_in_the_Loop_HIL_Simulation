@@ -11,13 +11,14 @@ test("vehicle operations require and preserve explicit vehicle IDs", async () =>
     },
     () => () => {},
   );
-  assert.equal(api.version, "2.4");
+  assert.equal(api.version, "2.5");
   await api.getState("one");
   const target = { altitude: 3 };
   await api.setTargets("two", target);
   target.altitude = 10;
   await api.takeoff("two");
   await api.exportRadarData("two", "csv");
+  await api.exportProximityData("one", "csv");
   await api.captureInspection("two", "tower-south");
   await api.getInspectionReport("two");
   await api.getWorldState();
@@ -26,6 +27,7 @@ test("vehicle operations require and preserve explicit vehicle IDs", async () =>
     { type: "targets", vehicleId: "two", value: { altitude: 3 } },
     { type: "takeoff", vehicleId: "two" },
     { type: "radarExport", vehicleId: "two", value: "csv" },
+    { type: "proximityExport", vehicleId: "one", value: "csv" },
     { type: "captureInspection", vehicleId: "two", value: "tower-south" },
     { type: "inspectionReport", vehicleId: "two" },
     { type: "inspectWorld" },
@@ -37,6 +39,7 @@ test("vehicle operations require and preserve explicit vehicle IDs", async () =>
     /vehicleId/,
   );
   assert.throws(() => api.getInspectionReport(), /vehicleId/);
+  assert.throws(() => api.exportProximityData(), /vehicleId/);
 });
 
 test("automatic camera uses an explicit source and returns independent session state", async () => {

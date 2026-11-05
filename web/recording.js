@@ -22,6 +22,7 @@ import { assessInspection, INSPECTION_REPORT_VERSION } from "./inspection.js";
 import { obstacleContainsVehicle } from "./obstacle-geometry.js";
 import { getVehicleEnvelope } from "./peer-geometry.js";
 import { validateRadarReading, compactRadarReading } from "./radar.js";
+import { PROXIMITY_AXES, validateProximityReading } from "./proximity.js";
 import { AIRFRAMES, rotorCount } from "./rotor-geometry.js";
 import { createTerrain } from "./terrain.js";
 import {
@@ -30,7 +31,7 @@ import {
   validateGimbalState,
 } from "./gimbal.js";
 
-export const RECORDING_VERSION = 15;
+export const RECORDING_VERSION = 16;
 export const MODEL_VERSION = "0.11.0";
 const MODES = ["attitude", "position", "mission", "rtl", "land", "takeoff"];
 const TAKEOFF_PHASES = [
@@ -628,6 +629,41 @@ export function compactSnapshot(snapshot) {
     },
   };
 }
+const PROXIMITY_REASONS = ["", "startup", "fault", "dropout", "no-return"];
+function compactProximityReading(value) {
+  const reading = validateProximityReading(value);
+  return [
+    reading.time,
+    PROXIMITY_REASONS.indexOf(reading.reason),
+    reading.positionNed,
+    reading.quaternion?.every((v, i) => Object.is(v, i === 0 ? 1 : 0)) ? 1 : reading.quaternion,
+    reading.rangesM.every((v) => v === null) ? null : reading.rangesM,
+    reading.tooClose.reduce((mask, flag, i) => mask | (Number(flag) << i), 0),
+  ];
+}
+function proximityReading(value, config) {
+  if (Array.isArray(value)) {
+    if (value.length !== 6 || Reflect.ownKeys(value).length !== 7 ||
+        !Array.from({ length: 6 }, (_, i) => Object.hasOwn(value, i)).every(Boolean))
+      throw new Error("Invalid dense compact proximity reading");
+    const [time, reasonCode, positionNed, quaternion, rangesM, mask] = value;
+    count(reasonCode, PROXIMITY_REASONS.length - 1);
+    count(mask, 63);
+    value = {
+      time,
+      valid: reasonCode === 0,
+      reason: PROXIMITY_REASONS[reasonCode],
+      positionNed,
+      quaternion: quaternion === 1 ? [1, 0, 0, 0] : quaternion,
+      rangesM: rangesM === null ? Array(6).fill(null) : rangesM,
+      tooClose: Array.from({ length: 6 }, (_, i) => Boolean(mask & (1 << i))),
+      minM: config.proximityMinM,
+      maxM: config.proximityMaxM,
+      warningM: config.proximityWarningM,
+    };
+  }
+  return validateProximityReading(value, config);
+}
 export function compactSensorFrame(value) {
   return {
     ...value,
@@ -636,10 +672,11 @@ export function compactSensorFrame(value) {
       0,
     ),
     radar: compactRadarReading(value.radar),
+    proximity: compactProximityReading(value.proximity),
   };
 }
 export function validateSensorFrame(value, sensorConfig = {}) {
-  object(value);
+  exactKeys(value, ["time", "faults", ...SENSOR_NAMES], "sensor frame");
   const config = validateSensorConfig(sensorConfig),
     time = number(value.time, 0, 1800.001);
   const result = { time };
@@ -656,6 +693,13 @@ export function validateSensorFrame(value, sensorConfig = {}) {
       : object(value.faults);
   exactKeys(faults, SENSOR_NAMES, "sensor faults");
   for (const name of SENSOR_NAMES) {
+    if (name === "proximity") {
+      const proximity = proximityReading(value.proximity, config);
+      if (proximity.time > time + 1e-8)
+        throw new Error("Proximity acquisition is after its sensor frame");
+      result.proximity = proximity;
+      continue;
+    }
     if (name === "radar") {
       const radar = validateRadarReading(value.radar, config);
       if (radar.time > time + 1e-8)
@@ -968,7 +1012,7 @@ export function validateRecording(value) {
   object(value);
   if (value.version !== RECORDING_VERSION)
     throw new Error(
-      "Unsupported recording version: version 15 required; legacy recordings are not supported",
+      "Unsupported recording version: version 16 required; legacy recordings are not supported",
     );
   exactKeys(
     value,
@@ -1476,7 +1520,7 @@ export function recordingToCsv(record) {
     "training_complete_boolean",
     "training_score_points",
     "training_hold_s",
-    ...SENSOR_NAMES.filter((name) => name !== "radar").flatMap((name) => [
+    ...SENSOR_NAMES.filter((name) => !["radar", "proximity"].includes(name)).flatMap((name) => [
       `${name}_sample_time_s`,
       `${name}_valid_boolean`,
     ]),
@@ -1557,6 +1601,16 @@ export function recordingToCsv(record) {
     "radar_nearest_range_rate_m_s",
     "radar_nearest_azimuth_rad",
     "radar_nearest_elevation_rad",
+    "proximity_sample_time_s",
+    "proximity_valid_boolean",
+    "proximity_reason",
+    ...["north", "east", "down"].map((axis) => `proximity_acquisition_${axis}_m`),
+    ...["w", "x", "y", "z"].map((axis) => `proximity_acquisition_quat_${axis}`),
+    "proximity_min_m",
+    "proximity_max_m",
+    "proximity_warning_m",
+    ...PROXIMITY_AXES.map(({ id }) => `proximity_${id}_range_m`),
+    ...PROXIMITY_AXES.map(({ id }) => `proximity_${id}_too_close_boolean`),
   ];
   const rows = samples.map((s, index) =>
     [
@@ -1604,7 +1658,7 @@ export function recordingToCsv(record) {
       Number(s.training.complete),
       s.training.score,
       s.training.holdSeconds,
-      ...SENSOR_NAMES.filter((name) => name !== "radar").flatMap((name) => [
+      ...SENSOR_NAMES.filter((name) => !["radar", "proximity"].includes(name)).flatMap((name) => [
         sensorFrames[index][name].time,
         Number(sensorFrames[index][name].valid),
       ]),
@@ -1661,6 +1715,7 @@ export function recordingToCsv(record) {
         sensorFrames[index].gps.verticalDatum,
       ),
       ...radarCsv(sensorFrames[index].radar),
+      ...proximityCsv(sensorFrames[index].proximity),
     ].join(","),
   );
   return [header.join(","), ...rows].join("\n");
@@ -1699,4 +1754,19 @@ function radarCsv(reading) {
     nearest?.azimuthRad ?? "",
     nearest?.elevationRad ?? "",
   ];
+}
+
+function proximityCsv(reading) {
+  return [
+    reading.time,
+    Number(reading.valid),
+    reading.reason,
+    ...(reading.positionNed ?? [null, null, null]),
+    ...(reading.quaternion ?? [null, null, null, null]),
+    reading.minM,
+    reading.maxM,
+    reading.warningM,
+    ...reading.rangesM,
+    ...reading.tooClose.map(Number),
+  ].map((v) => v ?? "");
 }

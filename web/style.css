@@ -1669,3 +1669,12 @@ select:disabled {
 .camera-auto-controls select {
   max-width: 100%;
 }
+
+.proximity-panel { margin: 1rem 0; padding: 1rem; background: #152a39; border: 1px solid #30475a; border-radius: 7px; }
+.proximity-panel h3 { margin-top: 0; }
+.proximity-panel p { overflow-wrap: anywhere; }
+.proximity-table-wrap { overflow-x: auto; }
+.proximity-table-wrap table { width: 100%; text-align: left; border-collapse: collapse; }
+.proximity-table-wrap th, .proximity-table-wrap td { padding: .35rem .6rem; border-bottom: 1px solid #30475a; }
+.proximity-warning { color: #ffd077; font-weight: bold; }
+.proximity-danger { color: #ff9a91; font-weight: bold; }

@@ -119,7 +119,7 @@ function fleet(count, { ground = false, sensors = lowRays } = {}) {
   return input;
 }
 function assertFinalWorld(record, stopped) {
-  assert.equal(record.version, 15);
+  assert.equal(record.version, 16);
   assert.equal(record.samples.at(-1).tick, stopped.world.tick);
   assert.equal(record.samples.at(-1).time, stopped.world.time);
   assert.equal(record.sensorFrames.at(-1).tick, stopped.world.tick);
@@ -170,7 +170,12 @@ test(
     const replay = await h.send({ type: "play" });
     assert.equal(replay.ok, false);
     assert.match(replay.error, /30/);
-    const record = validateRecording(await h.call({ type: "apiExport" }));
+    const raw = await h.call({ type: "apiExport" });
+    const retainedBytes = Buffer.byteLength(JSON.stringify(raw.samples)) +
+      Buffer.byteLength(JSON.stringify(raw.sensorFrames)) - 2 +
+      (raw.events.length ? Buffer.byteLength(JSON.stringify(raw.events)) - 1 : 0);
+    t.diagnostic(`30 minute retained ${retainedBytes} bytes across ${raw.samples.length} frames at tick ${stopped.world.tick}`);
+    const record = validateRecording(raw);
     assert.equal(record.samples.length, 36001);
     assertFinalWorld(record, stopped);
     await h.advance(10);

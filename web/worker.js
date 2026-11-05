@@ -1,5 +1,6 @@
 import { createWorld, defaultWorldConfig } from "./world.js";
 import { exportRadarData } from "./radar.js";
+import { exportProximityData } from "./proximity.js";
 import { exportVehiclePointCloud } from "./pointcloud.js";
 import {
   cameraMetadata,
@@ -72,6 +73,7 @@ const VEHICLE_READS = [
   "pointCloudExport",
   "sensorExport",
   "radarExport",
+  "proximityExport",
   "inspectionBegin",
   "inspectionSubmit",
   "inspectionCancel",
@@ -518,6 +520,22 @@ onmessage = async ({ data }) => {
               time: v.sensors.radar.time,
               detectionCount: v.sensors.radar.detections.length,
               text,
+            },
+          });
+          return;
+        }
+        case "proximityExport": {
+          if (data.requestId === undefined)
+            throw new Error("此操作需要程式介面請求編號");
+          const value = state(), v = selected(value, data.vehicleId);
+          const text = exportProximityData(data.value, v.sensors.proximity, {
+            sourceVehicleId: v.id, worldTick: value.tick,
+          });
+          postMessage({
+            type: "apiReply", requestId: data.requestId, ok: true,
+            value: {
+              format: data.value, sourceVehicleId: v.id,
+              exportWorldTick: value.tick, time: v.sensors.proximity.time, text,
             },
           });
           return;

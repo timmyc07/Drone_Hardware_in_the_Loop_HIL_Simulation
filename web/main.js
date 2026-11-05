@@ -12,6 +12,8 @@ import {
 import { readPilotInput, takeoffPlayAction } from "./input.js";
 import { exportVehiclePointCloud } from "./pointcloud.js";
 import { exportRadarData } from "./radar.js";
+import { exportProximityData, PROXIMITY_BOUNDS } from "./proximity.js";
+import { createProximityPanel } from "./proximity-panel.js";
 import {
   createHilClient,
   isCompanionOrigin,
@@ -1169,6 +1171,12 @@ worker.onmessage = ({ data }) => {
   if (!rosterDraft || data.message === "reset") {
     rosterDraft = structuredClone(worldConfig);
     renderVehicleEditor();
+  } else {
+    // Hidden setup follows committed commands while the visible roster edits stay in place.
+    for (const draft of rosterDraft.vehicles) {
+      const current = worldConfig.vehicles.find((item) => item.id === draft.id);
+      if (current) draft.setup = structuredClone(current.setup);
+    }
   }
   const vehicleChanged = data.activeVehicleId !== activeVehicleId;
   if (vehicleChanged) {
@@ -2719,6 +2727,11 @@ const sensorLabels = {
   radarMaxM: "雷達最大距離 (m)",
   radarNoiseM: "雷達距離雜訊 (m)",
   radarVelocityNoiseMps: "雷達距離變化速度雜訊 (m/s)",
+  proximityHz: "六向近接更新率 (Hz)",
+  proximityMinM: "六向近接最小距離 (m)",
+  proximityMaxM: "六向近接最大距離 (m)",
+  proximityNoiseM: "六向近接距離雜訊 (m)",
+  proximityWarningM: "六向近接警示距離 (m)",
 };
 const sensorActions = $("sensor-fault-on").parentElement;
 for (const [kind, label] of [
@@ -2794,6 +2807,10 @@ for (const key of Object.keys(DEFAULT_SENSOR_CONFIG)) {
     input.min = "-90";
     input.max = "90";
   }
+  if (Object.hasOwn(PROXIMITY_BOUNDS, key)) {
+    input.min = String(PROXIMITY_BOUNDS[key][0]);
+    input.max = String(PROXIMITY_BOUNDS[key][1]);
+  }
   field.append(label, input);
   sensorSettings.append(field);
 }
@@ -2849,6 +2866,17 @@ const vectorText = (value, digits = 2) =>
   Array.isArray(value)
     ? value.map((v) => valueText(v, digits)).join(" / ")
     : "—";
+const proximityPanel = createProximityPanel({
+  exportData: (format) => {
+    if (externalActive || !sensors?.proximity || !worldState)
+      throw new Error("目前未提供近接資料。");
+    const text = exportProximityData(format, sensors.proximity, {
+      sourceVehicleId: activeVehicleId, worldTick: worldState.tick,
+    });
+    download(text, format, format === "json" ? "application/json" : "text/csv;charset=utf-8",
+      `flight-lab-proximity-${activeVehicleId}.${format}`);
+  },
+});
 function renderSensors() {
   if (!sensors) return;
   const readings = $("sensor-readings");
@@ -2913,6 +2941,11 @@ function renderSensors() {
   updateLidarExportButtons();
   drawLidar(sensors.lidar);
   renderRadar(sensors.radar);
+  proximityPanel.render(sensors.proximity, {
+    sourceVehicleId: activeVehicleId, worldTick: worldState?.tick,
+    time: sensors.time, available: !externalActive && !!worldState,
+    maxAgeS: Math.max(0.25, 2 / sensorConfig.proximityHz + sensorConfig.latency),
+  });
   scene?.setSensorScan($("sensor-scan-visible").checked ? sensors.lidar : null);
 }
 function renderRadar(reading) {
@@ -4089,6 +4122,7 @@ $("hil-start").onclick = async () => {
     clearCameraPreview();
     externalActive = true;
     renderRadar(null);
+    proximityPanel.render(null, { available: false });
     groundStationSettingsKey = "";
     hilState = reattach
       ? existing

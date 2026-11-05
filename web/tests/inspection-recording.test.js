@@ -185,7 +185,7 @@ const state = (record, frame = -1, actor = 0) =>
 test("inspection receipts retain the exact off-cadence exposure tick and independently replay every world state", async () => {
   const f = await observedFixture(),
     clean = validateRecording(f.record);
-  assert.equal(RECORDING_VERSION, 15);
+  assert.equal(RECORDING_VERSION, 16);
   assert.deepEqual(
     clean.samples.map((frame) => frame.tick),
     [0, 7, 10, 20],

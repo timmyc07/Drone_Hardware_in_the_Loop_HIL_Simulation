@@ -379,7 +379,40 @@ test("radar exports identify the requested vehicle and retain delayed acquisitio
     "number",
   );
   const record = validateRecording(raw);
-  assert.equal(record.version, 15);
+  assert.equal(record.version, 16);
+  replay(record);
+});
+
+test("proximity exports preserve the requested vehicle, delayed pose and fault state", async (t) => {
+  const h = await harness(t), input = fleet(2, false);
+  for (const v of input.vehicles)
+    Object.assign(v.setup.sensors, { latency: 0.25, proximityNoiseM: 0 });
+  await h.call({ type: "resetWorld", value: input });
+  assert.equal((await h.send({ type: "proximityExport", value: "json" })).ok, false);
+  assert.equal((await h.send({ type: "proximityExport", vehicleId: "missing", value: "json" })).ok, false);
+  await h.call({ type: "play" });
+  await h.advance(10);
+  await h.call({ type: "pause" });
+  const inspected = await h.call({ type: "inspect", vehicleId: "drone-2" });
+  const exported = await h.call({ type: "proximityExport", vehicleId: "drone-2", value: "json" });
+  const artifact = JSON.parse(exported.text);
+  assert.equal(exported.sourceVehicleId, "drone-2");
+  assert.equal(artifact.worldTick, inspected.world.tick);
+  assert.equal(artifact.sourceVehicleId, "drone-2");
+  assert.deepEqual(artifact.reading, inspected.sensors.proximity);
+  assert.ok(artifact.reading.time < inspected.world.time);
+  const csv = await h.call({ type: "proximityExport", vehicleId: "drone-2", value: "csv" });
+  assert.equal(csv.text.split("\n").length, 7);
+  assert.ok(csv.text.startsWith("source_vehicle_id,observation_world_tick,"));
+  assert.equal((await h.send({ type: "proximityExport", vehicleId: "drone-2", value: "pcd" })).ok, false);
+  await h.call({ type: "sensorFault", vehicleId: "drone-2", value: { sensor: "proximity", failed: true } });
+  const faulted = JSON.parse((await h.call({ type: "proximityExport", vehicleId: "drone-2", value: "json" })).text);
+  assert.equal(faulted.reading.reason, "fault");
+  assert.ok(faulted.reading.rangesM.every(v => v === null));
+  assert.ok(faulted.reading.tooClose.every(v => v === false));
+  const record = validateRecording(await h.call({ type: "apiExport" }));
+  assert.equal(record.version, 16);
+  assert.equal(record.sensorFrames.at(-1).vehicles[1].sensors.faults.proximity, true);
   replay(record);
 });
 
@@ -513,7 +546,7 @@ test("inspection lease freezes the whole fleet, rejects mutations and mismatched
   );
 });
 
-test("successful inspection submissions hash actual buffers and retain replayable schema15 receipts without resuming an explicit pause", async (t) => {
+test("successful inspection submissions hash actual buffers and retain replayable schema16 receipts without resuming an explicit pause", async (t) => {
   const h = await harness(t);
   await h.call({ type: "resetWorld", value: inspectionFleet() });
   await h.call({ type: "play" });
@@ -541,7 +574,7 @@ test("successful inspection submissions hash actual buffers and retain replayabl
   assert.equal(inspected.world.vehicles[1].snapshot.inspection.attempts, 0);
   assert.equal((await submitInspection(h, lease, frame)).ok, false);
   const record = validateRecording(await h.call({ type: "apiExport" }));
-  assert.equal(record.version, 15);
+  assert.equal(record.version, 16);
   const event = record.events.find((event) => event.type === "inspection");
   assert.equal(event.tick, lease.world.tick);
   assert.equal(event.value.sha256, expectedHash);

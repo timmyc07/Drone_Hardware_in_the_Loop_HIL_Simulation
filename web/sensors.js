@@ -1,4 +1,11 @@
 import {
+  PROXIMITY_AXES,
+  PROXIMITY_DEFAULT_CONFIG,
+  PROXIMITY_BOUNDS,
+  validateProximityConfig,
+  proximityMetadata,
+} from "./proximity.js";
+import {
   validateObstacles,
   obstacleBounds,
   rayAabb,
@@ -53,6 +60,7 @@ export const DEFAULT_SENSOR_CONFIG = Object.freeze({
   lidarNoiseM: 0.01,
   opticalFlowNoiseRadS: 0.01,
   ...RADAR_DEFAULT_CONFIG,
+  ...PROXIMITY_DEFAULT_CONFIG,
 });
 export const SENSOR_NAMES = Object.freeze([
   "gps",
@@ -62,6 +70,7 @@ export const SENSOR_NAMES = Object.freeze([
   "lidar",
   "opticalFlow",
   "radar",
+  "proximity",
 ]);
 const bounds = {
   ...Object.fromEntries(SENSOR_NAMES.map((name) => [`${name}Hz`, [1, 20]])),
@@ -90,6 +99,7 @@ const bounds = {
   lidarNoiseM: [0, 10],
   opticalFlowNoiseRadS: [0, 10],
   ...RADAR_BOUNDS,
+  ...PROXIMITY_BOUNDS,
 };
 function object(value) {
   if (
@@ -142,6 +152,11 @@ export function validateSensorConfig(value = {}) {
   validateRadarConfig(
     Object.fromEntries(
       Object.keys(RADAR_DEFAULT_CONFIG).map((key) => [key, config[key]]),
+    ),
+  );
+  validateProximityConfig(
+    Object.fromEntries(
+      Object.keys(PROXIMITY_DEFAULT_CONFIG).map((key) => [key, config[key]]),
     ),
   );
   return config;
@@ -286,6 +301,7 @@ export function lidarPoints(reading) {
 }
 export function createSensorSuite(configuration = {}, seed = 42) {
   const config = validateSensorConfig(configuration);
+  const proximityInfo = proximityMetadata(config);
   const radarInfo = radarMetadata(config),
     radarBeams = radarDirections(config);
   const lidarMetadata = {
@@ -324,6 +340,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
     throw new Error("Sensor seed must be an integer");
   let randomState,
     radarRandomState,
+    proximityRandomState,
     time,
     lastInputTime,
     readings,
@@ -343,12 +360,26 @@ export function createSensorSuite(configuration = {}, seed = 42) {
       (Math.imul(1664525, radarRandomState) + 1013904223) >>> 0;
     return (radarRandomState + 0.5) / 4294967296;
   }
+  function proximityRandom() {
+    proximityRandomState =
+      (Math.imul(1664525, proximityRandomState) + 1013904223) >>> 0;
+    return (proximityRandomState + 0.5) / 4294967296;
+  }
   const noise = (sigma, rng = random) =>
     sigma === 0
       ? 0
       : sigma * Math.sqrt(-2 * Math.log(rng())) * Math.cos(2 * Math.PI * rng());
   function invalid(name, at, reason, input) {
     const common = { time: at, valid: false, reason };
+    if (name === "proximity")
+      return {
+        ...common,
+        positionNed: input ? [...input.position] : null,
+        quaternion: input ? [...input.quaternion] : null,
+        ...proximityInfo,
+        rangesM: Array(6).fill(null),
+        tooClose: Array(6).fill(false),
+      };
     if (name === "radar")
       return {
         ...common,
@@ -390,6 +421,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
     randomState = seed >>> 0;
     // Deterministic stream partition from the one explicit suite seed; not a calibrated independence guarantee.
     radarRandomState = (seed ^ 0x7f4a7c15) >>> 0;
+    proximityRandomState = (seed ^ 0x9e3779b9) >>> 0;
     time = 0;
     lastInputTime = -1;
     obstacles = [];
@@ -406,6 +438,43 @@ export function createSensorSuite(configuration = {}, seed = 42) {
   }
   function measure(name, input, matrix) {
     const common = { time: input.time, valid: true, reason: "" };
+    if (name === "proximity") {
+      const tooClose = Array(6).fill(false);
+      const rangesM = PROXIMITY_AXES.map((axis, i) => {
+        const hit = nearestHit(
+          input.position,
+          rotate(matrix, axis.direction),
+          obstacles,
+          terrain,
+          0,
+          config.proximityMaxM,
+          peers,
+        );
+        if (hit === null) return null;
+        if (hit.distanceM < config.proximityMinM) {
+          tooClose[i] = true;
+          return null;
+        }
+        return Math.max(
+          config.proximityMinM,
+          Math.min(
+            config.proximityMaxM,
+            hit.distanceM + noise(config.proximityNoiseM, proximityRandom),
+          ),
+        );
+      });
+      const valid = rangesM.some((v) => v !== null) || tooClose.some(Boolean);
+      return {
+        ...common,
+        valid,
+        reason: valid ? "" : "no-return",
+        positionNed: [...input.position],
+        quaternion: [...input.quaternion],
+        ...proximityInfo,
+        rangesM,
+        tooClose,
+      };
+    }
     if (name === "gps") {
       let coordinates;
       try {
@@ -608,7 +677,11 @@ export function createSensorSuite(configuration = {}, seed = 42) {
           ) * period;
         const reading = faults[name]
           ? invalid(name, time, "fault", input)
-          : (name === "radar" ? radarRandom() : random()) < config.dropout
+          : (name === "radar"
+                ? radarRandom()
+                : name === "proximity"
+                  ? proximityRandom()
+                  : random()) < config.dropout
             ? invalid(name, time, "dropout", input)
             : measure(name, input, matrix);
         acquired[name] = reading;
@@ -677,6 +750,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
     const saved = {
       randomState,
       radarRandomState,
+      proximityRandomState,
       time,
       lastInputTime,
       readings: { ...readings },
@@ -697,6 +771,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
       ({
         randomState,
         radarRandomState,
+        proximityRandomState,
         time,
         lastInputTime,
         readings,

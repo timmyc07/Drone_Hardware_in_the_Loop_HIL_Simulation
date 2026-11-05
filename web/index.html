@@ -412,6 +412,24 @@
         <h2>感測器工作台 <span>VIRTUAL SENSORS</span></h2>
         <p>合成感測器與故障僅供觀察，不驅動理想化飛控；數值未經實機校準。</p>
         <div id="sensor-readings" class="sensor-grid" aria-live="off"></div>
+        <section class="proximity-panel" aria-label="六向近接測距">
+          <h3>六向近接測距</h3>
+          <p>沿機體六個軸向各發出一條射線，距離從質心出發。僅供觀察與警示，不避障、不控制飛行。</p>
+          <p id="proximity-meta">未提供近接資料</p>
+          <div class="proximity-table-wrap"><table>
+            <thead><tr><th scope="col">方向</th><th scope="col">量測距離 (m)</th><th scope="col">狀態</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">前</th><td id="proximity-range-0">—</td><td id="proximity-state-0">未提供</td></tr>
+              <tr><th scope="row">後</th><td id="proximity-range-1">—</td><td id="proximity-state-1">未提供</td></tr>
+              <tr><th scope="row">右</th><td id="proximity-range-2">—</td><td id="proximity-state-2">未提供</td></tr>
+              <tr><th scope="row">左</th><td id="proximity-range-3">—</td><td id="proximity-state-3">未提供</td></tr>
+              <tr><th scope="row">上</th><td id="proximity-range-4">—</td><td id="proximity-state-4">未提供</td></tr>
+              <tr><th scope="row">下</th><td id="proximity-range-5">—</td><td id="proximity-state-5">未提供</td></tr>
+            </tbody>
+          </table></div>
+          <div class="feature-actions"><button id="proximity-export-json" disabled>匯出近接 JSON</button><button id="proximity-export-csv" disabled>匯出近接 CSV</button></div>
+          <p id="proximity-error" role="status"></p>
+        </section>
         <section class="camera-workbench" aria-labelledby="camera-title">
           <h3 id="camera-title">機載相機</h3>
           <p>
@@ -579,6 +597,7 @@
               <option value="lidar">LiDAR</option>
               <option value="radar">雷達</option>
               <option value="opticalFlow">光流</option>
+              <option value="proximity">六向近接測距</option>
             </select></label
           >
           <button id="sensor-fault-on">啟用故障</button

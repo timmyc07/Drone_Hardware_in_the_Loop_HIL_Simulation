@@ -199,10 +199,10 @@ const geographicSensors = {
   originVerticalDatum: "orthometric",
 };
 
-test("World15 round trip keeps parallel vehicle frames and 174 stable CSV columns", () => {
+test("World16 round trip keeps parallel vehicle frames and 199 stable CSV columns", () => {
   const input = shortRecord({ vehicles: [{ id: "alpha" }, { id: "beta" }] });
   const clean = roundTrip(input);
-  assert.equal(RECORDING_VERSION, 15);
+  assert.equal(RECORDING_VERSION, 16);
   assert.deepEqual(
     clean.samples[0].vehicles.map((v) => v.id),
     ["alpha", "beta"],
@@ -211,7 +211,7 @@ test("World15 round trip keeps parallel vehicle frames and 174 stable CSV column
   const [header, ...rows] = recordingToCsv(input)
     .split("\n")
     .map((row) => row.split(","));
-  assert.equal(header.length, 174);
+  assert.equal(header.length, 199);
   assert.deepEqual(header.slice(0, 3), ["vehicle_id", "world_tick", "time_s"]);
   assert.equal(header[46], "steps_count");
   assert.equal(header[166], "gps_vertical_datum_code");
@@ -1205,7 +1205,7 @@ test("radar acquisitions survive configuration epochs, packed faults and full-wo
     validateSensorFrame(direct, clean.world.vehicles[1].setup.sensors),
     sensorsAt(clean, -1, 1),
   );
-  for (const badMask of [-1, 128, 0.5, NaN, Infinity, null, undefined]) {
+  for (const badMask of [-1, 256, 0.5, NaN, Infinity, null, undefined]) {
     const bad = clone(compact);
     sensorsAt(bad, -1, 1).faults = badMask;
     assert.throws(() => validateRecording(bad));
@@ -1215,12 +1215,12 @@ test("radar acquisitions survive configuration epochs, packed faults and full-wo
   assert.throws(() => validateRecording(stale), /after/);
   const prior = clone(compact);
   prior.version = 12;
-  assert.throws(() => validateRecording(prior), /version 15/);
+  assert.throws(() => validateRecording(prior), /version 16/);
   const rows = recordingToCsv(f.record)
     .split("\n")
     .map((r) => r.split(","));
-  assert.equal(rows[0].length, 174);
-  assert.deepEqual(rows[0].slice(167), [
+  assert.equal(rows[0].length, 199);
+  assert.deepEqual(rows[0].slice(167, 174), [
     "radar_sample_time_s",
     "radar_valid_boolean",
     "radar_return_count",
@@ -1232,4 +1232,137 @@ test("radar acquisitions survive configuration epochs, packed faults and full-wo
   assert.equal(rows[1][169], "1");
   assert.equal(rows[2][169], "0");
   assert.equal(rows[2][170], "");
+});
+
+test("proximity preserves six acquired axes, strict payloads and historical version rejection", () => {
+  const f = fixture({ vehicles: [{ id: "alpha" }, { id: "beta" }], setup: { sensors: { proximityNoiseM: 0 } } });
+  f.step(40, 10);
+  const input = f.record;
+  const reading = sensorsAt(input, -1).proximity;
+  Object.assign(reading, {
+    valid: true, reason: "", rangesM: [1, 2, 3, 4, null, 6],
+    tooClose: [false, false, false, false, true, false],
+  });
+  const clean = roundTrip(input);
+  const last = recordingWorldAt(clean, clean.samples.length - 1);
+  assert.deepEqual(last.vehicles[0].sensors.proximity, reading);
+  assert.deepEqual(last.vehicles[1].sensors.proximity, sensorsAt(input, -1, 1).proximity);
+  const rows = recordingToCsv(input).split("\n").map((row) => row.split(","));
+  const row = rows.at(-2), header = rows[0];
+  assert.equal(header.length, 199);
+  for (const [i, axis] of ["front", "back", "right", "left", "up", "down"].entries()) {
+    assert.equal(row[header.indexOf(`proximity_${axis}_range_m`)], String(reading.rangesM[i] ?? ""));
+    assert.equal(row[header.indexOf(`proximity_${axis}_too_close_boolean`)], String(Number(reading.tooClose[i])));
+  }
+  assert.equal(row[header.indexOf("proximity_sample_time_s")], String(reading.time));
+  assert.equal(row[header.indexOf("proximity_acquisition_down_m")], String(reading.positionNed[2]));
+  assert.equal(row[header.indexOf("proximity_acquisition_quat_w")], String(reading.quaternion[0]));
+  assert.equal(row[header.indexOf("proximity_warning_m")], String(reading.warningM));
+  rejects(input, [
+    ...Array.from({ length: RECORDING_VERSION }, (_, version) => (r) => { r.version = version; }),
+    (r) => { sensorsAt(r, -1).proximity.time = r.samples.at(-1).time + 0.005; },
+    (r) => { sensorsAt(r, -1).proximity.rangesM[5] = NaN; },
+    (r) => { sensorsAt(r, -1).proximity.rangesM = Array(6); },
+    (r) => { sensorsAt(r, -1).proximity.tooClose[0] = true; },
+    (r) => { sensorsAt(r, -1).proximity.tooClose[4] = false; sensorsAt(r, -1).proximity.valid = false; },
+    (r) => { sensorsAt(r, -1).proximity.maxM++; },
+    (r) => { sensorsAt(r, -1).proximity.warningM++; },
+    (r) => { sensorsAt(r, -1).proximity.extra = true; },
+    (r) => { sensorsAt(r, -1).extra = true; },
+    (r) => { sensorsAt(r, -1).faults.proximity = true; },
+    (r) => { delete sensorsAt(r, -1).proximity; },
+    (r) => { sensorsAt(r, -1).proximity.time = 0; },
+  ]);
+});
+
+test("proximity configuration and faults stay on each vehicle timeline with eight-bit packed faults", () => {
+  const f = fixture({ vehicles: [{ id: "alpha" }, { id: "beta" }] });
+  f.step(40, 10);
+  const updated = { ...f.world.configuration.vehicles[1].setup.sensors, proximityMaxM: 30, proximityWarningM: 2 };
+  f.command("sensorConfig", updated, "beta");
+  f.step(40, 10);
+  f.command("sensorFault", { sensor: "proximity", failed: true }, "beta");
+  f.step(20);
+  const clean = roundTrip(f.record);
+  const last = recordingWorldAt(clean, clean.samples.length - 1);
+  assert.equal(last.vehicles[0].sensors.proximity.maxM, 40);
+  assert.equal(last.vehicles[1].sensors.proximity.maxM, 30);
+  assert.equal(last.vehicles[1].sensors.proximity.reason, "fault");
+  assert.equal(last.vehicles[1].setup.sensors.proximityWarningM, 2);
+  const packed = JSON.parse(recordingToJson(f.record));
+  assert.equal(sensorsAt(packed, -1, 1).faults, 128);
+  assert.equal(sensorsAt(packed, -1, 1).proximity.length, 6);
+  assert.deepEqual(validateRecording(packed).sensorFrames, clean.sensorFrames);
+  rejects(f.record, [(r) => { r.events.find((e) => e.type === "sensorConfig").value.proximityMaxM = 31; }]);
+  for (const sensor of Object.keys(sensorsAt(clean, -1).faults))
+    f.command("sensorFault", { sensor, failed: true }, "alpha");
+  f.step(40);
+  const allFaults = JSON.parse(recordingToJson(f.record));
+  assert.equal(sensorsAt(allFaults, -1).faults, 255);
+  assert.deepEqual(validateRecording(allFaults), validateRecording(f.record));
+});
+
+test("compact proximity is lossless and rejects malformed tuples, masks and source payloads", () => {
+  const input = shortRecord(), config = input.world.vehicles[0].setup.sensors;
+  const reading = sensorsAt(input).proximity;
+  Object.assign(reading, { valid: true, reason: "", rangesM: [1, 2, null, 4, null, 6], tooClose: [false, false, true, false, true, false] });
+  const packed = JSON.parse(recordingToJson(input));
+  assert.equal(sensorsAt(packed).proximity.length, 6);
+  assert.equal(sensorsAt(packed).proximity[5], 20);
+  assert.deepEqual(validateRecording(packed).sensorFrames, input.sensorFrames);
+  assert.ok(JSON.stringify(sensorsAt(packed).proximity).length < JSON.stringify(reading).length);
+  const mutate = [
+    (v) => v.pop(),
+    (v) => v.push(0),
+    (v) => { delete v[1]; },
+    (v) => { v.extra = true; },
+    (v) => { v[Symbol("extra")] = true; },
+    ...[-1, 5, 0.5, NaN, "0"].map((code) => (v) => { v[1] = code; }),
+    ...[-1, 64, 0.5, NaN, "0"].map((mask) => (v) => { v[5] = mask; }),
+    (v) => { v[4] = Array(6); },
+    (v) => { v[4][0] = 100; },
+    (v) => { v[5] = 1; },
+    (v) => { v[2].extra = true; },
+    (v) => { v[3] = [2, 0, 0, 0]; },
+    (v) => { v[0] = 0.01; },
+  ];
+  for (const change of mutate) {
+    const bad = clone(packed);
+    change(sensorsAt(bad).proximity);
+    assert.throws(() => validateRecording(bad), undefined, change.toString());
+  }
+  const badSource = clone(sensorsAt(input));
+  badSource.proximity.tooClose[0] = true;
+  assert.throws(() => compactSensorFrame(badSource));
+  assert.deepEqual(validateSensorFrame(compactSensorFrame(sensorsAt(input)), config), sensorsAt(input));
+});
+
+test("compact proximity empty ranges and exact identity poses expand without losing any axes", () => {
+  const input = shortRecord({ setup: { sensors: { dropout: 1 } } });
+  const reading = sensorsAt(input).proximity;
+  reading.quaternion = [1, 0, 0, 0];
+  const packed = JSON.parse(recordingToJson(input));
+  assert.equal(sensorsAt(packed).proximity[3], 1);
+  assert.equal(sensorsAt(packed).proximity[4], null);
+  assert.deepEqual(validateRecording(packed).sensorFrames, input.sensorFrames);
+  const closeInput = clone(input);
+  Object.assign(sensorsAt(closeInput).proximity, {
+    valid: true, reason: "", quaternion: [Math.SQRT1_2, 0, Math.SQRT1_2, 0],
+    tooClose: [true, true, true, true, true, true],
+  });
+  const closePacked = JSON.parse(recordingToJson(closeInput));
+  assert.equal(sensorsAt(closePacked).proximity[4], null);
+  assert.equal(sensorsAt(closePacked).proximity[5], 63);
+  assert.deepEqual(sensorsAt(closePacked).proximity[3], sensorsAt(closeInput).proximity.quaternion);
+  assert.deepEqual(validateRecording(closePacked).sensorFrames, closeInput.sensorFrames);
+  for (const invalid of [0, 2, true, "1", [], [1, 0, 0], Array(4)]) {
+    const bad = clone(packed);
+    sensorsAt(bad).proximity[3] = invalid;
+    assert.throws(() => validateRecording(bad));
+  }
+  for (const invalid of [0, false, "", [], Array(6)]) {
+    const bad = clone(packed);
+    sensorsAt(bad).proximity[4] = invalid;
+    assert.throws(() => validateRecording(bad));
+  }
 });

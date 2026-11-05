@@ -1,0 +1,415 @@
+{
+  "appVersion": "0.28.0",
+  "date": "2026-11-05",
+  "formats": {
+    "recording": 16,
+    "model": "0.11.0",
+    "api": "2.5",
+    "scene": 6,
+    "cameraDataset": 5,
+    "nativeRecording": 1,
+    "csvColumns": 199,
+    "standaloneProximity": 1
+  },
+  "scope": "Six CG-origin FRD rays and proximity observation warnings, no avoidance or calibrated hardware model.",
+  "tests": {
+    "command": "npm test",
+    "passed": 442,
+    "failed": 0,
+    "durationMs": 48860.735667,
+    "log": "local/evidence/proximity-v028/release-tests.log",
+    "coverage": [
+      "Six-axis geometry, rotated pose, terrain, peers and self-exclusion",
+      "Blind zone stops returns behind the first surface",
+      "Independent proximity RNG; 100-frame comparison kept the pre-existing seven channels equal",
+      "Fault/dropout/latency/checkpoint, strict metadata/arrays/masks and exports",
+      "Lossless record16 compact decoding, configuration epochs and malformed-data rejection",
+      "Worker API vehicle identity, delayed pose and faulted exports",
+      "Panel stale/fault/absent handling, export feedback and invalid-data buttons"
+    ]
+  },
+  "capacity": {
+    "limitBytes": 100663296,
+    "thirtyMinute": {
+      "passed": true,
+      "steps": 360000,
+      "frames": 36001,
+      "retainedBytes": 100518691,
+      "spareBytes": 144605,
+      "fixture": "One vehicle, low-density lidar and full dropout; real production Worker executes every physical step."
+    },
+    "denseFourVehicle": {
+      "passed": true,
+      "frames": 211,
+      "ticks": 2100,
+      "retainedBytes": 101068635,
+      "note": "Atomic final world step may cross the byte limit; the complete final frame remains exportable."
+    },
+    "initialUncompressedFailure": {
+      "frames": 33748,
+      "ticks": 337470,
+      "retainedBytes": 100663562
+    },
+    "intermediateTupleFailure": {
+      "frames": 35608,
+      "ticks": 356070,
+      "retainedBytes": 100665910
+    },
+    "resolution": "Lossless six-field tuple plus all-null ranges and exact identity-quaternion sentinels; no cap increase, thinning, rounding or dropped pose."
+  },
+  "browser": {
+    "passed": true,
+    "blindAxes": [
+      "right",
+      "down"
+    ],
+    "fault": "fault",
+    "recoveredReason": "",
+    "replayLastMatchesActual": true,
+    "csvColumns": 199,
+    "csvDataRows": 2388,
+    "mobile": {
+      "pageWidth": 390,
+      "panelWidth": 323.609375,
+      "source": "來源載具：drone-1 · 測量時刻：59.470 秒 · 齡期：0.080 秒 · 警示門檻：5.00 m",
+      "states": [
+        "已測得距離",
+        "已測得距離",
+        "太近（低於最小量測距離）",
+        "已測得距離",
+        "警示：接近物體",
+        "太近（低於最小量測距離）"
+      ],
+      "viewport": 390
+    },
+    "rosterRegression": {
+      "passed": true,
+      "cases": [
+        {
+          "sourceVehicleId": "drone-1",
+          "warningM": 5,
+          "minM": 3
+        },
+        {
+          "sourceVehicleId": "drone-2",
+          "warningM": 5,
+          "minM": 3
+        }
+      ],
+      "description": "Administrator thresholds retained after adding a peer and applying roster edits."
+    },
+    "oldSchema15Rejected": true,
+    "screenshot": "local/evidence/proximity-v028/blind-zone-ui.png"
+  },
+  "flights": {
+    "ordinaryRanges": {
+      "passed": true,
+      "vehicles": 2,
+      "frames": 2219,
+      "ticks": 22170,
+      "simSeconds": 110.84999999997167,
+      "maximum": {
+        "positionM": 0,
+        "quaternion": 0,
+        "motors": 0,
+        "allState": 0,
+        "sensors": 3.552713678800501e-15
+      }
+    },
+    "blindZoneAndFaultRecovery": {
+      "passed": true,
+      "vehicles": 2,
+      "frames": 1194,
+      "ticks": 11910,
+      "simSeconds": 59.55000000001201,
+      "maximum": {
+        "positionM": 0,
+        "quaternion": 0,
+        "motors": 0,
+        "allState": 0,
+        "sensors": 3.552713678800501e-15
+      }
+    }
+  },
+  "independentGeometry": {
+    "passed": true,
+    "method": "Independent quaternion-vector rotation, slab intersections, ground plane and sphere quadratic at the actual acquisition tick; 0.05m noise allowance.",
+    "maxErrorM": 0.0197805406906304,
+    "checks": [
+      {
+        "artifact": "drone-1-proximity.json",
+        "sourceVehicleId": "drone-1",
+        "tick": 22160,
+        "perAxis": [
+          {
+            "axis": 0,
+            "hit": "box-1",
+            "distanceM": 5.5,
+            "rangeM": 5.498882907203558,
+            "tooClose": false,
+            "errorM": 0.0011170927964423427
+          },
+          {
+            "axis": 1,
+            "hit": "box-2",
+            "distanceM": 5.5,
+            "rangeM": 5.494266617981682,
+            "tooClose": false,
+            "errorM": 0.005733382018317634
+          },
+          {
+            "axis": 2,
+            "hit": "drone-2",
+            "distanceM": 1.6199999999999999,
+            "rangeM": 1.6327651466853363,
+            "tooClose": false,
+            "errorM": 0.01276514668533646
+          },
+          {
+            "axis": 3,
+            "hit": "box-4",
+            "distanceM": 6.5,
+            "rangeM": 6.5027453563153355,
+            "tooClose": false,
+            "errorM": 0.0027453563153354565
+          },
+          {
+            "axis": 4,
+            "hit": "box-5",
+            "distanceM": 4.000000000000009,
+            "rangeM": 4.005561310111564,
+            "tooClose": false,
+            "errorM": 0.005561310111555251
+          },
+          {
+            "axis": 5,
+            "hit": "ground",
+            "distanceM": 1.9999999999999916,
+            "rangeM": 2.019780540690622,
+            "tooClose": false,
+            "errorM": 0.0197805406906304
+          }
+        ]
+      },
+      {
+        "artifact": "drone-2-proximity.json",
+        "sourceVehicleId": "drone-2",
+        "tick": 22160,
+        "perAxis": [
+          {
+            "axis": 0,
+            "hit": "box-1",
+            "distanceM": 5.5,
+            "rangeM": 5.502207536691433,
+            "tooClose": false,
+            "errorM": 0.002207536691432921
+          },
+          {
+            "axis": 1,
+            "hit": "box-2",
+            "distanceM": 5.5,
+            "rangeM": 5.498933075002443,
+            "tooClose": false,
+            "errorM": 0.001066924997556562
+          },
+          {
+            "axis": 2,
+            "hit": "box-3",
+            "distanceM": 1.5,
+            "rangeM": 1.50459185021833,
+            "tooClose": false,
+            "errorM": 0.004591850218329974
+          },
+          {
+            "axis": 3,
+            "hit": "drone-1",
+            "distanceM": 1.6199999999999999,
+            "rangeM": 1.6138533729127016,
+            "tooClose": false,
+            "errorM": 0.006146627087298295
+          },
+          {
+            "axis": 4,
+            "hit": "box-5",
+            "distanceM": 4.000000000000009,
+            "rangeM": 4.0119357939898,
+            "tooClose": false,
+            "errorM": 0.011935793989791499
+          },
+          {
+            "axis": 5,
+            "hit": "ground",
+            "distanceM": 1.9999999999999916,
+            "rangeM": 1.9900311093025724,
+            "tooClose": false,
+            "errorM": 0.00996889069741913
+          }
+        ]
+      },
+      {
+        "artifact": "blind-zone-proximity.json",
+        "sourceVehicleId": "drone-1",
+        "tick": 9660,
+        "perAxis": [
+          {
+            "axis": 0,
+            "hit": "box-1",
+            "distanceM": 5.5,
+            "rangeM": 5.5,
+            "tooClose": false,
+            "errorM": 0
+          },
+          {
+            "axis": 1,
+            "hit": "box-2",
+            "distanceM": 5.5,
+            "rangeM": 5.5,
+            "tooClose": false,
+            "errorM": 0
+          },
+          {
+            "axis": 2,
+            "hit": "drone-2",
+            "distanceM": 1.6199999999999999,
+            "rangeM": null,
+            "tooClose": true,
+            "errorM": null
+          },
+          {
+            "axis": 3,
+            "hit": "box-4",
+            "distanceM": 6.5,
+            "rangeM": 6.5,
+            "tooClose": false,
+            "errorM": 0
+          },
+          {
+            "axis": 4,
+            "hit": "box-5",
+            "distanceM": 4.000000000000009,
+            "rangeM": 4.000000000000009,
+            "tooClose": false,
+            "errorM": 0
+          },
+          {
+            "axis": 5,
+            "hit": "ground",
+            "distanceM": 1.9999999999999916,
+            "rangeM": null,
+            "tooClose": true,
+            "errorM": null
+          }
+        ]
+      },
+      {
+        "artifact": "recovered-proximity.json",
+        "sourceVehicleId": "drone-1",
+        "tick": 11894,
+        "perAxis": [
+          {
+            "axis": 0,
+            "hit": "box-1",
+            "distanceM": 5.5,
+            "rangeM": 5.5,
+            "tooClose": false,
+            "errorM": 0
+          },
+          {
+            "axis": 1,
+            "hit": "box-2",
+            "distanceM": 5.5,
+            "rangeM": 5.5,
+            "tooClose": false,
+            "errorM": 0
+          },
+          {
+            "axis": 2,
+            "hit": "drone-2",
+            "distanceM": 1.6199999999999999,
+            "rangeM": null,
+            "tooClose": true,
+            "errorM": null
+          },
+          {
+            "axis": 3,
+            "hit": "box-4",
+            "distanceM": 6.5,
+            "rangeM": 6.5,
+            "tooClose": false,
+            "errorM": 0
+          },
+          {
+            "axis": 4,
+            "hit": "box-5",
+            "distanceM": 4.000000000000009,
+            "rangeM": 4.000000000000009,
+            "tooClose": false,
+            "errorM": 0
+          },
+          {
+            "axis": 5,
+            "hit": "ground",
+            "distanceM": 1.9999999999999916,
+            "rangeM": null,
+            "tooClose": true,
+            "errorM": null
+          }
+        ]
+      }
+    ]
+  },
+  "files": {
+    "two-vehicle-flight.json": {
+      "bytes": 100684067,
+      "sha256": "d9b3281ef9131facc14459b5f476e7e397f2fdf07bd2fc82da084e5b158cb2e1"
+    },
+    "blind-zone-flight.json": {
+      "bytes": 62177921,
+      "sha256": "19956be76bfa82f856bbfc48d3cbb9f717fc37e728aee93403825fbced48a9f1"
+    },
+    "blind-zone-flight.csv": {
+      "bytes": 3404806,
+      "sha256": "bbfdea4636983a5fca6a2560cdb36c3c54322edeef9394c2a02a512867d062d4"
+    },
+    "drone-1-proximity.json": {
+      "bytes": 422,
+      "sha256": "703157c22a028c1182bf224ea799fd77c7d9be734840d22f327f4ef6060c75da"
+    },
+    "drone-2-proximity.json": {
+      "bytes": 419,
+      "sha256": "aa4313a58a522d6ecfe6688490f941b1f5de9cf8e8365665b17d7df642e111d9"
+    },
+    "fault-proximity.json": {
+      "bytes": 344,
+      "sha256": "0a8ccb492448ad1544cff4ecf55ce1966c6d7bd9c566e708b2623e06bcdc99e6"
+    },
+    "recovered-proximity.json": {
+      "bytes": 347,
+      "sha256": "d8cd3389bf3c14af4a5c8cabb7ee04dd806b475481693514e3366a934969e55e"
+    },
+    "replay-last-proximity.json": {
+      "bytes": 347,
+      "sha256": "d8cd3389bf3c14af4a5c8cabb7ee04dd806b475481693514e3366a934969e55e"
+    }
+  },
+  "build": {
+    "physicsWorker": "worker-DXJAjm5Z.js",
+    "finalBrowser": "index-DFb0N-qN.js",
+    "css": "index-BBlVZPfT.css",
+    "firstFlightBrowser": "index-7xJf-vNr.js",
+    "note": "The first flight exposed stale hidden roster setup. Main now syncs committed setup while preserving visible roster edits; the second flight and browser assertions verify the correction. Worker/sensor core stayed unchanged."
+  },
+  "evidenceDirectory": "local/evidence/proximity-v028/",
+  "limits": [
+    "Only six body-axis single rays from the CG; measurements are not vehicle-surface clearance or all-space safety coverage.",
+    "Geometry covers terrain, axis-aligned obstacle boxes and peer spheres, not detailed meshes/materials/weather or calibration.",
+    "Too-close, no-return and unavailable states are distinct; late, failed or dropped observations do not declare safety.",
+    "Warnings do not control flight; no new PX4/ArduPilot SITL, physical controller, gamepad or hardware validation.",
+    "Recording schema15 and earlier require a corresponding older checkout; no legacy adapter or header rewriting. Independent camera5 and scene6 formats stay unchanged.",
+    "Recorded observations are at acquisition time; exported worldTick is the observation/export tick. Fault-on and fault-off in the second browser run share one paused tick, so timeline frame display follows the existing last-state-at-tick rule."
+  ],
+  "sources": [
+    "https://github.com/microsoft/AirSim/blob/1ca93f6f77e4e8a39b2b241c1fe2764da4d7dd41/docs/distance_sensor.md",
+    "https://github.com/microsoft/AirSim/blob/1ca93f6f77e4e8a39b2b241c1fe2764da4d7dd41/docs/sensors.md"
+  ]
+}
