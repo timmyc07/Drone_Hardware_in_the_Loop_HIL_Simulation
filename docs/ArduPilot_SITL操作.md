@@ -10,8 +10,9 @@
 本機測試使用 macOS Apple Silicon、Python 3.9.6、Apple Clang 21、macOS 15.4 SDK 與 classic linker。以下頂層套件版本經測試，並非完整傳遞依賴鎖定；其他平台尚未驗證。請先安裝 Xcode Command Line Tools、Git 與 Python，並在專案根目錄執行：
 
 ```sh
-ARDU_DIR="$HOME/Library/Caches/drone-flight-lab/ardupilot-Copter-4.7.2"
-ARDU_ENV="$HOME/Library/Caches/drone-flight-lab/ardupilot-tools"
+mkdir -p "$PWD/local/tools"
+ARDU_DIR="$PWD/local/tools/ardupilot-Copter-4.7.2"
+ARDU_ENV="$PWD/local/tools/ardupilot-python"
 ARDU_PATCH="$PWD/companion/patches/ardupilot-loopback.patch"
 git clone --branch Copter-4.7.2 --depth 1 https://github.com/ArduPilot/ardupilot.git "$ARDU_DIR"
 python3 -m venv "$ARDU_ENV"

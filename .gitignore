@@ -17,3 +17,6 @@ dist/
 .sites-runtime/
 .sites-checkout/
 *.tar.gz
+
+# Project-local downloads, evidence, native tools and linked worktrees
+/local/
