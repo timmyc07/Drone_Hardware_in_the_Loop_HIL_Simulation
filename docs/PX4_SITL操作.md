@@ -61,3 +61,7 @@ node companion/verify-px4.mjs /absolute/path/to/px4 /absolute/path/to/artifacts
 0.10 版另支援 ArduCopter，兩種飛控擇一運行；其原生飛行閉環與離線重播已驗證，詳見 [ArduPilot SITL 操作](ArduPilot_SITL操作.md)。
 
 0.12 版 PX4 航點任務已通過兩圈原生 SITL 與獨立重播驗證，參見 [PX4 航點任務](PX4_航點任務.md)。
+
+## 0.32 電池推進模型
+
+現行獨立格式 1 紀錄必須包含 `modelVersion: "0.13.0"`；缺少此標記或使用舊模型的紀錄會被拒絕。物理端的電池供電現會改變實際旋翼推力，離線重播也核對電池與推進資料；ArduPilot 原有 JSON 電壓／電流通道沿用，PX4 未新增電池輸入通道。詳見[電池與推進供電](電池與推進供電.md)。以上先前版本的驗證數字屬歷史結果，不能代表新模型的起降驗證。

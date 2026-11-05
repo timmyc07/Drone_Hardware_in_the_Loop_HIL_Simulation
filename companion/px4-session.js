@@ -1,3 +1,4 @@
+import { MODEL_VERSION } from "../web/recording.js";
 import { createLocalDirectory } from "./local-directory.js";
 import { GroundStationBridge } from "./gcs-bridge.js";
 import { ControllerHealth } from "./controller-health.js";
@@ -158,6 +159,7 @@ export class Px4Session extends EventEmitter {
     this.record = {
       format: "flight-lab-px4",
       version: 1,
+      modelVersion: MODEL_VERSION,
       createdAt: new Date().toISOString(),
       firmware: { ...this.controller },
       config: validated,

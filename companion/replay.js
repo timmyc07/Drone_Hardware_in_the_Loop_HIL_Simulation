@@ -1,3 +1,4 @@
+import { MODEL_VERSION } from "../web/recording.js";
 import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -132,6 +133,8 @@ export function replayArduPilotRecording(value) {
 }
 
 function replayPlant(record, bootstrap, mapInput) {
+  if (record.modelVersion !== MODEL_VERSION)
+    throw new Error(`Unsupported SITL simulation model: ${MODEL_VERSION} required`);
   const config = validateConfig(object(record.config));
   if (config.airframe !== "quadrotor" || config.startOnGround !== true)
     throw new Error("SITL replay requires the external ground-start quadrotor");
@@ -184,7 +187,33 @@ function replayPlant(record, bootstrap, mapInput) {
     eventIndex = 0,
     maxPositionErrorM = 0,
     maxQuaternionError = 0,
-    maxMotorError = 0;
+    maxMotorError = 0,
+    maxBatteryError = 0,
+    maxPropulsionError = 0;
+  function checkPower(actual, sample) {
+    const batteryRanges = {
+      soc: [0, 1], voltage: [0, 100], openCircuitVoltage: [0, 100], motorSpeedScale: [0, 1],
+      current: [0, 1e6], power: [0, 1e6], usedWh: [0, 1000], remainingSeconds: [0, 1e9],
+      low: null, critical: null, powerLimited: null,
+    };
+    for (const [name, ranges] of [['battery', batteryRanges], ['propulsion', { command: [0, 1], motor: [0, 1], thrustN: [0, Infinity] }]]) {
+      const value = object(sample[name]);
+      if (Object.keys(value).sort().join() !== Object.keys(ranges).sort().join())
+        throw new Error(`Invalid SITL ${name} fields`);
+      for (const [key, range] of Object.entries(ranges)) {
+        if (range === null) {
+          if (typeof value[key] !== 'boolean' || value[key] !== actual[name][key])
+            throw new Error(`SITL ${name}.${key} mismatch`);
+        } else {
+          if (!Number.isFinite(value[key]) || value[key] < range[0] || value[key] > range[1])
+            throw new Error(`Invalid SITL ${name}.${key}`);
+          const error = Math.abs(actual[name][key] - value[key]);
+          if (name === 'battery') maxBatteryError = Math.max(maxBatteryError, error);
+          else maxPropulsionError = Math.max(maxPropulsionError, error);
+        }
+      }
+    }
+  }
   function checkSamples() {
     const actual = sim.snapshot(),
       timeUs = sim.readSensors().timeUs;
@@ -193,6 +222,7 @@ function replayPlant(record, bootstrap, mapInput) {
       Math.round(record.samples[sampleIndex].time * 1e6) === timeUs
     ) {
       const sample = record.samples[sampleIndex++];
+      checkPower(actual, sample);
       if (sample.controlSource !== "external" || sample.armed !== actual.armed)
         throw new Error("SITL sample source or armed state mismatch");
       maxPositionErrorM = Math.max(
@@ -285,7 +315,8 @@ function replayPlant(record, bootstrap, mapInput) {
     maxMotorError,
     maximumError(actual.motors, vector(final.motors, 4)),
   );
-  if (Math.max(maxPositionErrorM, maxQuaternionError, maxMotorError) > 1e-8)
+  checkPower(actual, final);
+  if (Math.max(maxPositionErrorM, maxQuaternionError, maxMotorError, maxBatteryError, maxPropulsionError) > 1e-8)
     throw new Error("SITL plant replay differs from recorded trajectory");
   return {
     passed: true,
@@ -296,6 +327,8 @@ function replayPlant(record, bootstrap, mapInput) {
     maxPositionErrorM,
     maxQuaternionError,
     maxMotorError,
+    maxBatteryError,
+    maxPropulsionError,
   };
 }
 

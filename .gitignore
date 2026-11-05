@@ -12,7 +12,7 @@ bin/
 Builds/
 Logs/
 Saved/
-node_modules/
+node_modules
 dist/
 .sites-runtime/
 .sites-checkout/

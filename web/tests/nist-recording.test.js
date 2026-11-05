@@ -7,7 +7,7 @@ import { cameraMetadata,hashCameraFrame,DEFAULT_CAMERA_CONFIG } from '../camera.
 import { RECORDING_VERSION,MODEL_VERSION,compactWorldSnapshot,worldSensorFrame,validateRecording,recordingToJson,recordingNistState } from '../recording.js';
 import { replayWorldRecording } from '../../tools/replay-world.mjs';
 
-test('all 36 evidence slots survive sparse record18 serialization, independent physical replay and report import',async()=>{
+test('all 36 evidence slots survive sparse record19 serialization, independent physical replay and report import',async()=>{
   const config=structuredClone(defaultWorldConfig({startOnGround:true}));config.scene.nistLane=true;
   const world=createWorld(config), frame=world.snapshot(), vehicleId=frame.vehicles[0].id;
   const record={format:'flight-lab',version:RECORDING_VERSION,modelVersion:MODEL_VERSION,createdAt:'2026-11-05T00:00:00.000Z',dt:.005,world:world.configuration,runtime:{speed:1,wallSeconds:0,p95LateMs:0,lateTicks:0,skippedWallSeconds:0,renderEnabled:true},events:[],samples:[compactWorldSnapshot(frame)],sensorFrames:[worldSensorFrame(frame)],termination:null};

@@ -1,3 +1,4 @@
+import { batterySupply } from "./battery.js";
 import { createNistLaneCollider } from "./nist-geometry.js";
 import {
   validateObstacles,
@@ -615,6 +616,20 @@ export function createSimulation(configuration = {}, options = {}) {
     homeHeight();
     observed.airspeed = aero().airspeedMps;
     gimbal = createGimbal(initialGimbal, state.slice(6, 10));
+    // Preserve a feasible physical hover/wing trim after voltage derating.
+    const desired = state.slice(13, servoIndex), maximum = Math.max(...desired);
+    if (maximum > 0) {
+      let low = 1, high = 1 / maximum;
+      for (let i = 0; i < 40; i++) {
+        const middle = (low + high) / 2;
+        const supply = batterySupply(config, config.batteryInitialSoc, desired.map(v => v * middle));
+        if (middle * supply.motorSpeedScale < 1) low = middle;
+        else high = middle;
+      }
+      state.splice(13, desired.length, ...desired.map(v => Math.min(1, v * high)));
+      commands = state.slice(13, motorEnd);
+      pusherCommand = state[pusherIndex];
+    }
     battery = batterySnapshot();
     return snapshot();
   }
@@ -627,13 +642,15 @@ export function createSimulation(configuration = {}, options = {}) {
     )
       return Array(stateSize).fill(0);
     const r = rotation(s.slice(6, 10));
-    // Motor states/commands are normalized rotor speeds; thrust is proportional to speed squared.
+    // States/commands are lagged full-voltage speed demands; supply sets actual speed once.
+    const thrustScale = supply(s).motorSpeedScale ** 2;
     const thrusts = s
       .slice(13, motorEnd)
       .map(
         (v, i) =>
           clamp(v, 0, 1) ** 2 *
           config.maxMotorThrust *
+          thrustScale *
           faults.motorEfficiency[i],
       );
     const thrust = thrusts.reduce((a, b) => a + b, 0);
@@ -641,6 +658,7 @@ export function createSimulation(configuration = {}, options = {}) {
     const pusherThrust = hasWing
       ? config.maxPusherThrust *
         clamp(s[pusherIndex], 0, 1) ** 2 *
+        thrustScale *
         faults.pusherEfficiency
       : 0;
     const forceBody = [...wing.forceBody];
@@ -871,19 +889,21 @@ export function createSimulation(configuration = {}, options = {}) {
       ? -rotate(rotation(state.slice(6, 10)), aero().forceBody)[2] +
         config.maxPusherThrust *
           state[pusherIndex] ** 2 *
+          supply().motorSpeedScale ** 2 *
           faults.pusherEfficiency *
           Math.sin(theta)
       : 0;
     const total =
       Math.max(0, config.mass * (G + upAcceleration) - wingUp) /
       Math.max(0.3, Math.cos(phi) * Math.cos(theta));
+    const availableMotorThrust = config.maxMotorThrust * Math.max(1e-12, supply().motorSpeedScale ** 2);
     const raw = rollSign.map(
       (_, i) =>
         (total +
           (rollSign[i] * torque[0]) / lever +
           (pitchSign[i] * torque[1]) / lever +
           (yawSign[i] * torque[2]) / yawLever) /
-        (count * config.maxMotorThrust),
+        (count * availableMotorThrust),
     );
     commands = raw.map((v) => Math.sqrt(clamp(v, 0, 1)));
     // Conditional integration: freeze the integral while any motor is saturated.
@@ -1041,15 +1061,16 @@ export function createSimulation(configuration = {}, options = {}) {
       const error = demandSpeed - observed.airspeed;
       const candidate = clamp(speedIntegral + error * dt, -10, 10);
       const thrust = wing.dragN + 1.4 * error + 0.3 * candidate;
+      const availableThrust = config.maxPusherThrust * supply().motorSpeedScale ** 2;
       const requestedPusher =
         groundRolling && ["runup", "roll", "rotate"].includes(takeoffPhase)
           ? 1
-          : Math.sqrt(clamp(thrust / config.maxPusherThrust, 0, 1));
+          : Math.sqrt(clamp(thrust / Math.max(1e-12, availableThrust), 0, 1));
       pusherCommand =
         takeoffPhase === "runup"
           ? Math.min(pusherCommand + dt / 0.8, requestedPusher)
           : requestedPusher;
-      if (thrust >= 0 && thrust <= config.maxPusherThrust)
+      if (thrust >= 0 && thrust <= availableThrust)
         speedIntegral = candidate;
     } else {
       pusherCommand = 0;
@@ -1822,39 +1843,22 @@ export function createSimulation(configuration = {}, options = {}) {
       Math.max(0, interval.enter) <= Math.min(1, interval.exit)
     );
   }
+  function supply(s = state) {
+    const soc = Math.max(0, config.batteryInitialSoc - usedWh / config.batteryCapacityWh);
+    return batterySupply(config, soc, s.slice(13, servoIndex));
+  }
   function batterySnapshot() {
     const availableWh = Math.max(
       0,
       config.batteryCapacityWh * config.batteryInitialSoc - usedWh,
     );
     const soc = availableWh / config.batteryCapacityWh;
-    const openVoltage = config.batteryCells * (3.3 + 0.9 * soc);
-    const demandedPower =
-      availableWh > 0
-        ? config.batteryBasePower +
-          config.batteryMotorPower *
-            state
-              .slice(13, servoIndex)
-              .reduce((sum, speed) => sum + speed ** 3, 0)
-        : 0;
-    const resistance = config.batteryInternalResistance;
-    // Simplified Thevenin pack; cap electrical demand at maximum deliverable power.
-    const power = resistance
-      ? Math.min(demandedPower, (0.99 * openVoltage ** 2) / (4 * resistance))
-      : demandedPower;
-    const voltage = resistance
-      ? (openVoltage +
-          Math.sqrt(Math.max(0, openVoltage ** 2 - 4 * resistance * power))) /
-        2
-      : openVoltage;
-    const current = power / Math.max(0.1, voltage);
+    const electrical = batterySupply(config, soc, state.slice(13, servoIndex));
     return {
       soc,
-      voltage,
-      current,
-      power,
+      ...electrical,
       usedWh,
-      remainingSeconds: power > 0 ? (availableWh * 3600) / power : 0,
+      remainingSeconds: electrical.power > 0 ? (availableWh * 3600) / electrical.power : 0,
       low: soc <= config.lowBatteryThreshold,
       critical: soc <= config.criticalBatteryThreshold,
     };
@@ -2247,6 +2251,7 @@ export function createSimulation(configuration = {}, options = {}) {
     }
   }
   function integrateUnchecked(dt) {
+    const startingPower = supply().power;
     if (!Number.isFinite(dt) || dt <= 0 || dt > 0.02)
       throw new Error("dt must be greater than zero and at most 0.02 seconds");
     const previousTarget = target;
@@ -2479,10 +2484,13 @@ export function createSimulation(configuration = {}, options = {}) {
         yawRate: 0,
         airspeed: 0,
       };
-    usedWh = Math.min(
-      config.batteryCapacityWh * config.batteryInitialSoc,
-      usedWh + (batterySnapshot().power * dt) / 3600,
-    );
+    const previousWh = usedWh;
+    // Trapezoidal electrical work includes the SOC-dependent voltage at the end of the tick.
+    for (let i = 0; i < 3; i++)
+      usedWh = Math.min(
+        config.batteryCapacityWh * config.batteryInitialSoc,
+        previousWh + ((startingPower + supply().power) * dt) / 7200,
+      );
     battery = batterySnapshot();
     if (battery.soc <= 0) disarm();
     time += dt;
@@ -2542,6 +2550,7 @@ export function createSimulation(configuration = {}, options = {}) {
         thrustN: hasWing
           ? config.maxPusherThrust *
             state[pusherIndex] ** 2 *
+            supply().motorSpeedScale ** 2 *
             faults.pusherEfficiency
           : 0,
       },

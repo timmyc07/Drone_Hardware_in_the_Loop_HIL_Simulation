@@ -1,3 +1,4 @@
+import { MODEL_VERSION } from "../../web/recording.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createSimulation, validateConfig } from "../../web/sim.js";
@@ -9,12 +10,13 @@ import {
   mapServoSpeeds,
 } from "../ardupilot-protocol.js";
 
-function fixture() {
-  const config = validateConfig({ startOnGround: true }),
+function fixture(configOverrides = {}) {
+  const config = validateConfig({ startOnGround: true, ...configOverrides }),
     sim = createSimulation(config, { controlSource: "external" });
   const record = {
     format: "flight-lab-px4",
     version: 1,
+    modelVersion: MODEL_VERSION,
     firmware: {
       verified: true,
       version: "1.17.0",
@@ -73,6 +75,8 @@ test("accepted PX4 actuator replay reconstructs every recorded plant sample incl
   assert.equal(result.maxPositionErrorM, 0);
   assert.equal(result.maxQuaternionError, 0);
   assert.equal(result.maxMotorError, 0);
+  assert.equal(result.maxBatteryError, 0);
+  assert.equal(result.maxPropulsionError, 0);
 });
 test("SITL replay rejects corrupted provenance, clocks, motor maps and trajectories", () => {
   const mutations = [
@@ -101,12 +105,13 @@ test("SITL replay rejects corrupted provenance, clocks, motor maps and trajector
   }
 });
 
-function ardupilotFixture() {
-  const config = validateConfig({ startOnGround: true }),
+function ardupilotFixture(configOverrides = {}) {
+  const config = validateConfig({ startOnGround: true, ...configOverrides }),
     sim = createSimulation(config, { controlSource: "external" });
   const record = {
     format: "flight-lab-ardupilot",
     version: 1,
+    modelVersion: MODEL_VERSION,
     firmware: {
       verified: true,
       version: "4.7.2",
@@ -169,6 +174,8 @@ test("ArduPilot replay integrates bootstrap once and checks raw asymmetric PWM t
   assert.equal(result.maxPositionErrorM, 0);
   assert.equal(result.maxQuaternionError, 0);
   assert.equal(result.maxMotorError, 0);
+  assert.equal(result.maxBatteryError, 0);
+  assert.equal(result.maxPropulsionError, 0);
 });
 
 test("ArduPilot replay rejects invalid clocks, self-reports, frames, PWM, heartbeats and trajectory", () => {
@@ -199,5 +206,39 @@ test("ArduPilot replay rejects invalid clocks, self-reports, frames, PWM, heartb
     const record = ardupilotFixture();
     mutate(record);
     assert.throws(() => replayArduPilotRecording(record));
+  }
+});
+
+
+for (const [kind, makeRecord, replay] of [
+  ['PX4', fixture, replayPx4Recording], ['ArduPilot', ardupilotFixture, replayArduPilotRecording],
+]) {
+  test(`${kind} rejects unsupported plant model and modified battery or propulsion evidence`, () => {
+    for (const mutate of [
+      r => { delete r.modelVersion; }, r => { r.modelVersion = '0.12.0'; },
+      ...['samples', 'finalSnapshot'].flatMap(location => [
+        r => { const s = location === 'samples' ? r.samples[0] : r.finalSnapshot; delete s.battery.openCircuitVoltage; },
+        r => { const s = location === 'samples' ? r.samples[0] : r.finalSnapshot; s.battery.motorSpeedScale = 2; },
+        r => { const s = location === 'samples' ? r.samples[0] : r.finalSnapshot; s.battery.openCircuitVoltage += 0.1; },
+        r => { const s = location === 'samples' ? r.samples[0] : r.finalSnapshot; s.battery.motorSpeedScale *= 0.9; },
+        r => { const s = location === 'samples' ? r.samples[0] : r.finalSnapshot; s.battery.voltage += 0.1; },
+        r => { const s = location === 'samples' ? r.samples[0] : r.finalSnapshot; s.battery.powerLimited = !s.battery.powerLimited; },
+        r => { const s = location === 'samples' ? r.samples[0] : r.finalSnapshot; s.propulsion.motor += 0.1; },
+        r => { const s = location === 'samples' ? r.samples[0] : r.finalSnapshot; s.propulsion.thrustN = NaN; },
+      ]),
+    ]) {
+      const record = makeRecord(); mutate(record); assert.throws(() => replay(record));
+    }
+  });
+}
+
+
+test('both native external plant replays preserve low-SOC voltage-limited propulsion without changing raw commands', () => {
+  for (const [makeRecord, replay] of [[fixture, replayPx4Recording], [ardupilotFixture, replayArduPilotRecording]]) {
+    const record = makeRecord({ batteryInitialSoc: 0.25, batteryInternalResistance: 0.5 });
+    assert.ok(record.samples.some(s => s.armed && s.battery.motorSpeedScale < 1 && s.battery.voltage < s.battery.openCircuitVoltage));
+    assert.ok(record.finalSnapshot.battery.usedWh > 0);
+    const result = replay(JSON.parse(JSON.stringify(record)));
+    assert.equal(result.maxBatteryError, 0); assert.equal(result.maxPropulsionError, 0); assert.equal(result.passed, true);
   }
 });

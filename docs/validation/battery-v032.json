@@ -1,0 +1,463 @@
+{
+  "version": "0.32.0",
+  "date": "2026-11-05",
+  "scope": "Educational battery supply coupled to actual propulsion; market-wide objective remains incomplete.",
+  "formats": {
+    "recording": 19,
+    "model": "0.13.0",
+    "csvColumns": 202,
+    "scene": 7,
+    "cameraDataset": 5,
+    "api": "2.8",
+    "nativeRecording": 1,
+    "nativeModelMarkerRequired": "0.13.0"
+  },
+  "tests": {
+    "passed": 537,
+    "failed": 0,
+    "durationMs": 92584.150458,
+    "log": "full-tests.log"
+  },
+  "browser": {
+    "normal": {
+      "file": "browser-normal.json",
+      "schema": 19,
+      "model": "0.13.0",
+      "frames": 860,
+      "seconds": 42.9150000000035,
+      "config": {
+        "batteryInitialSoc": 1,
+        "batteryInternalResistance": 0.05
+      },
+      "maxHeightM": 2.03617104149697,
+      "lastHeightM": 1.9999545382897652,
+      "lastPwm": [
+        1629.6397580523767,
+        1629.6397580523767,
+        1629.6397580523767,
+        1629.6397580523767
+      ],
+      "lastBattery": {
+        "soc": 0.9676355904837827,
+        "voltage": 16.180642196360026,
+        "openCircuitVoltage": 16.68348812574162,
+        "motorSpeedScale": 0.9631334640690491,
+        "powerLimited": false,
+        "current": 10.056918587631825,
+        "power": 162.727401264393,
+        "usedWh": 1.9418645709730373,
+        "remainingSeconds": 1284.4136016460259,
+        "low": false,
+        "critical": false
+      },
+      "limitedFrames": 0,
+      "minScale": 0.9473263111114061,
+      "maxPowerErrorW": 2.842170943040401e-14,
+      "maxTheveninErrorV": 1.8762769116165146e-14
+    },
+    "limited": {
+      "file": "browser-power-limited.json",
+      "schema": 19,
+      "model": "0.13.0",
+      "frames": 2941,
+      "seconds": 146.98999999993882,
+      "config": {
+        "batteryInitialSoc": 1,
+        "batteryInternalResistance": 2
+      },
+      "maxHeightM": 0,
+      "lastHeightM": 0,
+      "lastPwm": [
+        2000,
+        2000,
+        2000,
+        2000
+      ],
+      "lastBattery": {
+        "soc": 0.9761156620048372,
+        "voltage": 8.357008191608706,
+        "openCircuitVoltage": 16.714016383217412,
+        "motorSpeedScale": 0.28566757019623956,
+        "powerLimited": true,
+        "current": 4.178504095804353,
+        "power": 34.91979295730751,
+        "usedWh": 1.4330602797097625,
+        "remainingSeconds": 6037.864635990722,
+        "low": false,
+        "critical": false
+      },
+      "limitedFrames": 2940,
+      "minScale": 0.28566757019623956,
+      "maxPowerErrorW": 0,
+      "maxTheveninErrorV": 8.881784197001252e-15
+    },
+    "packed": {
+      "file": "browser-packed.json",
+      "schema": 19,
+      "model": "0.13.0",
+      "frames": 349,
+      "seconds": 17.390000000000825,
+      "config": {
+        "batteryInitialSoc": 1,
+        "batteryInternalResistance": 2
+      },
+      "maxHeightM": 0,
+      "lastHeightM": 0,
+      "lastPwm": [
+        2000,
+        2000,
+        2000,
+        2000
+      ],
+      "lastBattery": {
+        "soc": 0.997162517701774,
+        "voltage": 8.394892531863192,
+        "openCircuitVoltage": 16.789785063726384,
+        "motorSpeedScale": 0.287678592947934,
+        "powerLimited": true,
+        "current": 4.197446265931596,
+        "power": 35.2371103107662,
+        "usedWh": 0.17024893789356116,
+        "remainingSeconds": 6112.5075786300995,
+        "low": false,
+        "critical": false
+      },
+      "limitedFrames": 348,
+      "minScale": 0.287678592947934,
+      "maxPowerErrorW": 0,
+      "maxTheveninErrorV": 8.881784197001252e-15
+    },
+    "finalNormal": {
+      "file": "browser-final-normal.json",
+      "schema": 19,
+      "model": "0.13.0",
+      "frames": 1687,
+      "seconds": 84.29999999999582,
+      "config": {
+        "batteryInitialSoc": 1,
+        "batteryInternalResistance": 0.05
+      },
+      "maxHeightM": 2.03617104149697,
+      "lastHeightM": 1.9999541860789538,
+      "lastPwm": [
+        1634.1810976871848,
+        1634.1810976871848,
+        1634.1810976871848,
+        1634.1810976871848
+      ],
+      "lastBattery": {
+        "soc": 0.9364574725306276,
+        "voltage": 16.06477417270606,
+        "openCircuitVoltage": 16.571246901110257,
+        "motorSpeedScale": 0.9562365578991702,
+        "powerLimited": false,
+        "current": 10.129454568083998,
+        "power": 162.72740012895522,
+        "usedWh": 3.8125516481623425,
+        "remainingSeconds": 1243.0286104633917,
+        "low": false,
+        "critical": false
+      },
+      "limitedFrames": 0,
+      "minScale": 0.9473263111114061,
+      "maxPowerErrorW": 2.842170943040401e-14,
+      "maxTheveninErrorV": 1.8762769116165146e-14,
+      "replay": {
+        "passed": true,
+        "vehicles": 1,
+        "frames": 1687,
+        "ticks": 16860,
+        "simSeconds": 84.29999999999582,
+        "maximum": {
+          "positionM": 0,
+          "quaternion": 0,
+          "motors": 0,
+          "allState": 0,
+          "sensors": 7.105427357601002e-15
+        }
+      }
+    },
+    "roundtripParsedJsonEqual": true,
+    "csv": {
+      "columns": 202,
+      "rows": 349,
+      "finalPowerLimitedFlag": "1"
+    },
+    "mobile": {
+      "width": 390,
+      "overflow": false
+    },
+    "finalUi": {
+      "battery": "電池 94% · 負載電壓 16.1 V · 開路電壓 16.6 V · 10.1 A · 162.7 W · 同一命令推力比例 91.4%",
+      "mode": "    - generic: 飛行器 1（drone-1） · quadrotor · flying · 離地 2.0 m",
+      "errors": []
+    }
+  },
+  "native": {
+    "px4": {
+      "simSeconds": 91.39600000001977,
+      "hoverSeconds": 60.02800000000765,
+      "altitudeRmseM": 0.005673609684806238,
+      "maxHorizontalM": 0.37246314818864357,
+      "finalBattery": {
+        "soc": 0.9401903689191291,
+        "openCircuitVoltage": 16.584685328108865,
+        "voltage": 16.52416790868258,
+        "current": 1.2103483885255761,
+        "power": 20,
+        "motorSpeedScale": 0.9835814231358677,
+        "powerLimited": false,
+        "usedWh": 3.5885778648522515,
+        "remainingSeconds": 10154.055984326595,
+        "low": false,
+        "critical": false
+      },
+      "replay": {
+        "passed": true,
+        "bootstrapTicks": 19,
+        "acceptedActuators": 22830,
+        "checkedSamples": 1828,
+        "simSeconds": 91.39600000001977,
+        "maxPositionErrorM": 0,
+        "maxQuaternionError": 0,
+        "maxMotorError": 0,
+        "maxBatteryError": 0,
+        "maxPropulsionError": 0
+      }
+    },
+    "ardupilot": {
+      "simSeconds": 126.06100000023787,
+      "hoverSeconds": 60.01700000023735,
+      "altitudeRmseM": 0.0020098751303399692,
+      "maxHorizontalM": 0.2958507065229867,
+      "finalBattery": {
+        "soc": 0.9363967476207483,
+        "openCircuitVoltage": 16.571028291434693,
+        "voltage": 16.510460629365873,
+        "current": 1.2113532413764128,
+        "power": 20,
+        "motorSpeedScale": 0.9827655136527305,
+        "powerLimited": false,
+        "usedWh": 3.816195142755099,
+        "remainingSeconds": 10113.084874304082,
+        "low": false,
+        "critical": false
+      },
+      "replay": {
+        "passed": true,
+        "bootstrapTicks": 1007,
+        "acceptedActuators": 126061,
+        "checkedSamples": 2523,
+        "simSeconds": 126.06100000023787,
+        "maxPositionErrorM": 0,
+        "maxQuaternionError": 0,
+        "maxMotorError": 0,
+        "maxBatteryError": 0,
+        "maxPropulsionError": 0
+      }
+    }
+  },
+  "limits": {
+    "time": {
+      "ticks": 360000,
+      "frames": 36001,
+      "retainedBytes": 98646729,
+      "limitBytes": 100663296
+    },
+    "storage": {
+      "ticks": 2100,
+      "frames": 211,
+      "retainedBytes": 101142020,
+      "limitBytes": 100663296,
+      "finalAtomicFrameRetained": true
+    },
+    "nist": {
+      "ticks": 120000,
+      "frames": 12001,
+      "retainedBytes": 40991508,
+      "spareBytes": 59671788,
+      "finalAltitudeM": 2.9999492519668323,
+      "finalSoc": 0.5479002482369242,
+      "replayAllErrorsZero": true
+    }
+  },
+  "batteryPackedFields": [
+    "soc",
+    "voltage",
+    "current",
+    "power",
+    "usedWh",
+    "remainingSeconds",
+    "low",
+    "critical",
+    "openCircuitVoltage",
+    "motorSpeedScale",
+    "powerLimited"
+  ],
+  "catalog": {
+    "total": 72,
+    "status": {
+      "implemented": 8,
+      "partial": 56,
+      "external": 8
+    }
+  },
+  "sources": [
+    {
+      "file": "web/battery.js",
+      "sha256": "b32534e26a3c00d1b42c47d34774c22c88ee21543e4f838f2de37479b0e39c33"
+    },
+    {
+      "file": "web/sim.js",
+      "sha256": "2a31a5e8ed56fdd5168f593fce4d86bbe73e2cf502827be581f0497182f5f313"
+    },
+    {
+      "file": "web/recording.js",
+      "sha256": "01abd0945841afb1f70c5a875e6e51e99b49ea68da61ef0746fb88fb1f45a6df"
+    },
+    {
+      "file": "web/battery-panel.js",
+      "sha256": "ef4748ab8eaa66ef91d395b73ef39ede41cbb48473ce9f3a9dfe45ca6034b832"
+    },
+    {
+      "file": "web/main.js",
+      "sha256": "087b8a1dbaea13f1cd2066ce8c2b45c1adacb044adeb93f3c41444ddd41f883f"
+    },
+    {
+      "file": "companion/px4-session.js",
+      "sha256": "be511f2177b586fd5759e22772417ef907129ec53a37eac70e2548f90af40851"
+    },
+    {
+      "file": "companion/ardupilot-session.js",
+      "sha256": "6d05612dd46a89eb869819508f1155b50bdb2503f14fac8916a7ac6e48634354"
+    },
+    {
+      "file": "companion/replay.js",
+      "sha256": "640257e4fb1e3111432220133b411b2b311bfdff90c8d9d4b42cede4054ade17"
+    }
+  ],
+  "artifacts": [
+    {
+      "file": "full-tests.log",
+      "bytes": 55974,
+      "sha256": "cef9127c1d460338553515fa46ca6d48219bb8d9d81c787ca867f4ca74f39f9a"
+    },
+    {
+      "file": "build-final.log",
+      "bytes": 1180,
+      "sha256": "e0d0736ad0861a78f29183b0f4957686c1e79f27d8b1dc70c9de7d042ffe7590"
+    },
+    {
+      "file": "browser-normal.json",
+      "bytes": 14299429,
+      "sha256": "f302f1dac02683ee13bf2bb1b2fef5557457107e29b6566663d9824845bad5ae"
+    },
+    {
+      "file": "browser-normal-replay.json",
+      "bytes": 240,
+      "sha256": "765470555e64fbdd235eb4a590a644fdd0e7e40a44cf810901c0a18c24ab1c15"
+    },
+    {
+      "file": "browser-power-limited.json",
+      "bytes": 17889888,
+      "sha256": "f16b97db55ab5282e53c9c91447dd657a14ec6e1b960c003eee494d1ba31cdbc"
+    },
+    {
+      "file": "browser-power-limited-replay.json",
+      "bytes": 265,
+      "sha256": "c30e0dc5512168dcb9c99159acdb804be4355c237eb3e0f92a589545bae03783"
+    },
+    {
+      "file": "browser-packed.json",
+      "bytes": 2077909,
+      "sha256": "116d4e2ba643f01be56e17063df343188f1704cef2d4526347caaedfabc39524"
+    },
+    {
+      "file": "browser-packed-reexported.json",
+      "bytes": 2077909,
+      "sha256": "116d4e2ba643f01be56e17063df343188f1704cef2d4526347caaedfabc39524"
+    },
+    {
+      "file": "browser-packed.csv",
+      "bytes": 383230,
+      "sha256": "98722fbc2b08e9c668ba74736df1b82d68cf5f3b91fbe81363c34ec56de3b311"
+    },
+    {
+      "file": "browser-packed-replay.json",
+      "bytes": 263,
+      "sha256": "2cb7acfa35cd1d21a0357afe8095cd1ce557247a4ec76b862b7e023d15451d2e"
+    },
+    {
+      "file": "browser-final-normal.json",
+      "bytes": 27853855,
+      "sha256": "cb9188bb7172ef196debdd2018ec936d5830049e2d18ff009815a46fb71ce85a"
+    },
+    {
+      "file": "battery-release-preview.png",
+      "bytes": 85628,
+      "sha256": "54047ffc7214543b2b94b2e112c5e1b1538be43591319267b9ac9bab7e7482d0"
+    },
+    {
+      "file": "battery-power-limited.png",
+      "bytes": 80136,
+      "sha256": "ab94132ba85ba400d3ce6c428a9d07e5cfbac8f740c669c2efe011121cfa7ae4"
+    },
+    {
+      "file": "mobile-verification.json",
+      "bytes": 213,
+      "sha256": "515fd98ab294cb066329ca6975da92c5d6bc3ac4921bd89f6aa6c050fa60ef76"
+    },
+    {
+      "file": "final-ui-verification.json",
+      "bytes": 239,
+      "sha256": "e1562a60929baa892021a32878bb8f9ab573092361329c4967a641c4ed4e0a8d"
+    },
+    {
+      "file": "px4/recording.json",
+      "bytes": 11832577,
+      "sha256": "0b7811b629c7e49839f64ebd2ac5c988d1229b10b6fd3acb5038b12120dea8d6"
+    },
+    {
+      "file": "px4/summary.json",
+      "bytes": 9703,
+      "sha256": "21daf200bebebd2f072475996062c62cb4c4a929f56e1e468e6d3eaef2b9c5dc"
+    },
+    {
+      "file": "px4/replay.json",
+      "bytes": 262,
+      "sha256": "f7250717db9b2d36b3d6caa822c9c81d7fed2561324d14adbd20124470d87ba1"
+    },
+    {
+      "file": "ardupilot/recording.json",
+      "bytes": 36816760,
+      "sha256": "6479e279fb8dd02475787ee6a075e101e25f1b59cf1479af8caf97519a612851"
+    },
+    {
+      "file": "ardupilot/summary.json",
+      "bytes": 18225,
+      "sha256": "ea8035d9f03428871137cfed70a478aad24149111b9d86e0d2f0b65d0c267b11"
+    },
+    {
+      "file": "ardupilot/replay.json",
+      "bytes": 266,
+      "sha256": "7ea19dee9aab0795880dafd1ad0a2b54a3f70cc5c7906afc4f686dd3166d773b"
+    },
+    {
+      "file": "research-sources.json",
+      "bytes": 1181,
+      "sha256": "1ea3b804179da84f46b7d8e7b0abc7a1f8c29e0d3b5b53ec4b50196ba50ed934"
+    },
+    {
+      "file": "browser-final-normal-replay.json",
+      "bytes": 243,
+      "sha256": "4c6e2d919e3fb2528f3c04dad5832b23742b451f40b18518ff63bc861d63ab25"
+    }
+  ],
+  "limitations": [
+    "Not calibrated for real batteries, ESCs, motors, or aircraft.",
+    "No thermal aging, rotor stored energy, or battery chemistry model.",
+    "Wh is the terminal output-energy budget; internal resistive heat is not separately integrated into SOC.",
+    "PX4 battery telemetry input was not added; ArduPilot retains its existing voltage/current JSON fields.",
+    "Old internal schema 1–18 and native recordings without modelVersion 0.13.0 are rejected."
+  ]
+}

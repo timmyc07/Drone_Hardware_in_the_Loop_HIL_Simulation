@@ -199,10 +199,10 @@ const geographicSensors = {
   originVerticalDatum: "orthometric",
 };
 
-test("World18 round trip keeps parallel vehicle frames and 199 stable CSV columns", () => {
+test("World19 round trip keeps parallel vehicle frames and 202 stable CSV columns", () => {
   const input = shortRecord({ vehicles: [{ id: "alpha" }, { id: "beta" }] });
   const clean = roundTrip(input);
-  assert.equal(RECORDING_VERSION, 18);
+  assert.equal(RECORDING_VERSION, 19);
   assert.deepEqual(
     clean.samples[0].vehicles.map((v) => v.id),
     ["alpha", "beta"],
@@ -211,7 +211,7 @@ test("World18 round trip keeps parallel vehicle frames and 199 stable CSV column
   const [header, ...rows] = recordingToCsv(input)
     .split("\n")
     .map((row) => row.split(","));
-  assert.equal(header.length, 199);
+  assert.equal(header.length, 202);
   assert.deepEqual(header.slice(0, 3), ["vehicle_id", "world_tick", "time_s"]);
   assert.equal(header[46], "steps_count");
   assert.equal(header[166], "gps_vertical_datum_code");
@@ -890,7 +890,7 @@ test("headers, runtime, roster, clocks and sparse containers are strict trust bo
       stateAt(r).training.score = 1;
     },
     (r) => {
-      stateAt(r).battery.soc = 1.1;
+      stateAt(r).battery[0] = 1.1;
     },
     (r) => {
       stateAt(r).navigation.mode = "invented";
@@ -1259,11 +1259,11 @@ test("radar acquisitions survive configuration epochs, packed faults and full-wo
   assert.throws(() => validateRecording(stale), /after/);
   const prior = clone(compact);
   prior.version = 12;
-  assert.throws(() => validateRecording(prior), /version 18/);
+  assert.throws(() => validateRecording(prior), /version 19/);
   const rows = recordingToCsv(f.record)
     .split("\n")
     .map((r) => r.split(","));
-  assert.equal(rows[0].length, 199);
+  assert.equal(rows[0].length, 202);
   assert.deepEqual(rows[0].slice(167, 174), [
     "radar_sample_time_s",
     "radar_valid_boolean",
@@ -1293,7 +1293,7 @@ test("proximity preserves six acquired axes, strict payloads and historical vers
   assert.deepEqual(last.vehicles[1].sensors.proximity, sensorsAt(input, -1, 1).proximity);
   const rows = recordingToCsv(input).split("\n").map((row) => row.split(","));
   const row = rows.at(-2), header = rows[0];
-  assert.equal(header.length, 199);
+  assert.equal(header.length, 202);
   for (const [i, axis] of ["front", "back", "right", "left", "up", "down"].entries()) {
     assert.equal(row[header.indexOf(`proximity_${axis}_range_m`)], String(reading.rangesM[i] ?? ""));
     assert.equal(row[header.indexOf(`proximity_${axis}_too_close_boolean`)], String(Number(reading.tooClose[i])));
@@ -1409,4 +1409,44 @@ test("compact proximity empty ranges and exact identity poses expand without los
     sensorsAt(bad).proximity[4] = invalid;
     assert.throws(() => validateRecording(bad));
   }
+});
+
+
+test('battery supply metadata survives schema19 JSON and CSV with strict new field validation', () => {
+  const input = shortRecord(), clean = roundTrip(input);
+  const battery = stateAt(clean).battery;
+  assert.deepEqual(battery, stateAt(validateRecording(input)).battery);
+  const [header, row] = recordingToCsv(input).split('\n').map(line => line.split(','));
+  assert.deepEqual(header.slice(-3), ['battery_open_circuit_voltage_V', 'battery_motor_speed_scale_fraction', 'battery_power_limited_boolean']);
+  assert.deepEqual(row.slice(-3), [String(battery.openCircuitVoltage), String(battery.motorSpeedScale), String(Number(battery.powerLimited))]);
+  rejects(input, [
+    r => { r.version = 18; }, r => { r.modelVersion = '0.12.0'; },
+    r => { delete stateAt(r).battery[8]; },
+    r => { stateAt(r).battery[8] = Infinity; },
+    r => { stateAt(r).battery[9] = 1.01; },
+    r => { stateAt(r).battery[9] = -0.01; },
+    r => { stateAt(r).battery[10] = 1; },
+  ]);
+});
+
+
+test('schema19 battery packs eleven lossless fields and rejects malformed packed boundaries', () => {
+  const input = shortRecord(), clean = validateRecording(input), packed = stateAt(input).battery;
+  const fields = ['soc','voltage','current','power','usedWh','remainingSeconds','low','critical','openCircuitVoltage','motorSpeedScale','powerLimited'];
+  assert.equal(packed.length, 11);
+  assert.deepEqual(packed, fields.map(key => stateAt(clean).battery[key]));
+  assert.deepEqual(validateRecording(clean), clean);
+  const json = JSON.parse(recordingToJson(clean));
+  assert.deepEqual(stateAt(json).battery, packed);
+  assert.deepEqual(validateRecording(json), clean);
+  rejects(input, [
+    r => { stateAt(r).battery.pop(); },
+    r => { stateAt(r).battery.push(0); },
+    r => { delete stateAt(r).battery[0]; },
+    r => { stateAt(r).battery[6] = 0; },
+    r => { stateAt(r).battery[7] = 'false'; },
+    r => { stateAt(r).battery[1] = NaN; },
+    r => { stateAt(r).battery.extra = 1; },
+  ]);
+  rejects(clean, [r => { stateAt(r).battery.extra = 1; }, r => { delete stateAt(r).battery.powerLimited; }]);
 });

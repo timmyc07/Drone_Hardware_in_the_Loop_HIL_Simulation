@@ -121,7 +121,7 @@ function fleet(count, { ground = false, sensors = lowRays } = {}) {
   return input;
 }
 function assertFinalWorld(record, stopped) {
-  assert.equal(record.version, 18);
+  assert.equal(record.version, 19);
   assert.equal(record.samples.at(-1).tick, stopped.world.tick);
   assert.equal(record.samples.at(-1).time, stopped.world.time);
   assert.equal(record.sensorFrames.at(-1).tick, stopped.world.tick);
@@ -152,18 +152,24 @@ test(
   async (t) => {
     const started = performance.now(),
       h = await harness(t);
-    await h.call({
-      type: "resetWorld",
-      value: fleet(1, { ground: true, sensors: { ...lowRays, dropout: 1 } }),
-    });
+    const input = fleet(1, { ground: true, sensors: { ...lowRays, dropout: 1 } });
+    // Keep this clock-only fixture below the separate byte cap despite schema growth.
+    input.vehicles[0].config.noise = 0;
+    input.vehicles[0].setup.gimbal.target = { yaw: 0, pitch: 0, roll: 0 };
+    await h.call({ type: "resetWorld", value: input });
     await h.call({type:"instructorApply",value:{name:"最後一刻",events:[{tick:360000,type:"wind",value:{speed:0,direction:0}}]}});
     await h.call({ type: "speed", value: 4 });
     await h.call({ type: "play" });
     const stopped = await h.untilStopped(4600);
+    const raw = await h.call({ type: "apiExport" });
+    const retainedBytes = Buffer.byteLength(JSON.stringify(raw.samples)) +
+      Buffer.byteLength(JSON.stringify(raw.sensorFrames)) - 2 +
+      (raw.events.length ? Buffer.byteLength(JSON.stringify(raw.events)) - 1 : 0);
+    t.diagnostic(`30 minute retained ${retainedBytes} bytes across ${raw.samples.length} frames at tick ${stopped.world.tick}`);
     assert.equal(
       h.latest.message,
       "limit",
-      "the time fixture must not stop at the separate storage cap",
+      `the time fixture must not stop at the separate storage cap (tick ${stopped.world.tick}, ${h.latest.sampleCount} frames)`,
     );
     assert.equal(h.latest.storageLimited, false);
     assert.equal(stopped.running, false);
@@ -175,11 +181,6 @@ test(
     const replay = await h.send({ type: "play" });
     assert.equal(replay.ok, false);
     assert.match(replay.error, /30/);
-    const raw = await h.call({ type: "apiExport" });
-    const retainedBytes = Buffer.byteLength(JSON.stringify(raw.samples)) +
-      Buffer.byteLength(JSON.stringify(raw.sensorFrames)) - 2 +
-      (raw.events.length ? Buffer.byteLength(JSON.stringify(raw.events)) - 1 : 0);
-    t.diagnostic(`30 minute retained ${retainedBytes} bytes across ${raw.samples.length} frames at tick ${stopped.world.tick}`);
     const record = validateRecording(raw);
     assert.deepEqual(record.events, [{tick:360000,time:stopped.world.time,type:"wind",value:{speed:0,direction:0}}]);
     assert.equal(record.samples.length, 36001);

@@ -19,18 +19,19 @@ const near = (actual, expected, tolerance = 1e-8) =>
 
 test("20 second equilibrium balances gravity and reports specific force", () => {
   const s = advance(createSimulation(), 20);
-  near(s.position[2], -2);
-  near(Math.hypot(...s.velocity), 0);
-  near(s.imu.accel[2], -9.80665);
+  near(s.position[2], -2, .001);
+  near(Math.hypot(...s.velocity), 0, .001);
+  near(s.imu.accel[2], -9.80665, .001);
   near(
-    s.motors.reduce((a, b) => a + b * b, 0) * DEFAULT_CONFIG.maxMotorThrust,
+    s.motors.reduce((a, b) => a + (b * s.battery.motorSpeedScale) ** 2, 0) * DEFAULT_CONFIG.maxMotorThrust,
     DEFAULT_CONFIG.mass * 9.80665,
+    .001,
   );
   assert.equal(s.metrics.steps, 4000);
   assert.equal(s.status, "flying");
-  near(s.metrics.rmse, 0);
-  near(s.metrics.peakError, 0);
-  near(s.metrics.altitudeRmse, 0);
+  near(s.metrics.rmse, 0, .001);
+  near(s.metrics.peakError, 0, .001);
+  near(s.metrics.altitudeRmse, 0, .001);
 });
 
 test("positive roll converges with positive East acceleration and altitude hold", () => {
@@ -363,9 +364,15 @@ test("geofence breach latches a return and rejects outside mission points", () =
 test("battery integrates energy and its voltage/current obey simplified pack sag", () => {
   const sim = createSimulation();
   const initial = sim.snapshot();
-  const s = advance(sim, 20);
+  let integratedWh = 0, previous = initial;
+  for (let i = 0; i < 4000; i++) {
+    const next = sim.step();
+    integratedWh += (previous.battery.power + next.battery.power) * .005 / 7200;
+    previous = next;
+  }
+  const s = sim.snapshot();
   assert.ok(s.battery.soc < initial.battery.soc);
-  near(s.battery.usedWh, (initial.battery.power * 20) / 3600, 1e-8);
+  near(s.battery.usedWh, integratedWh, 1e-6);
   near(s.battery.power, s.battery.voltage * s.battery.current, 1e-8);
   near(
     s.battery.voltage +
@@ -1370,7 +1377,7 @@ test("six and eight rotor presets hover with all real channels and track roll, p
     const sim = createSimulation({ airframe }),
       count = airframe === "hexarotor" ? 6 : 8;
     let s = advance(sim, 20);
-    near(s.position[2], -2, 1e-8);
+    near(s.position[2], -2, .001);
     assert.equal(s.motors.length, count);
     assert.equal(s.pwm.length, count);
     assert.equal(s.faults.motorEfficiency.length, count);
@@ -1380,7 +1387,7 @@ test("six and eight rotor presets hover with all real channels and track roll, p
       s.battery.power,
       DEFAULT_CONFIG.batteryBasePower +
         DEFAULT_CONFIG.batteryMotorPower *
-          s.motors.reduce((sum, speed) => sum + speed ** 3, 0),
+          s.motors.reduce((sum, speed) => sum + (speed * s.battery.motorSpeedScale) ** 3, 0),
       1e-8,
     );
     sim.setTargets({ roll: 0.15, pitch: -0.1, yawRate: 0.1 });
@@ -1446,7 +1453,7 @@ test("each new rotor fault produces the geometry-predicted physical torque witho
         else assert.equal(Math.sign(rate), Math.sign(expected[axis]));
       });
       assert.ok(after.velocity[2] > 0);
-      assert.deepEqual(after.motors, before.motors);
+      after.motors.forEach((speed, i) => near(speed, before.motors[i], 1e-12));
       assert.equal(after.faults.motorEfficiency[index], 0);
       sim.clearFaults();
       assert.deepEqual(
@@ -2310,4 +2317,39 @@ test("opaque simulation rollback includes gimbal filters, wind configuration and
       rotorSpeedCommands: [0.7, 0.7, 0.7, 0.7],
     }),
   );
+});
+
+
+test('identical external demands lose actual force as SOC falls or internal resistance rises', () => {
+  const run = config => {
+    const sim = createSimulation({startOnGround:true,...config},{controlSource:'external'});
+    externalAdvance(sim,.2,[.8,.8,.8,.8]);
+    return {snapshot:sim.snapshot(),truth:sim.readSensors()};
+  };
+  const full=run({batteryInitialSoc:1,batteryInternalResistance:0});
+  const low=run({batteryInitialSoc:.3,batteryInternalResistance:0});
+  const sag=run({batteryInitialSoc:1,batteryInternalResistance:2});
+  for (const result of [low,sag]) {
+    result.snapshot.motors.forEach((speed,i)=>near(speed,full.snapshot.motors[i]));
+    assert.ok(result.snapshot.battery.motorSpeedScale<full.snapshot.battery.motorSpeedScale);
+    assert.ok(result.truth.specificForceFrd[2]>full.truth.specificForceFrd[2]);
+    assert.ok(result.snapshot.velocity[2]>full.snapshot.velocity[2]);
+  }
+  assert.equal(sag.snapshot.battery.powerLimited,true);
+});
+
+test('all five airframes use one voltage scale for powered force, pusher telemetry and electrical demand', () => {
+  for (const airframe of ['quadrotor','hexarotor','octorotor','fixedwing','vtol']) {
+    const config=validateConfig({airframe,batteryInitialSoc:.5,drag:0});
+    const sim=createSimulation(config);
+    if (airframe==='vtol') { sim.setTargets({altitude:12});advance(sim,15);sim.setTransition('cruise'); }
+    const s=advance(sim,.5), scale=s.battery.motorSpeedScale;
+    assert.ok(scale>0 && scale<1);
+    near(s.propulsion.thrustN,config.maxPusherThrust*(s.propulsion.motor*scale)**2*s.faults.pusherEfficiency);
+    near(s.battery.power,config.batteryBasePower+config.batteryMotorPower*[...s.motors,s.propulsion.motor].reduce((sum,v)=>sum+(v*scale)**3,0));
+    if (['fixedwing','vtol'].includes(airframe)) assert.ok(s.propulsion.thrustN>0);
+    else near(sim.readSensors().specificForceFrd[2],-s.motors.reduce((sum,v,i)=>sum+config.maxMotorThrust*(v*scale)**2*s.faults.motorEfficiency[i],0)/config.mass,1e-6);
+    const before=sim.snapshot(),restore=sim.checkpoint();advance(sim,.1);restore();assert.deepEqual(sim.snapshot(),before);
+    sim.reset();assert.equal(sim.snapshot().battery.usedWh,0);
+  }
 });

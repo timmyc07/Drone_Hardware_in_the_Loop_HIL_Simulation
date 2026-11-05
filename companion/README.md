@@ -64,3 +64,7 @@ ArduPilot additionally accepts `await session.uploadMission(points)` followed by
 ## Local ground station bridge
 
 An optional loopback MAVLink bridge supports explicit web or ground-station control ownership for the supported PX4 and ArduCopter sessions. It applies command filtering and freezes the simulation after loss of the controlling station heartbeat. Stock MAVProxy mission flights, handback, heartbeat loss and offline replay have been verified with both supported firmware versions. QGroundControl itself may listen on all IPv4 interfaces. Setup, limits and current verification status are documented in [外部地面站](../docs/外部地面站.md).
+
+## Plant model 0.13.0
+
+Both native format-1 recordings require `modelVersion: "0.13.0"`. Missing or older model markers are rejected. Replay validates and compares battery and propulsion samples as well as final state. Actuator commands are full-charge reference-speed demands; actual normalized speed is the lagged demand multiplied by `battery.motorSpeedScale`. The shared plant applies voltage and power limits to thrust and electrical consumption. ArduPilot receives its existing voltage/current JSON fields; no PX4 battery input channel was added. See [battery assumptions and limits](../docs/電池與推進供電.md).

@@ -297,7 +297,7 @@ export const CAPABILITIES = [
     id: "battery",
     category: "飛行模型",
     title: "電池與續航",
-    description: "以簡化電量與電壓下降估算續航；未以電壓降額馬達推力。",
+    description: "以簡化電量及負載壓降影響推進力與耗電；尚未實機校準。",
     status: "partial",
     sources: [
       "https://www.liftoff-game.com/news/full-release-liftoff-micro-drones",
@@ -826,7 +826,7 @@ export const CAPABILITIES = [
     id: "record-csv",
     category: "資料與整合",
     title: "CSV 飛行紀錄",
-    description: "可匯出 199 欄飛行及感測資料 CSV，標示載具 ID 與世界時間步。",
+    description: "可匯出 202 欄飛行及感測資料 CSV，標示載具 ID 與世界時間步。",
     status: "partial",
     sources: ["https://wiki.zephyr-sim.com/help/faqs"],
   },
@@ -835,7 +835,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "JSON 重播",
     description:
-      "版本 18 JSON 保存全機隊、場景與事件，標示操作員雲台來源；支援時間軸跳轉、逐幀和依載具／類型定位事件，拒絕版本 1 至 17。",
+      "版本 19 JSON 保存全機隊、場景與事件，標示操作員雲台來源；支援時間軸跳轉、逐幀和依載具／類型定位事件，拒絕版本 1 至 18。",
     status: "partial",
     sources: [
       "https://www.liftoff-game.com/news/full-release-liftoff-micro-drones",

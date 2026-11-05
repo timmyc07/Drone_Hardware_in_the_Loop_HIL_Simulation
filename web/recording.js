@@ -32,8 +32,21 @@ import {
   validateGimbalState,
 } from "./gimbal.js";
 
-export const RECORDING_VERSION = 18;
-export const MODEL_VERSION = "0.12.0";
+export const RECORDING_VERSION = 19;
+export const MODEL_VERSION = "0.13.0";
+const BATTERY_FIELDS = [
+  "soc", "voltage", "current", "power", "usedWh", "remainingSeconds", "low", "critical",
+  "openCircuitVoltage", "motorSpeedScale", "powerLimited",
+];
+function unpackBattery(value) {
+  if (Array.isArray(value)) {
+    if (value.length !== BATTERY_FIELDS.length || Reflect.ownKeys(value).length !== BATTERY_FIELDS.length + 1)
+      throw new Error("Invalid compact battery");
+    value = Object.fromEntries(BATTERY_FIELDS.map((key, i) => [key, value[i]]));
+  }
+  exactKeys(value, BATTERY_FIELDS, "battery");
+  return value;
+}
 const MODES = ["attitude", "position", "mission", "rtl", "land", "takeoff"];
 const TAKEOFF_PHASES = [
   "idle",
@@ -243,7 +256,7 @@ function sample(
   const imu = object(value.imu),
     metrics = object(value.metrics),
     nav = object(value.navigation),
-    battery = object(value.battery),
+    battery = unpackBattery(value.battery),
     faults = object(value.faults);
   if (Object.hasOwn(nav, "waypoints")) {
     if (!Array.isArray(nav.waypoints))
@@ -407,6 +420,9 @@ function sample(
     battery: {
       soc: number(battery.soc, 0, 1),
       voltage: number(battery.voltage, 0, 100),
+      openCircuitVoltage: number(battery.openCircuitVoltage, 0, 100),
+      motorSpeedScale: number(battery.motorSpeedScale, 0, 1),
+      powerLimited: boolean(battery.powerLimited),
       current: number(battery.current, 0, 1e6),
       power: number(battery.power, 0, 1e6),
       usedWh: number(battery.usedWh, 0, 1000),
@@ -618,6 +634,7 @@ export function compactSnapshot(snapshot) {
     GIMBAL_AXES.reduce((bits, axis, i) => bits | (Number(flags[axis]) << i), 0);
   return {
     ...state,
+    battery: BATTERY_FIELDS.map(key => snapshot.battery[key]),
     // Settings live in setup/events; retain every acquired angle and status without repeating them.
     gimbal: [
       ...GIMBAL_AXES.map((axis) => gimbal.actual[axis]),
@@ -1017,7 +1034,7 @@ export function validateRecording(value) {
   object(value);
   if (value.version !== RECORDING_VERSION)
     throw new Error(
-      "Unsupported recording version: version 18 required; legacy recordings are not supported",
+      "Unsupported recording version: version 19 required; legacy recordings are not supported",
     );
   exactKeys(
     value,
@@ -1667,6 +1684,9 @@ export function recordingToCsv(record) {
     "proximity_warning_m",
     ...PROXIMITY_AXES.map(({ id }) => `proximity_${id}_range_m`),
     ...PROXIMITY_AXES.map(({ id }) => `proximity_${id}_too_close_boolean`),
+    "battery_open_circuit_voltage_V",
+    "battery_motor_speed_scale_fraction",
+    "battery_power_limited_boolean",
   ];
   const rows = samples.map((s, index) =>
     [
@@ -1772,6 +1792,9 @@ export function recordingToCsv(record) {
       ),
       ...radarCsv(sensorFrames[index].radar),
       ...proximityCsv(sensorFrames[index].proximity),
+      s.battery.openCircuitVoltage,
+      s.battery.motorSpeedScale,
+      Number(s.battery.powerLimited),
     ].join(","),
   );
   return [header.join(","), ...rows].join("\n");

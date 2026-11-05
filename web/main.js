@@ -15,6 +15,7 @@ import { exportVehiclePointCloud } from "./pointcloud.js";
 import { exportRadarData } from "./radar.js";
 import { exportProximityData, PROXIMITY_BOUNDS } from "./proximity.js";
 import { createProximityPanel } from "./proximity-panel.js";
+import { formatBattery } from "./battery-panel.js";
 import { createInstructorPanel } from "./instructor-panel.js";
 import { createNistPanel } from "./nist-panel.js";
 import { createOperatorHost } from "./operator-channel.js";
@@ -1557,7 +1558,7 @@ function updateTelemetry() {
   }
   const battery = s.battery;
   $("battery-details").textContent = battery
-    ? `電池 ${(battery.soc * 100).toFixed(0)}% · ${battery.voltage.toFixed(1)} V · ${battery.current.toFixed(1)} A`
+    ? formatBattery(battery)
     : "電池：—";
   $("fault-details").textContent = s.faults
     ? `故障：${s.faults.linkLost ? "連線中斷" : "連線正常"} · 馬達效率 ${s.faults.motorEfficiency.map((v) => `${Math.round(v * 100)}%`).join(" / ")}${wing ? ` · 巡航推進效率 ${Math.round(s.faults.pusherEfficiency * 100)}%` : ""}`
