@@ -1,0 +1,323 @@
+{
+  "release": "0.26.0",
+  "formats": {
+    "model": "0.11.0",
+    "recording": 15,
+    "scene": 6,
+    "camera": 5,
+    "inspectionReport": 2,
+    "api": "2.4",
+    "native": 1
+  },
+  "tests": {
+    "passed": 419,
+    "failed": 0,
+    "durationMs": 47409.021667
+  },
+  "initialModel010Candidate": {
+    "passed": false,
+    "allStateMaximum": 1.1414077238924847e-08,
+    "retainedLocally": true,
+    "reason": "Near-pole Euler inversion followed by scalar joint clipping; original data and failed result were not rewritten."
+  },
+  "longFlight": {
+    "recordSha256": "120e9f2fa05f397169603ab48ea7986db85499858a15d9cde7a0c276fca06dc6",
+    "datasetSha256": "051ba797947ea293427d208d10cd392e0167b9490d7ee5eb67226c6abd68da14",
+    "independentReplay": {
+      "passed": true,
+      "vehicles": 1,
+      "frames": 5963,
+      "ticks": 59600,
+      "simSeconds": 297.9999999998015,
+      "maximum": {
+        "positionM": 1.0658141036401503e-14,
+        "quaternion": 1.5486201730696703e-15,
+        "motors": 4.440892098500626e-16,
+        "allState": 5.55756662912188e-10,
+        "sensors": 6.110667527536862e-12
+      }
+    },
+    "acquisition": {
+      "passed": true,
+      "frames": 11,
+      "maximumMetadataDifference": 1.4210854715202004e-14,
+      "groundPixels": 844800,
+      "maximumGroundPlaneErrorM": 0.011677667857075136,
+      "frameHashes": [
+        {
+          "captureId": "2a67ed5a-6533-40b4-91f2-b2ab1729e805",
+          "worldTick": 155,
+          "sha256": "ab1fc1a44929e5cdc45b0adf58e645fc3218a6a9d65d7317505bc27334c886a7"
+        },
+        {
+          "captureId": "60ba47ef-58d1-4ae6-8d61-f11e12dd0fdf",
+          "worldTick": 575,
+          "sha256": "5ce157554b8de23b3f86f6b8b73b630bdd7cca6b33b3d8a77d3712c9781b6971"
+        },
+        {
+          "captureId": "c4dfa880-60d5-4407-ad27-7c38b1c35850",
+          "worldTick": 1002,
+          "sha256": "9bb68e13fc9411ebff51a274c9fdf064a9a084007c4870dd1c9ca5b0daade4af"
+        },
+        {
+          "captureId": "0205f8aa-3453-4d92-baf4-498d01b14600",
+          "worldTick": 1428,
+          "sha256": "34906cbb7e87c2043458865c2062ca924e4dce6bf15c1e3b300782730d32eda1"
+        },
+        {
+          "captureId": "4e95abce-ad55-4e0e-90ad-8128bc378c2f",
+          "worldTick": 28255,
+          "sha256": "b011d488c9942e8a56c94d59750dffaaade6abf4915850ad3c5b3eb47aacd937"
+        },
+        {
+          "captureId": "25ba3d8e-2713-42f1-ae89-8f761a25d87e",
+          "worldTick": 28616,
+          "sha256": "d72678a5d6b62d55d0a5d846c7c7454abe5e05200d0e2aabb1e5466951b67e7a"
+        },
+        {
+          "captureId": "4528a93b-41be-4450-8711-7981fd8f2b2d",
+          "worldTick": 28616,
+          "sha256": "75e351c00faa0735ea682a06b167a7cc2373aa1ec532f6c882f743c42dbed4dd"
+        },
+        {
+          "captureId": "7c73faf7-6b47-4e88-aa6f-9924013cc157",
+          "worldTick": 29079,
+          "sha256": "cf3d317ac67197c4475c5115e3433911718b8a369c52287d48ee67274741112c"
+        },
+        {
+          "captureId": "c9614159-3d57-4e0e-a939-6c8151b92b4c",
+          "worldTick": 29495,
+          "sha256": "a8acd757317941c0fad60bb02e42acd7f80e4247ec63f5ff2f7dfb386df57fb4"
+        },
+        {
+          "captureId": "81ae1904-30d5-4c3e-be8a-dd8e7a4a98b2",
+          "worldTick": 29912,
+          "sha256": "00183289cbcb19f1d442d0e11fde303920ce8ee36ed816338c9ad40fb0ef6037"
+        },
+        {
+          "captureId": "4c345a85-9e5c-4f1a-aae0-5586819ba0a7",
+          "worldTick": 30338,
+          "sha256": "d9d5deda5cf621ab347808b6036d6f7b84f45132a6bb0ede7b9a38729f21736c"
+        }
+      ]
+    },
+    "timeSessionIntervalsS": [
+      2.0999999999999606,
+      2.1349999999999545,
+      2.1299999999999546
+    ],
+    "distanceSessionDensePathIntervalsM": [
+      4.442132110625195,
+      5.748536954967424,
+      5.7026057436156865,
+      5.83088514391615
+    ]
+  },
+  "capacityFlight": {
+    "recordSha256": "dc309fc354a693b682fa4ce110d74cc7762c054d7da7d83e804f36cb5489568f",
+    "datasetSha256": "fafdcfd43b59e97593b9d5b52e66b2d9100ff2f912eabb840b14983defa6f32d",
+    "independentReplay": {
+      "passed": true,
+      "vehicles": 1,
+      "frames": 6116,
+      "ticks": 61150,
+      "simSeconds": 305.74999999979445,
+      "maximum": {
+        "positionM": 0,
+        "quaternion": 0,
+        "motors": 0,
+        "allState": 0,
+        "sensors": 7.105427357601002e-15
+      }
+    },
+    "acquisition": {
+      "passed": true,
+      "frames": 30,
+      "maximumMetadataDifference": 1.4210854715202004e-14,
+      "groundPixels": 2304000,
+      "maximumGroundPlaneErrorM": 0.0010000467300335103,
+      "frameHashes": [
+        {
+          "captureId": "550dad8f-4147-4d89-8b95-07734eb7da9f",
+          "worldTick": 145,
+          "sha256": "1e3bc088b95ad87ded8551d181f40a49d5bac2f4b1596c0202407f1d6dbb3323"
+        },
+        {
+          "captureId": "b641fd58-bde6-4f3b-b343-105df93b9c9b",
+          "worldTick": 20862,
+          "sha256": "12214d2c8d180783d9e8b71df9911e73b16f6008a3e2335869b8fdc1c5a97b72"
+        },
+        {
+          "captureId": "dff56222-8f55-4c1b-b4c1-a7905efcfced",
+          "worldTick": 21335,
+          "sha256": "04d62b6c727e0fcaa3ef17ceb8241f1a6dbbaafe3ed0eb9c0c7eb1177bc76452"
+        },
+        {
+          "captureId": "cd454426-98a1-4656-8c41-df04480cdd9e",
+          "worldTick": 21759,
+          "sha256": "c917c561a3fbdbcebb56aec4bc588c7489d80de7b9d91ac986e224df544a8811"
+        },
+        {
+          "captureId": "7bb510aa-48f3-4e48-85de-2e229103057f",
+          "worldTick": 22163,
+          "sha256": "dc6b5a9293598e5c26613ea0738e6f6a86c638a0bc42170fd30a5307a504e910"
+        },
+        {
+          "captureId": "7f7daae9-d563-497a-a08d-9b4aff98c8dd",
+          "worldTick": 22594,
+          "sha256": "24f724a7d23dd807afb94fb8cb11010bf266c436debfaf7713ff381219dfd320"
+        },
+        {
+          "captureId": "f5f2f822-0494-4933-93f2-b7d4cf4c53b9",
+          "worldTick": 23029,
+          "sha256": "993f3616c66e6556c0633b305459691ca30542bbbf8db699a6286008015bc2cc"
+        },
+        {
+          "captureId": "08dfc416-26e5-4fa0-b4b8-733325a84af4",
+          "worldTick": 23476,
+          "sha256": "5dfdb260cc3587027d47815b69960df11b0c78680aaf07dbeee65ec01133b31e"
+        },
+        {
+          "captureId": "7f4d3fde-ab5a-4871-9248-c6aaeae48d56",
+          "worldTick": 23904,
+          "sha256": "ea6682006be37352a538c9ca47d536f94cc6059c57a644240b443cc27a89c803"
+        },
+        {
+          "captureId": "aa5135d2-6775-46f8-bfed-168790457db2",
+          "worldTick": 24327,
+          "sha256": "1da48c639ec4fef2e1caf91b8a4ae87b25a55a097d8b7f0005e6028923a4707c"
+        },
+        {
+          "captureId": "200cd2d3-94db-4b28-818d-4b2a6aaa41ad",
+          "worldTick": 24751,
+          "sha256": "7e1b655698d3f2b20f5a2835d79ea090343cdc91abb46a20cf1feef804193310"
+        },
+        {
+          "captureId": "7f38a1ef-2525-4b1f-b8da-7fb50acc72f4",
+          "worldTick": 25164,
+          "sha256": "2470bfa3e655b3ea54fe775809d18a7385189f5c396640c6419632ef212887f1"
+        },
+        {
+          "captureId": "24357696-b222-4f20-97db-1943f4367a8a",
+          "worldTick": 25564,
+          "sha256": "661886b4b57af08456072b01772856cb2345b5be25f55e44e1141c8122f26934"
+        },
+        {
+          "captureId": "f0a37d32-222d-4748-afe7-2deafd635b03",
+          "worldTick": 25987,
+          "sha256": "cc61a2b8528380ce726d7d2965e18e7e3742da6a0c9490f817853c96942f1fda"
+        },
+        {
+          "captureId": "3f28dacf-896f-4ff6-9bb4-9bd79910306c",
+          "worldTick": 26441,
+          "sha256": "1b15faca21955d4a972ed9e2ebb5841f3bd89ed5d45c06ce4e0cd154445d2cd4"
+        },
+        {
+          "captureId": "15ce4eec-65c0-45f7-aeb6-47e09d7398a9",
+          "worldTick": 26880,
+          "sha256": "1be44d8370f834dfe66a1a4ac9e507beb61b9ed545a19197b107bec7c88e2543"
+        },
+        {
+          "captureId": "7af4ac00-7d2e-4af3-bf08-7a8a0175d3c5",
+          "worldTick": 27304,
+          "sha256": "2ff12ecc494b60a0fe723e7f42464966f2479721659f2a37ea1718a881734bf8"
+        },
+        {
+          "captureId": "1b600d90-1c6b-4356-83b0-31a03adcf30a",
+          "worldTick": 27718,
+          "sha256": "44589c53082587c8a2dcb89f1f5ef29f83d804730a82e1f5894ef8bd86453067"
+        },
+        {
+          "captureId": "0c8f34ed-bdc1-479d-b2ae-4783e25a6442",
+          "worldTick": 28137,
+          "sha256": "892a83850ae2db3cf125742d2b823a5438db665d01532af9170ecbc45f554f9f"
+        },
+        {
+          "captureId": "27c8171e-2354-4c90-8909-a9061d8c6edc",
+          "worldTick": 28575,
+          "sha256": "2d311b98b16e777ba825bbc33926c47775e2fcf95b465e5b9087d9fed5d96722"
+        },
+        {
+          "captureId": "ba8eab68-9ceb-4154-bce0-21c47000f65c",
+          "worldTick": 28978,
+          "sha256": "02b0236787288050fe64f72540bd35de6f5ca52cfbc37b9da1e4e4fccdfe577f"
+        },
+        {
+          "captureId": "93094e5d-572b-4e3a-9e34-d6a2cac7b6c4",
+          "worldTick": 29422,
+          "sha256": "f69a637060b43f59a29784d4d57a1c42db7627d8ce48697c14d3b47945a4d087"
+        },
+        {
+          "captureId": "64252986-1ded-40ba-bc86-5716eadfdf3f",
+          "worldTick": 29825,
+          "sha256": "0df177292e43a7ccb1744bd3782b8a2fa6707e2bb917f0dc0fd3f8de4ab1b7f5"
+        },
+        {
+          "captureId": "32286518-5573-4db7-8cf3-7817f05be706",
+          "worldTick": 30249,
+          "sha256": "a903f0ea95c9b0d16707076611e9b2dc14332c4cd52fc67048b5d460f044891e"
+        },
+        {
+          "captureId": "bae4fd77-08da-4a53-9b5a-0a72c62d4a41",
+          "worldTick": 30664,
+          "sha256": "c4f533ca0e3d26b7956cefc641a71dc9797c99c891b502b383a1abf3bbe175a2"
+        },
+        {
+          "captureId": "100bac1e-5aeb-4755-878e-a7f1e98f121e",
+          "worldTick": 31111,
+          "sha256": "0c46b1aee359252afc1a8ed161373a9738d764273724cc09321949ef5003e841"
+        },
+        {
+          "captureId": "20bc97e2-1705-48de-b722-00348c781c78",
+          "worldTick": 31567,
+          "sha256": "89b9fb78fa97a9cff1858d100ad3feaf77a78dd29fbf8ff6dd8d674e6a0fc925"
+        },
+        {
+          "captureId": "05dc8cfc-4f83-411b-b814-93d7e99a67c2",
+          "worldTick": 32022,
+          "sha256": "ff94055cc78ae354aa31f5d804b8c9621b2e9a4166747076210db84be8bd458b"
+        },
+        {
+          "captureId": "46408d98-d0c2-4f79-8ae3-2a4e2c2131fc",
+          "worldTick": 32456,
+          "sha256": "af0af0c36ef5707e7665106a7af97a0b829174c19f137ecd419cc4f0a24f3f70"
+        },
+        {
+          "captureId": "f2b6a1c8-4991-4f1f-abbf-178752befff4",
+          "worldTick": 32908,
+          "sha256": "93591d187b7845aeba2d099329e8c5c51587cd36bfacd79117c09a2461acbdc7"
+        }
+      ]
+    },
+    "existingFramesBeforeRun": 1,
+    "newFramesBeforeCapacityStop": 29,
+    "totalFrames": 30,
+    "rawImageBytes": 20736000,
+    "byteLimit": 25165824,
+    "flightContinuedAfterCameraStop": true
+  },
+  "datasetRoundtrip": {
+    "passed": true,
+    "originalSha256": "fafdcfd43b59e97593b9d5b52e66b2d9100ff2f912eabb840b14983defa6f32d",
+    "exportedSha256": "fafdcfd43b59e97593b9d5b52e66b2d9100ff2f912eabb840b14983defa6f32d",
+    "byteIdentical": true
+  },
+  "mobile": {
+    "frames": 30,
+    "pageWidth": 390,
+    "width": 390,
+    "feedbackPreserved": true
+  },
+  "localEvidence": "local/evidence/automatic-camera-v026/model011/",
+  "sources": [
+    "https://github.com/mavlink/qgroundcontrol/blob/36436db319c731b70ab25dd3178896c4c22c75f6/src/MissionManager/CameraSection.cc",
+    "https://github.com/scipy/scipy/blob/f890ba56482979d6d4e3f7c4abfd3f1c2a3d3a05/scipy/spatial/transform/_rotation_cy.pyx"
+  ],
+  "limits": [
+    "No new native SITL or physical hardware verification",
+    "At most 2 automatic captures per wall-clock second; observed path spacing may increase",
+    "No overlap, coverage, obstacle avoidance or photogrammetry guarantee",
+    "Old model 0.10 flight recordings require the old 0.25 checkout; schema 5 images remain importable",
+    "All-market capability remains incomplete"
+  ]
+}

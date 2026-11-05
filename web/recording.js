@@ -31,7 +31,7 @@ import {
 } from "./gimbal.js";
 
 export const RECORDING_VERSION = 15;
-export const MODEL_VERSION = "0.10.0";
+export const MODEL_VERSION = "0.11.0";
 const MODES = ["attitude", "position", "mission", "rtl", "land", "takeoff"];
 const TAKEOFF_PHASES = [
   "idle",
@@ -987,9 +987,10 @@ export function validateRecording(value) {
     ],
     "recording",
   );
+  if (value.modelVersion !== MODEL_VERSION)
+    throw new Error(`Unsupported simulation model: ${MODEL_VERSION} required`);
   if (
     value.format !== "flight-lab" ||
-    value.modelVersion !== MODEL_VERSION ||
     typeof value.createdAt !== "string" ||
     !Number.isFinite(Date.parse(value.createdAt)) ||
     value.dt !== 0.005

@@ -364,7 +364,7 @@ export const CAPABILITIES = [
     category: "控制與航行",
     title: "測繪網格航線",
     description:
-      "一般與凹形多邊形產生蛇形航線，含區內幾何連接；最多 50 個普通航點。未含避障、自動拍照或覆蓋率保證。",
+      "一般與凹形多邊形產生蛇形航線，含區內幾何連接；最多 50 個普通航點。可搭配自動拍攝，但未整合覆蓋規劃，無避障或覆蓋率保證。",
     status: "partial",
     sources: [
       "https://github.com/mavlink/qgroundcontrol/blob/36436db319c731b70ab25dd3178896c4c22c75f6/docs/en/qgc-user-guide/plan_view/pattern_survey.md",
@@ -589,6 +589,18 @@ export const CAPABILITIES = [
     ],
   },
   {
+    id: "automatic-imaging",
+    category: "感測與通訊",
+    title: "自動拍攝",
+    description:
+      "內建模擬可依時間或水平路徑間隔拍攝並加入資料集；不保證覆蓋率或實機精度。",
+    status: "partial",
+    sources: [
+      "https://github.com/mavlink/qgroundcontrol/blob/36436db319c731b70ab25dd3178896c4c22c75f6/src/MissionManager/CameraSection.cc",
+      "https://github.com/mavlink/qgroundcontrol/blob/36436db319c731b70ab25dd3178896c4c22c75f6/docs/en/qgc-user-guide/plan_view/pattern_survey.md",
+    ],
+  },
+  {
     id: "depth",
     category: "感測與通訊",
     title: "深度影像",
@@ -643,7 +655,7 @@ export const CAPABILITIES = [
     category: "感測與通訊",
     title: "雲台",
     description:
-      "理想三軸雲台提供機體／世界方向目標、限速與實際姿態；瀏覽器影格與資料集往返已驗證，非實機校準或外部飛控雲台。",
+      "理想三軸雲台提供機體／世界方向目標、受限姿態求解、限速與實際姿態；瀏覽器影格與資料集往返已驗證，非實機校準或外部飛控雲台。",
     status: "partial",
     sources: ["https://ardupilot.org/dev/docs/adding_simulated_devices.html"],
   },
@@ -884,7 +896,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "程式控制 API",
     description:
-      "同頁 API 2.3 明確指定載具 ID，共用世界時鐘、場景與風；外部 SITL 使用獨立本機服務。",
+      "同頁 API 2.4 支援指定載具及自動拍攝控制，共用世界時鐘、場景與風；外部 SITL 使用獨立本機服務。",
     status: "partial",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/apis.md"],
   },

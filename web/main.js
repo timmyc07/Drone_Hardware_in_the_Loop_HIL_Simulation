@@ -49,6 +49,8 @@ import { createSceneEditor } from "./scene-editor.js";
 import { createDemEditor } from "./dem-editor.js";
 import { createReplayControls } from "./replay-controls.js";
 import { createSurveyEditor } from "./survey-editor.js";
+import { createAutomaticCamera } from "./automatic-camera.js";
+import { createAutomaticCameraControls } from "./automatic-camera-controls.js";
 import { replayFrameAtTime } from "./replay.js";
 import { validateScene } from "./scene-data.js";
 import { createTerrain } from "./terrain.js";
@@ -90,6 +92,8 @@ try {
 
 let worldState;
 let worldConfig;
+let automaticCamera;
+let automaticCameraControls;
 let activeVehicleId = "drone-1";
 const vehicleHistories = new Map();
 const vehicleDrafts = new Map();
@@ -455,8 +459,25 @@ function requestApi(command, internal = false) {
       return Promise.reject(error);
     }
   }
-  if (command.type === "captureCamera")
-    return captureCameraFrame(command.vehicleId);
+  if (["cameraAutoState", "cameraAutoStart", "cameraAutoStop"].includes(command.type)) {
+    try {
+      if (command.type === "cameraAutoStart")
+        startAutomaticCamera(command.value, command.vehicleId);
+      else if (command.type === "cameraAutoStop")
+        automaticCamera.stop();
+      return Promise.resolve(automaticCamera.getState());
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+  if (command.type === "captureCamera") {
+    if (automaticCamera?.getState().active || automaticCamera?.getState().pending)
+      return Promise.reject(new Error("請先停止自動拍攝並等待目前影像完成。"));
+    return captureCameraFrame(command.vehicleId).then((frame) => {
+      showCameraFrame(frame);
+      return frame;
+    });
+  }
   if (command.type === "captureInspection")
     return captureInspectionFrame(command.vehicleId, command.value);
   const id = ++requestId;
@@ -551,6 +572,7 @@ function setPlaying(value) {
               : "準備就緒";
   $("view-status").innerHTML =
     `<span class="dot"></span>${externalActive ? (hilState?.controller?.verified === true && hilState?.stats?.sensorPackets > 0 && hilState?.stats?.actuatorPackets > 0 ? `${hilControllerName()} SITL 閉環 · 植物模型真值` : `${hilControllerName()} 介接中`) : label}`;
+  observeAutomaticCamera();
 }
 
 const targets = [
@@ -1612,6 +1634,7 @@ function animate(now) {
 }
 requestAnimationFrame(animate);
 document.addEventListener("visibilitychange", () => {
+  observeAutomaticCamera();
   if (document.hidden) {
     releasePilot();
     $("camera-live").checked = false;
@@ -3088,6 +3111,7 @@ let cameraLastLive = 0;
 let cameraDataset = [];
 let cameraDatasetBytes = 0;
 let cameraDatasetDirty = false;
+let cameraDatasetBusy = false;
 function populateCameraConfig(value) {
   const resolution = $("camera-resolution"),
     size = `${value.width}x${value.height}`;
@@ -3124,6 +3148,8 @@ function applyCameraConfig(value) {
   return { ...cameraConfig };
 }
 function clearCameraPreview() {
+  if (automaticCamera?.getState().active)
+    automaticCamera.stop("實驗或載具已切換");
   cameraEpoch++;
   $("camera-live").checked = false;
   cameraFrame = undefined;
@@ -3135,6 +3161,8 @@ function clearCameraPreview() {
   updateCameraStatus();
 }
 function updateCameraStatus() {
+  const automatic = automaticCamera?.getState();
+  const reserved = automatic?.active || automatic?.pending;
   const full =
     cameraDataset.length >= CAMERA_DATASET_MAX_FRAMES ||
     cameraDatasetBytes + cameraConfig.width * cameraConfig.height * 9 >
@@ -3143,16 +3171,19 @@ function updateCameraStatus() {
     `${cameraFrame ? "已顯示影像" : "尚未拍攝"} · 資料集 ${cameraDataset.length}/${CAMERA_DATASET_MAX_FRAMES} 張 · ${(cameraDatasetBytes / 1048576).toFixed(2)}/${(CAMERA_DATASET_MAX_BYTES / 1048576).toFixed(0)} MiB${cameraDatasetDirty ? " · 尚未匯出" : ""}${full ? " · 容量不足，請匯出並清除" : ""}`;
   $("camera-png").disabled = !cameraFrame;
   $("camera-export").disabled = !cameraDataset.length;
-  $("camera-clear").disabled = !cameraDataset.length || cameraBusy;
-  $("camera-import").disabled = cameraBusy;
+  $("camera-clear").disabled = !cameraDataset.length || cameraBusy || reserved || cameraDatasetBusy;
+  $("camera-import").disabled = cameraBusy || reserved || cameraDatasetBusy;
   $("camera-add").disabled =
     !!replay ||
     cameraBusy ||
+    reserved ||
+    cameraDatasetBusy ||
     cameraDataset.length >= CAMERA_DATASET_MAX_FRAMES ||
     cameraDatasetBytes + cameraConfig.width * cameraConfig.height * 9 >
       CAMERA_DATASET_MAX_BYTES;
-  $("camera-capture").disabled = !!replay || cameraBusy;
-  $("camera-live").disabled = !!replay;
+  $("camera-capture").disabled = !!replay || cameraBusy || reserved || cameraDatasetBusy;
+  $("camera-live").disabled = !!replay || reserved || cameraDatasetBusy;
+  if (automatic) automaticCameraControls?.refresh(automatic);
 }
 function showCameraFrame(frame) {
   cameraFrame = frame;
@@ -3175,6 +3206,7 @@ function showCameraFrame(frame) {
   updateCameraStatus();
 }
 async function captureCameraFrame(vehicleId = activeVehicleId) {
+  if (cameraDatasetBusy) throw new Error("相機資料集正在處理，請稍候。");
   if (replay) throw new Error("重播時無法拍攝新影像。");
   if (!externalActive && vehicleId !== activeVehicleId)
     throw new Error("請先選擇要拍攝的飛行器。");
@@ -3212,7 +3244,6 @@ async function captureCameraFrame(vehicleId = activeVehicleId) {
     const frame = await pending;
     if (epoch !== cameraEpoch || replay)
       throw new Error("實驗已切換，本次影像已取消。");
-    showCameraFrame(frame);
     return frame;
   } finally {
     cameraBusy = false;
@@ -3291,6 +3322,9 @@ function renderInspection() {
     externalActive ||
     inspectionBusy ||
     cameraBusy ||
+    cameraDatasetBusy ||
+    automaticCamera?.getState().active ||
+    automaticCamera?.getState().pending ||
     !targets.length;
   $("inspection-export").disabled =
     externalActive || inspectionBusy || !targets.length;
@@ -3331,7 +3365,10 @@ $("inspection-export").onclick = async () => {
   }
 };
 async function captureInspectionFrame(vehicleId, targetId) {
-  if (replay || externalActive || inspectionBusy || cameraBusy)
+  if (
+    replay || externalActive || inspectionBusy || cameraBusy || cameraDatasetBusy ||
+    automaticCamera?.getState().active || automaticCamera?.getState().pending
+  )
     throw new Error("目前無法拍攝巡檢影像");
   if (vehicleId !== activeVehicleId) throw new Error("請先選擇要拍攝的飛行器");
   if (
@@ -3370,15 +3407,7 @@ async function captureInspectionFrame(vehicleId, targetId) {
       if (worldState) scene.updateWorld(worldState, activeVehicleId, 0);
     }
     const frame = { ...(await pending), ...ticket.metadata };
-    const bytes = cameraFrameBytes(frame);
-    if (
-      cameraDatasetBytes + bytes > CAMERA_DATASET_MAX_BYTES ||
-      cameraDataset.length >= CAMERA_DATASET_MAX_FRAMES
-    )
-      throw new Error("相機資料集已達上限");
-    cameraDataset.push(frame);
-    cameraDatasetBytes += bytes;
-    cameraDatasetDirty = true;
+    appendCameraFrame(frame);
     refreshCameraSelector();
     $("camera-frame-select").value = String(cameraDataset.length - 1);
     showCameraFrame(frame);
@@ -3437,9 +3466,23 @@ function refreshCameraSelector() {
   updateCameraStatus();
   void checkInspectionImage();
 }
+function appendCameraFrame(frame) {
+  if (cameraDatasetBusy) throw new Error("相機資料集正在處理，請稍候。");
+  const bytes = cameraFrameBytes(frame);
+  if (
+    cameraDataset.length >= CAMERA_DATASET_MAX_FRAMES ||
+    cameraDatasetBytes + bytes > CAMERA_DATASET_MAX_BYTES
+  )
+    throw new Error("相機資料集已滿，請匯出並清除後再開始。");
+  if (cameraDataset.some((item) => item.captureId === frame.captureId))
+    throw new Error("同一張影像不能重複加入資料集。");
+  cameraDataset.push(frame);
+  cameraDatasetBytes += bytes;
+  cameraDatasetDirty = true;
+}
 $("camera-capture").onclick = async () => {
   try {
-    await captureCameraFrame();
+    showCameraFrame(await captureCameraFrame());
   } catch (error) {
     toast(`拍攝失敗：${error.message}`);
   }
@@ -3453,14 +3496,10 @@ $("camera-add").onclick = async () => {
     return toast("資料集已達容量上限，請先匯出並清除。");
   try {
     const frame = await captureCameraFrame();
-    const bytes = cameraFrameBytes(frame);
-    if (cameraDatasetBytes + bytes > CAMERA_DATASET_MAX_BYTES)
-      return toast("資料集已達容量上限，請先匯出並清除。");
-    cameraDataset.push(frame);
-    cameraDatasetBytes += bytes;
-    cameraDatasetDirty = true;
+    appendCameraFrame(frame);
     refreshCameraSelector();
     $("camera-frame-select").value = String(cameraDataset.length - 1);
+    showCameraFrame(frame);
   } catch (error) {
     toast(`拍攝失敗：${error.message}`);
   }
@@ -3495,17 +3534,26 @@ $("camera-export").onclick = () => {
   }
 };
 $("camera-clear").onclick = async () => {
-  if (
-    cameraDatasetDirty &&
-    !(await confirmAction("清除會移除尚未匯出的相機資料集。確定清除？"))
-  )
-    return;
-  cameraDataset = [];
-  cameraDatasetBytes = 0;
-  cameraDatasetDirty = false;
-  refreshCameraSelector();
+  if (cameraBusy || cameraDatasetBusy || automaticCamera.getState().active || automaticCamera.getState().pending) return;
+  cameraDatasetBusy = true;
+  updateCameraStatus();
+  try {
+    if (
+      cameraDatasetDirty &&
+      !(await confirmAction("清除會移除尚未匯出的相機資料集。確定清除？"))
+    )
+      return;
+    cameraDataset = [];
+    cameraDatasetBytes = 0;
+    cameraDatasetDirty = false;
+    refreshCameraSelector();
+  } finally {
+    cameraDatasetBusy = false;
+    updateCameraStatus();
+  }
 };
 $("camera-import").onclick = () => {
+  if (cameraBusy || cameraDatasetBusy || automaticCamera.getState().active || automaticCamera.getState().pending) return;
   cameraEpoch++;
   $("camera-live").checked = false;
   $("camera-import-file").click();
@@ -3514,10 +3562,14 @@ $("camera-import-file").onchange = async (event) => {
   const file = event.target.files?.[0];
   event.target.value = "";
   if (!file) return;
+  if (cameraBusy || cameraDatasetBusy || automaticCamera.getState().active || automaticCamera.getState().pending)
+    return toast("相機正在拍攝或處理資料集，請停止並等待後再匯入。");
   cameraEpoch++;
   $("camera-live").checked = false;
   if (file.size > CAMERA_DATASET_MAX_IMPORT_BYTES)
     return toast("相機資料集超過 40 MiB 匯入上限。");
+  cameraDatasetBusy = true;
+  updateCameraStatus();
   try {
     const frames = parseCameraDataset(await file.text());
     if (
@@ -3539,6 +3591,9 @@ $("camera-import-file").onchange = async (event) => {
     toast("相機資料集已匯入。");
   } catch (error) {
     toast(`相機資料集無法讀取：${error.message}`);
+  } finally {
+    cameraDatasetBusy = false;
+    updateCameraStatus();
   }
 };
 function updateCameraLive(now) {
@@ -3548,15 +3603,92 @@ function updateCameraLive(now) {
     document.hidden ||
     replay ||
     cameraBusy ||
+    cameraDatasetBusy ||
+    automaticCamera?.getState().active ||
     now - cameraLastLive < 500
   )
     return;
   cameraLastLive = now;
-  captureCameraFrame().catch((error) => {
+  captureCameraFrame().then(showCameraFrame).catch((error) => {
     $("camera-live").checked = false;
     toast(`相機預覽已停止：${error.message}`);
   });
 }
+function automaticCameraContext() {
+  return {
+    available: !!scene && !!latest && !!worldState && !replay && !externalActive &&
+      !["crashed", "failsafe"].includes(latest.status),
+    busy: cameraBusy || cameraDatasetBusy,
+    reason: replay
+      ? "重播時不可開始新拍攝。"
+      : externalActive
+        ? "自動拍攝目前僅支援內建模擬。"
+        : !scene ? "相機尚未準備完成。" : "",
+    vehicleName: worldState?.vehicles.find((v) => v.id === activeVehicleId)?.name || activeVehicleId,
+  };
+}
+function automaticCameraObservation() {
+  if (!worldState || !latest) return null;
+  return {
+    vehicleId: activeVehicleId,
+    epoch: cameraEpoch,
+    worldTick: worldState.tick,
+    time: latest.time,
+    position: [...latest.position],
+    running: running && !document.hidden,
+    airborne: latest.ground.clearanceM >= 0.5 && latest.status !== "landed",
+    available: automaticCameraContext().available,
+    busy: cameraBusy,
+    nowMs: performance.now(),
+  };
+}
+function observeAutomaticCamera() {
+  if (!automaticCamera) return;
+  const observation = automaticCameraObservation();
+  if (observation) automaticCamera.observe(observation);
+  automaticCameraControls?.refresh(automaticCamera.getState());
+}
+function startAutomaticCamera(settings, vehicleId = activeVehicleId) {
+  if (vehicleId !== activeVehicleId)
+    throw new Error("請先選擇要拍攝的飛行器。");
+  const context = automaticCameraContext();
+  if (!context.available || context.busy)
+    throw new Error(context.reason || "相機尚未可用或正在拍攝。");
+  if (
+    cameraDataset.length >= CAMERA_DATASET_MAX_FRAMES ||
+    cameraDatasetBytes + cameraConfig.width * cameraConfig.height * 9 > CAMERA_DATASET_MAX_BYTES
+  )
+    throw new Error("相機資料集已滿，請先匯出並清除。");
+  $("camera-live").checked = false;
+  automaticCamera.start(settings, automaticCameraObservation());
+  updateCameraStatus();
+}
+let displayedAutomaticFrame;
+automaticCamera = createAutomaticCamera({
+  capture: (vehicleId) => {
+    if (
+      cameraDataset.length >= CAMERA_DATASET_MAX_FRAMES ||
+      cameraDatasetBytes + cameraConfig.width * cameraConfig.height * 9 > CAMERA_DATASET_MAX_BYTES
+    )
+      throw new Error("相機資料集已滿，已停止自動拍攝；已存影像保留。");
+    return captureCameraFrame(vehicleId);
+  },
+  save: appendCameraFrame,
+  onChange: (status) => {
+    if (status.last && status.last.captureId !== displayedAutomaticFrame) {
+      displayedAutomaticFrame = status.last.captureId;
+      refreshCameraSelector();
+      $("camera-frame-select").value = String(cameraDataset.length - 1);
+      showCameraFrame(cameraDataset.at(-1));
+    }
+    updateCameraStatus();
+  },
+});
+automaticCameraControls = createAutomaticCameraControls({
+  start: startAutomaticCamera,
+  stop: () => automaticCamera.stop(),
+  getContext: automaticCameraContext,
+});
 updateCameraStatus();
 
 const isLocalCompanion = isCompanionOrigin(window.location);

@@ -125,50 +125,105 @@ function orientationError(actualWorld, desiredWorld) {
     clamp((relative[0] + relative[4] + relative[8] - 1) / 2, -1, 1),
   );
 }
+function rotationQuaternion(matrix) {
+  const diagonal = [
+    1 + matrix[0] + matrix[4] + matrix[8],
+    1 + matrix[0] - matrix[4] - matrix[8],
+    1 - matrix[0] + matrix[4] - matrix[8],
+    1 - matrix[0] - matrix[4] + matrix[8],
+  ];
+  const largest = diagonal.indexOf(Math.max(...diagonal));
+  const component = Math.sqrt(Math.max(0, diagonal[largest])) / 2;
+  const divisor = 4 * component;
+  const q = largest === 0
+    ? [component, (matrix[7] - matrix[5]) / divisor,
+      (matrix[2] - matrix[6]) / divisor, (matrix[3] - matrix[1]) / divisor]
+    : largest === 1
+      ? [(matrix[7] - matrix[5]) / divisor, component,
+        (matrix[1] + matrix[3]) / divisor, (matrix[2] + matrix[6]) / divisor]
+      : largest === 2
+        ? [(matrix[2] - matrix[6]) / divisor, (matrix[1] + matrix[3]) / divisor,
+          component, (matrix[5] + matrix[7]) / divisor]
+        : [(matrix[3] - matrix[1]) / divisor, (matrix[2] + matrix[6]) / divisor,
+          (matrix[5] + matrix[7]) / divisor, component];
+  const norm = Math.hypot(...q);
+  return q.map((value) => value / norm);
+}
+function nearestYaw(yaw, previous) {
+  const wrapped = Math.atan2(Math.sin(yaw), Math.cos(yaw));
+  return Math.abs(Math.abs(wrapped) - Math.PI) < 1e-14 &&
+    Math.abs(-wrapped - previous) < Math.abs(wrapped - previous)
+    ? -wrapped : wrapped;
+}
 function solve(relative, previous) {
-  const pitch = Math.asin(clamp(relative[6], -1, 1));
-  if (Math.abs(Math.cos(pitch)) > 1e-7) {
-    let yaw = Math.atan2(relative[3], relative[0]);
-    // At exactly a hard-stop endpoint both signed representations are feasible.
-    if (
-      Math.abs(Math.abs(yaw) - Math.PI) < 1e-12 &&
-      Math.abs(-yaw - previous.yaw) < Math.abs(yaw - previous.yaw)
-    )
-      yaw = -yaw;
-    return { yaw, pitch, roll: Math.atan2(relative[7], relative[8]) };
-  }
-  // At the pole only yaw+roll (down) or roll-yaw (up) is observable.
-  // Select the feasible pair nearest the previous joints instead of snapping yaw to zero.
-  const down = pitch > 0,
-    combination = down
-      ? Math.atan2(-relative[1], relative[4])
-      : Math.atan2(relative[1], relative[4]);
   const candidates = [];
-  for (let turn = -1; turn <= 1; turn++) {
-    const total = combination + turn * 2 * Math.PI;
-    const minYaw = Math.max(
-      -Math.PI,
-      down ? total - Math.PI / 4 : -total - Math.PI / 4,
-    );
-    const maxYaw = Math.min(
-      Math.PI,
-      down ? total + Math.PI / 4 : -total + Math.PI / 4,
-    );
-    if (minYaw > maxYaw) continue;
-    const yaw = clamp(previous.yaw, minYaw, maxYaw),
-      roll = down ? total - yaw : total + yaw;
+  const add = (yaw, pitch, roll) => {
     candidates.push({
-      yaw,
-      pitch,
-      roll,
-      cost: (yaw - previous.yaw) ** 2 + (roll - previous.roll) ** 2,
+      yaw: nearestYaw(yaw, previous.yaw),
+      pitch: clamp(pitch, ...GIMBAL_LIMITS.pitch),
+      roll: clamp(roll, ...GIMBAL_LIMITS.roll),
     });
+  };
+  const horizontal = Math.hypot(relative[0], relative[3]);
+  const pitch = Math.atan2(relative[6], horizontal);
+  const yaw = Math.atan2(relative[3], relative[0]);
+  const roll = Math.atan2(relative[7], relative[8]);
+  if (roll >= GIMBAL_LIMITS.roll[0] && roll <= GIMBAL_LIMITS.roll[1]) {
+    // Away from machine-zero poles the feasible Euler representation is exact.
+    if (horizontal > 32 * Number.EPSILON)
+      return { yaw: nearestYaw(yaw, previous.yaw), pitch, roll };
+    add(yaw, pitch, roll);
   }
-  candidates.sort((a, b) => a.cost - b.cost);
-  if (!candidates.length)
-    throw Error("Gimbal pole has no feasible angle representation");
-  const { yaw, roll } = candidates[0];
-  return { yaw, pitch, roll };
+
+  // A nonzero-error interior stationary rotation cannot be a minimum; fit the
+  // roll boundaries and pitch poles. Fixed-roll fitting is a 2x2 eigenproblem.
+  for (const fixedRoll of [...GIMBAL_LIMITS.roll, previous.roll]) {
+    const removed = multiply(relative, gimbalRotation({ yaw: 0, pitch: 0, roll: -fixedRoll }));
+    const [w, x, y, z] = rotationQuaternion(removed);
+    const a = w * w + z * z, b = -w * y + z * x, d = y * y + x * x;
+    const direction = Math.atan2(2 * b, a - d) / 2;
+    const halves = [-Math.PI / 4, Math.PI / 4, previous.pitch / 2];
+    for (const turn of [-Math.PI, 0, Math.PI]) {
+      const half = direction + turn;
+      if (half >= -Math.PI / 4 && half <= Math.PI / 4) halves.push(half);
+    }
+    for (const half of halves) {
+      const c = Math.cos(half), s = Math.sin(half);
+      const u = w * c - y * s, v = z * c + x * s;
+      add(Math.hypot(u, v) < 1e-15 ? previous.yaw : 2 * Math.atan2(v, u),
+        2 * half, fixedRoll);
+    }
+  }
+  // At either pitch pole, yaw +/- roll is the observable angle. Project the
+  // previous joints onto that line, with bounds, for minimum joint travel.
+  for (const sign of [-1, 1]) {
+    const polePitch = sign * Math.PI / 2;
+    const fixed = candidates.filter((value) => value.pitch === polePitch);
+    for (const reference of fixed) {
+      const combination = reference.yaw + sign * reference.roll;
+      for (const turn of [-1, 0, 1]) {
+        const total = combination + turn * 2 * Math.PI;
+        const minimum = Math.max(-Math.PI, total - Math.PI / 4);
+        const maximum = Math.min(Math.PI, total + Math.PI / 4);
+        if (minimum > maximum) continue;
+        const nextYaw = clamp((previous.yaw + total - sign * previous.roll) / 2,
+          minimum, maximum);
+        add(nextYaw, polePitch, sign * (total - nextYaw));
+      }
+    }
+  }
+  let best, bestError = Infinity, bestTravel = Infinity;
+  for (const candidate of candidates) {
+    const error = orientationError(gimbalRotation(candidate), relative);
+    const travel = AXES.reduce((sum, axis) => sum + (candidate[axis] - previous[axis]) ** 2, 0);
+    if (error < bestError - 1e-14 ||
+        (Math.abs(error - bestError) <= 1e-14 && travel < bestTravel)) {
+      best = candidate;
+      bestError = error;
+      bestTravel = travel;
+    }
+  }
+  return best;
 }
 export function validateGimbalState(value, quaternion) {
   object(
@@ -235,13 +290,17 @@ export function createGimbal(
       settings.mode === "body"
         ? settings.target
         : solve(multiply(transpose(nextBody), desiredWorld), actual);
+    const demandError = settings.mode === "ned"
+      ? orientationError(gimbalRotation(demand), multiply(transpose(nextBody), desiredWorld))
+      : 0;
     const nextActual = {},
       nextLimited = {},
       nextRateLimited = {};
     for (const axis of AXES) {
-      const bounded = clamp(demand[axis], ...GIMBAL_LIMITS[axis]);
-      nextLimited[axis] = Math.abs(bounded - demand[axis]) > 1e-10;
-      const delta = bounded - actual[axis],
+      nextLimited[axis] = demandError > 1e-10 && GIMBAL_LIMITS[axis].some(
+        (limit) => Math.abs(demand[axis] - limit) < 1e-12,
+      );
+      const delta = demand[axis] - actual[axis],
         travel = settings.maxRate[axis] * dt;
       nextActual[axis] = clamp(
         actual[axis] + clamp(delta, -travel, travel),
@@ -282,9 +341,7 @@ export function createGimbal(
             pitch: 0,
             roll: 0,
           });
-    actual = Object.fromEntries(
-      AXES.map((axis) => [axis, clamp(demand[axis], ...GIMBAL_LIMITS[axis])]),
-    );
+    actual = { ...demand };
     return advance(0, quaternion);
   }
   function snapshot() {

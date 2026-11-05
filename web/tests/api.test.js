@@ -11,7 +11,7 @@ test("vehicle operations require and preserve explicit vehicle IDs", async () =>
     },
     () => () => {},
   );
-  assert.equal(api.version, "2.3");
+  assert.equal(api.version, "2.4");
   await api.getState("one");
   const target = { altitude: 3 };
   await api.setTargets("two", target);
@@ -37,6 +37,28 @@ test("vehicle operations require and preserve explicit vehicle IDs", async () =>
     /vehicleId/,
   );
   assert.throws(() => api.getInspectionReport(), /vehicleId/);
+});
+
+test("automatic camera uses an explicit source and returns independent session state", async () => {
+  const calls = [];
+  const status = { active: false, saved: 2 };
+  const api = createFlightApi(async (command) => {
+    calls.push(command);
+    return status;
+  }, () => () => {});
+  const settings = { mode: "distance", interval: 5, maxFrames: 4 };
+  const returned = await api.startAutomaticCamera("one", settings);
+  settings.interval = 9;
+  returned.saved = 100;
+  await api.getAutomaticCamera();
+  await api.stopAutomaticCamera();
+  assert.deepEqual(calls, [
+    { type: "cameraAutoStart", vehicleId: "one", value: { mode: "distance", interval: 5, maxFrames: 4 } },
+    { type: "cameraAutoState" },
+    { type: "cameraAutoStop" },
+  ]);
+  assert.equal(status.saved, 2);
+  assert.throws(() => api.startAutomaticCamera(undefined, settings), /vehicleId/);
 });
 
 test("subscriptions isolate delivered state and can be removed", () => {

@@ -169,7 +169,7 @@ test("bridge record15 preserves two actual upward exposures at tick7 and indepen
   f.capture();
   const clean = validateRecording(f.record);
   assert.equal(RECORDING_VERSION, 15);
-  assert.equal(MODEL_VERSION, "0.10.0");
+  assert.equal(MODEL_VERSION, "0.11.0");
   assert.deepEqual(
     clean.samples.map((frame) => frame.tick),
     [0, 7, 20],

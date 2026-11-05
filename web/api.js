@@ -18,7 +18,7 @@ export function createFlightApi(request, onState) {
   const vehicleAction = (type) => (vehicleId) =>
     send({ type, vehicleId: id(vehicleId) });
   return Object.freeze({
-    version: "2.3",
+    version: "2.4",
     getWorldState: () => send({ type: "inspectWorld" }),
     getState: vehicleRead("inspect"),
     getSensors: vehicleRead("inspectSensors"),
@@ -37,6 +37,9 @@ export function createFlightApi(request, onState) {
     getCameraConfig: () => send({ type: "getCameraConfig" }),
     setCameraConfig: (value) => send({ type: "setCameraConfig", value }),
     captureCamera: vehicleRead("captureCamera"),
+    startAutomaticCamera: vehicleValue("cameraAutoStart"),
+    stopAutomaticCamera: () => send({ type: "cameraAutoStop" }),
+    getAutomaticCamera: () => send({ type: "cameraAutoState" }),
     captureInspection: (vehicleId, targetId) =>
       send({
         type: "captureInspection",

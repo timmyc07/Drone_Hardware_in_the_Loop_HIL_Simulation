@@ -1655,3 +1655,17 @@ select:disabled {
     align-self: start;
   }
 }
+
+.camera-auto-controls {
+  margin-block: 1rem;
+  min-width: 0;
+}
+
+.camera-auto-controls .feature-actions > label {
+  min-width: 0;
+}
+
+.camera-auto-controls input,
+.camera-auto-controls select {
+  max-width: 100%;
+}

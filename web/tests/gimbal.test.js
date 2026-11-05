@@ -99,13 +99,13 @@ test("NED stabilization reports physical roll saturation and orientation error i
   near(state.trackingErrorRad, Math.PI / 4);
   validateGimbalState(state, q);
 });
-test("both Euler poles preserve a feasible previous yaw and solve the observable roll combination", () => {
+test("both Euler poles minimize joint travel while preserving the observable roll combination", () => {
   for (const sign of [-1, 1]) {
     const g = createGimbal(settings("body", { yaw: 0.4, pitch: 0, roll: 0 }));
     g.set(settings("ned"));
     const q = quaternion(0, (sign * Math.PI) / 2, 0);
     const state = settle(g, q);
-    near(state.actual.yaw, 0.4);
+    near(state.actual.yaw, 0.2);
     assert.ok(state.trackingErrorRad < 1e-8);
     assert.ok(Object.values(state.actual).every(Number.isFinite));
     validateGimbalState(state, q);
@@ -114,8 +114,8 @@ test("both Euler poles preserve a feasible previous yaw and solve the observable
   g.set(settings("ned"));
   const q = quaternion(0, -Math.PI / 2, 0);
   const state = settle(g, q);
-  near(state.actual.yaw, Math.PI / 4);
-  near(state.actual.roll, -Math.PI / 4);
+  near(state.actual.yaw, 0.5);
+  near(state.actual.roll, -0.5);
   assert.ok(state.trackingErrorRad < 1e-8);
 });
 test("settings and snapshots are strict, cloned and atomic at every public trust boundary", () => {
@@ -185,4 +185,77 @@ test("opaque rollback restores NED joint history and the remembered body pose us
     g.update(0.01, quaternion(0.8, 0, 0.1)),
     reference.update(0.01, quaternion(0.8, 0, 0.1)),
   );
+});
+
+function rotationError(actual, expected) {
+  const chord = Math.hypot(...actual.map((value, i) => value - expected[i]));
+  return 2 * Math.asin(Math.min(1, chord / (2 * Math.sqrt(2))));
+}
+function achieved(q, actual) {
+  return multiply(bodyToNedMatrix(q), gimbalRotation(actual));
+}
+
+test("near-nadir ULP perturbations do not create roll-clipped two-radian pointing errors", () => {
+  const pair = [
+    [0.999997067768133, -1.3902470784241835e-7, 4.1641869872153523e-7, -0.002421663672546967],
+    [0.999997067768133, -1.3902470744330812e-7, 4.1641869892604954e-7, -0.0024216636725467957],
+  ];
+  const input = settings("ned", { yaw: 0, pitch: Math.PI / 2, roll: 0 });
+  const states = pair.map((q) => createGimbal(input, q).snapshot());
+  for (const [index, state] of states.entries()) {
+    assert.ok(state.trackingErrorRad < 1e-6);
+    near(rotationError(achieved(pair[index], state.actual), gimbalRotation(input.target)),
+      state.trackingErrorRad, 1e-12);
+    assert.equal(state.limited.pitch, true);
+  }
+  for (const axis of ["yaw", "pitch", "roll"])
+    near(states[0].actual[axis], states[1].actual[axis], 1e-9);
+  near(states[0].trackingErrorRad, states[1].trackingErrorRad, 1e-9);
+});
+
+test("bounded analytic fit is no worse than an independent coarse orientation grid or old scalar clipping", () => {
+  for (let index = 0; index < 24; index++) {
+    const q = quaternion(index * 0.71 - 2.8, Math.sin(index * 1.3) * 1.5,
+      Math.cos(index * 0.9) * 2.4);
+    const target = { yaw: Math.sin(index) * 2.8, pitch: Math.cos(index * 0.7) * 1.5,
+      roll: Math.sin(index * 0.3) * Math.PI / 4 };
+    const g = createGimbal(settings("ned", target), q);
+    const desired = gimbalRotation(target), state = g.snapshot();
+    const actualError = rotationError(achieved(q, state.actual), desired);
+    near(actualError, state.trackingErrorRad, 1e-12);
+    const relative = multiply(
+      [0, 3, 6, 1, 4, 7, 2, 5, 8].map((i) => bodyToNedMatrix(q)[i]), desired,
+    );
+    const clipped = {
+      yaw: Math.atan2(relative[3], relative[0]),
+      pitch: Math.atan2(relative[6], Math.hypot(relative[0], relative[3])),
+      roll: Math.max(-Math.PI / 4, Math.min(Math.PI / 4, Math.atan2(relative[7], relative[8]))),
+    };
+    assert.ok(actualError <= rotationError(achieved(q, clipped), desired) + 1e-12);
+    for (let yi = -6; yi <= 6; yi++)
+      for (let pi = -4; pi <= 4; pi++)
+        for (let ri = -2; ri <= 2; ri++) {
+          const trial = { yaw: yi * Math.PI / 6, pitch: pi * Math.PI / 8, roll: ri * Math.PI / 8 };
+          assert.ok(actualError <= rotationError(achieved(q, trial), desired) + 1e-12,
+            `case ${index}: analytic fit worse than grid at ${JSON.stringify(trial)}`);
+        }
+    validateGimbalState(state, q);
+  }
+});
+
+test("long near-nadir hover remains continuous across ULP-sized attitude perturbations", () => {
+  const input = settings("ned", { yaw: 0, pitch: Math.PI / 2, roll: 0 });
+  const a = createGimbal(input), b = createGimbal(input);
+  let previous = a.snapshot();
+  for (let tick = 0; tick < 60000; tick++) {
+    const q = quaternion(-0.005, 8e-7 * Math.cos(tick / 1000), 8e-7 * Math.sin(tick / 1000));
+    const perturbed = [...q]; perturbed[1] += 4e-16; perturbed[2] -= 2e-16;
+    const first = a.update(0.005, q), second = b.update(0.005, perturbed);
+    // Euler coordinates are ill-conditioned near a pole; compare the physical rotations.
+    assert.ok(rotationError(achieved(q, first.actual), achieved(perturbed, second.actual)) < 1e-9);
+    for (const axis of ["yaw", "pitch", "roll"])
+      assert.ok(Math.abs(first.actual[axis] - previous.actual[axis]) <= first.maxRate[axis] * 0.005 + 1e-12);
+    assert.ok(first.trackingErrorRad < 2e-6);
+    previous = first;
+  }
 });

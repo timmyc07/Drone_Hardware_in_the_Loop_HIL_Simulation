@@ -467,6 +467,22 @@
             /><button id="camera-clear">清除資料集</button>
           </div>
           <p id="camera-status" role="status">尚未拍攝</p>
+          <details class="camera-auto-controls">
+            <summary>自動拍攝</summary>
+            <p>只在內建模擬飛行中加入資料集；沿用目前雲台方向，暫停時等待。每秒最多2張；實際間隔可能增加，不補拍過去影像。</p>
+            <div class="feature-actions">
+              <label>拍攝方式<select id="camera-auto-mode">
+                <option value="time">依模擬時間</option>
+                <option value="distance">依水平移動距離</option>
+              </select></label>
+              <label><span id="camera-auto-interval-label">間隔（秒）</span><input id="camera-auto-interval" type="number" min="0.5" max="300" step="any" value="2" /></label>
+              <label>最多張數<input id="camera-auto-limit" type="number" min="1" max="30" step="1" value="10" /></label>
+              <button id="camera-auto-start" type="button">開始自動拍攝</button>
+              <button id="camera-auto-stop" type="button" disabled>停止自動拍攝</button>
+            </div>
+            <p id="camera-auto-status" role="status">尚未開始自動拍攝</p>
+          </details>
+
           <label
             >資料集畫面
             <select id="camera-frame-select">
