@@ -17,6 +17,8 @@ import { exportProximityData, PROXIMITY_BOUNDS } from "./proximity.js";
 import { createProximityPanel } from "./proximity-panel.js";
 import { createInstructorPanel } from "./instructor-panel.js";
 import { createNistPanel } from "./nist-panel.js";
+import { createOperatorHost } from "./operator-channel.js";
+import { validateGimbalSettings } from "./gimbal.js";
 import { nistReportToJson } from "./nist.js";
 import { createNistEvidenceVerifier } from "./nist-evidence.js";
 import { createNistTrainingWorld } from "./nist-setup.js";
@@ -109,6 +111,10 @@ let nistEpoch = 0;
 let nistBusy = false;
 let nistEvidenceSessionId = null;
 let nistVerifiedImages = new Set();
+let operatorHost = null;
+let operatorApplying = false;
+let operatorHadClient = false;
+let operatorMessage = '尚未啟用操作員連線。';
 let cameraBusy = false;
 let cameraDatasetBusy = false;
 let surveyApplying = false;
@@ -252,6 +258,8 @@ function sendWorker(command) {
       ...(command.requestId ? { requestId: command.requestId } : {}),
     };
   }
+  if (["reset", "resetWorld"].includes(command.type))
+    stopOperator('實驗已重設，請重新啟用操作員連線。');
   worker.postMessage(
     globalWorkerCommands.has(command.type)
       ? command
@@ -595,6 +603,7 @@ function setPlaying(value) {
   observeAutomaticCamera();
   instructorPanel?.refresh(instructorState);
   nistPanel?.refresh(nistState);
+  renderOperatorHost();
 }
 
 const targets = [
@@ -1095,6 +1104,7 @@ $("import-file").onchange = async (event) => {
       toast("已進入外部飛控模式，取消匯入紀錄。");
       return;
     }
+    stopOperator('已進入重播，操作員連線已關閉。');
     sendWorker({ type: "pause" });
     clearCameraPreview();
     if (!replay)
@@ -1181,6 +1191,7 @@ worker.onmessage = ({ data }) => {
   nistState = data.nist;
   if (data.message === "reset") nistEpoch++;
   if (data.message === "reset") instructorEpoch++;
+  if (data.message === "reset") stopOperator('實驗已重設，請重新啟用操作員連線。');
   if (!worldConfig.scene.geography)
     for (const item of worldConfig.vehicles)
       vehicleSensorOrigins.set(
@@ -1675,7 +1686,7 @@ document.addEventListener("visibilitychange", () => {
     releasePilot();
     $("camera-live").checked = false;
   }
-  if (document.hidden && running) {
+  if (document.hidden && running && !(operatorHost && $("operator-background").checked && !replay && !externalActive)) {
     if (externalActive) {
       if (hilState?.groundStation?.owner !== "gcs") sendHilCommand("pause");
       return;
@@ -1748,7 +1759,7 @@ function missionContext() {
         ),
     cameraConfig,
     cameraAvailable: automaticCameraContext().available,
-    cameraBlocked: surveyApplying || cameraBusy || cameraDatasetBusy ||
+    cameraBlocked: surveyApplying || cameraBusy || cameraDatasetBusy || operatorApplying ||
       !!automaticCamera?.getState().active || !!automaticCamera?.getState().pending,
   };
 }
@@ -2469,6 +2480,7 @@ for (const button of document.querySelectorAll("[data-workspace]"))
       "training",
       "instructor",
       "nist",
+      "operator",
       "scene",
       "inspection",
       "sensors",
@@ -2480,6 +2492,7 @@ for (const button of document.querySelectorAll("[data-workspace]"))
       button.dataset.workspace === "catalog";
     instructorPanel.refresh(instructorState);
     nistPanel?.refresh(nistState);
+    renderOperatorHost();
   };
 const category = $("catalog-category"),
   status = $("catalog-status");
@@ -3297,7 +3310,7 @@ function clearCameraPreview() {
 }
 function updateCameraStatus() {
   const automatic = automaticCamera?.getState();
-  const reserved = automatic?.active || automatic?.pending || surveyApplying;
+  const reserved = automatic?.active || automatic?.pending || surveyApplying || operatorApplying;
   const full =
     cameraDataset.length >= CAMERA_DATASET_MAX_FRAMES ||
     cameraDatasetBytes + cameraConfig.width * cameraConfig.height * 9 >
@@ -3341,11 +3354,11 @@ function showCameraFrame(frame) {
     `來源載具 ${frame.sourceVehicleId} · 影格機型 ${{ quadrotor: "四旋翼", hexarotor: "六旋翼", octorotor: "八旋翼", fixedwing: "固定翼", vtol: "VTOL" }[frame.airframe]} · 模擬時間 ${frame.time.toFixed(3)} s · NED 位置 ${pose.positionNed.map((v) => v.toFixed(2)).join(" / ")} m · 機體四元數 ${pose.bodyQuaternionWxyz.map((v) => v.toFixed(3)).join(" / ")} · 拍攝時雲台偏航 / 俯仰 / 橫滾 ${["yaw", "pitch", "roll"].map((axis) => (frame.gimbal.actual[axis] * DEG).toFixed(1)).join(" / ")}° · 焦距 fx/fy ${intrinsics.fx.toFixed(1)} / ${intrinsics.fy.toFixed(1)} px · 主點 cx/cy ${intrinsics.cx.toFixed(1)} / ${intrinsics.cy.toFixed(1)} px · 水平視角 ${intrinsics.horizontalFovDeg.toFixed(1)}° · 景深範圍 ${frame.nearM.toFixed(2)}–${frame.farM.toFixed(1)} m`;
   updateCameraStatus();
 }
-async function captureCameraFrame(vehicleId = activeVehicleId) {
+async function captureCameraFrame(vehicleId = activeVehicleId, isCurrent = null) {
   if (surveyApplying) throw new Error("測繪拍攝設定正在套用，請稍候。");
   if (cameraDatasetBusy) throw new Error("相機資料集正在處理，請稍候。");
   if (replay) throw new Error("重播時無法拍攝新影像。");
-  if (!externalActive && vehicleId !== activeVehicleId)
+  if (!externalActive && vehicleId !== activeVehicleId && !isCurrent)
     throw new Error("請先選擇要拍攝的飛行器。");
   if (
     !scene ||
@@ -3353,9 +3366,10 @@ async function captureCameraFrame(vehicleId = activeVehicleId) {
     (externalActive && latest.controlSource !== "external")
   )
     throw new Error("相機尚未準備完成。");
-  if (cameraBusy) throw new Error("相機正在拍攝，請稍候。");
+  if (cameraBusy || operatorApplying) throw new Error("相機或雲台正在處理，請稍候。");
+  if (isCurrent && !isCurrent()) throw new Error('操作員連線已失效。');
   cameraBusy = true;
-  const epoch = cameraEpoch;
+  const epoch = cameraEpoch, external = externalActive;
   updateCameraStatus();
   try {
     const frozen = externalActive ? null : structuredClone(worldState);
@@ -3379,7 +3393,7 @@ async function captureCameraFrame(vehicleId = activeVehicleId) {
         scene.updateWorld(worldState, activeVehicleId, 0);
     }
     const frame = await pending;
-    if (epoch !== cameraEpoch || replay)
+    if ((isCurrent ? !isCurrent() : epoch !== cameraEpoch) || replay || external !== externalActive)
       throw new Error("實驗已切換，本次影像已取消。");
     return frame;
   } finally {
@@ -3509,7 +3523,7 @@ async function captureNistFrame(vehicleId, slotId) {
 }
 async function captureEvidenceFrame(vehicleId, targetId, isNist) {
   if (
-    replay || externalActive || inspectionBusy || cameraBusy || cameraDatasetBusy || surveyApplying ||
+    replay || externalActive || inspectionBusy || cameraBusy || cameraDatasetBusy || surveyApplying || operatorApplying ||
     automaticCamera?.getState().active || automaticCamera?.getState().pending
   )
     throw new Error("目前無法拍攝巡檢影像");
@@ -3782,7 +3796,7 @@ function automaticCameraContext() {
   return {
     available: !!scene && !!latest && !!worldState && !replay && !externalActive &&
       !["crashed", "failsafe"].includes(latest.status),
-    busy: cameraBusy || cameraDatasetBusy || surveyApplying,
+    busy: cameraBusy || cameraDatasetBusy || surveyApplying || operatorApplying,
     reason: replay
       ? "重播時不可開始新拍攝。"
       : externalActive
@@ -3875,7 +3889,7 @@ function nistContext() {
     worldTick: worldState?.tick ?? 0, landed: latest?.status === 'landed', epoch: nistEpoch,
     reason: replay ? '重播可檢視既有紀錄，不能新增操作。' : externalActive ? '請切回內建模擬。'
       : !supported ? '此練習需要多旋翼或懸停 VTOL。' : !available || storageLimited || worldTermination || worldState.tick >= 360000 ? '請先重設已終止的實驗。' : '',
-    canCapture: available && !storageLimited && !worldTermination && worldState.tick < 360000 && !!scene && activeVehicleId === nistState?.vehicleId && !cameraBusy && !nistBusy && !cameraDatasetBusy && !surveyApplying &&
+    canCapture: available && !storageLimited && !worldTermination && worldState.tick < 360000 && !!scene && activeVehicleId === nistState?.vehicleId && !cameraBusy && !nistBusy && !cameraDatasetBusy && !surveyApplying && !operatorApplying &&
       !automaticCamera?.getState().active && !automaticCamera?.getState().pending &&
       cameraDataset.length < CAMERA_DATASET_MAX_FRAMES && cameraDatasetBytes + cameraConfig.width * cameraConfig.height * 9 <= CAMERA_DATASET_MAX_BYTES,
     evidence: { required: captures.length, verified, missing: captures.length - verified, retained: captures.filter(c => retainedIds.has(c.captureId)).length },
@@ -3933,6 +3947,96 @@ nistPanel = createNistPanel({
   },
   verifyDatasets: verifyNistDatasets, getContext: nistContext,
 });
+
+function operatorContext() {
+  const automatic = automaticCamera?.getState();
+  const reason = typeof BroadcastChannel === 'undefined' ? '此瀏覽器不支援操作員連線。'
+    : !scene || !worldState ? '相機與世界尚未準備完成。'
+    : replay ? '重播時不能控制操作員相機。'
+    : externalActive ? '操作員站目前僅支援內建模擬。'
+    : storageLimited || worldTermination || worldState.tick >= 360000 ? '實驗已停止，請先匯出紀錄並重設。'
+    : cameraBusy || inspectionBusy || nistBusy || cameraDatasetBusy || surveyApplying || operatorApplying || automatic?.active || automatic?.pending ? '相機或雲台正由其他操作使用，請稍候。' : '';
+  return {
+    available: !reason, reason, worldTick: worldState?.tick ?? 0,
+    time: worldState?.time ?? 0, running,
+    vehicles: (worldState?.vehicles || []).map(v => ({
+      id: v.id, name: v.name, airframe: v.snapshot.airframe, status: v.snapshot.status,
+      positionNed: [...v.snapshot.position], gimbal: structuredClone(v.snapshot.gimbal),
+    })),
+  };
+}
+function renderOperatorHost() {
+  const status = operatorHost?.getState(), context = operatorContext();
+  $('operator-start').disabled = !!operatorHost || !context.available;
+  $('operator-stop').disabled = !operatorHost;
+  const vehicle = context.vehicles.find(v => v.id === status?.vehicleId);
+  $('operator-host-status').textContent = operatorHost
+    ? `${status.clientId ? `操作員已連線${vehicle ? ` · ${vehicle.name}（${vehicle.id}）` : ' · 尚未綁定載具'}` : '連線已啟用，等待操作員加入。'}${context.reason ? ` · ${context.reason}` : ''}`
+    : operatorMessage + (context.reason ? ` ${context.reason}` : '');
+}
+function stopOperator(message = '操作員連線已關閉。') {
+  const previous = operatorHost;
+  operatorHost = null;
+  operatorHadClient = false;
+  if (previous) operatorMessage = message;
+  previous?.close();
+  $('operator-link').hidden = true;
+  $('operator-link').removeAttribute('href');
+  if (previous && document.hidden && running && !replay && !externalActive)
+    sendWorker({ type: 'pause' });
+  renderOperatorHost();
+}
+$('operator-start').onclick = () => {
+  try {
+    const context = operatorContext();
+    if (!context.available || operatorHost) throw new Error(context.reason || '操作員連線已啟用。');
+    const sessionId = crypto.randomUUID();
+    const owner = createOperatorHost({
+      sessionId, getContext: operatorContext,
+      capture: vehicleId => {
+        const current = operatorContext();
+        if (operatorHost !== owner || !current.available) throw new Error(current.reason || '操作員連線已失效。');
+        return captureCameraFrame(vehicleId, () => operatorHost === owner && !replay && !externalActive);
+      },
+      applyGimbal: async (vehicleId, command) => {
+        const current = operatorContext();
+        const vehicle = current.vehicles.find(v => v.id === vehicleId);
+        if (operatorHost !== owner || !current.available || !vehicle) throw new Error(current.reason || '指定載具已失效。');
+        const settings = validateGimbalSettings({ ...command, maxRate: vehicle.gimbal.maxRate });
+        operatorApplying = true;
+        updateCameraStatus();
+        try {
+          const value = await requestApi({ type: 'operatorGimbal', vehicleId, value: settings });
+          return { gimbal: validateGimbalSettings({ mode: value.snapshot.gimbal.mode, target: value.snapshot.gimbal.target, maxRate: value.snapshot.gimbal.maxRate }), appliedWorldTick: value.world.tick };
+        } finally {
+          operatorApplying = false;
+          updateCameraStatus();
+        }
+      },
+      onChange: status => {
+        if (operatorHost !== owner) return;
+        if (operatorHadClient && !status.clientId && document.hidden && running && !replay && !externalActive)
+          sendWorker({ type: 'pause' });
+        operatorHadClient = !!status.clientId;
+        renderOperatorHost();
+      },
+    });
+    operatorHost = owner;
+    operatorMessage = '';
+    const link = new URL('operator.html', window.location.href);
+    link.hash = new URLSearchParams({ session: sessionId }).toString();
+    $('operator-link').href = link.href;
+    $('operator-link').hidden = false;
+    renderOperatorHost();
+  } catch (error) { toast(error.message); }
+};
+$('operator-stop').onclick = () => stopOperator();
+$('operator-background').onchange = () => {
+  if (!$('operator-background').checked && document.hidden && running && !replay && !externalActive)
+    sendWorker({ type: 'pause' });
+};
+window.addEventListener('pagehide', () => stopOperator('主模擬已離開。'), { once: true });
+renderOperatorHost();
 
 const isLocalCompanion = isCompanionOrigin(window.location);
 $("hil-remote-notice").hidden = isLocalCompanion;
@@ -4263,6 +4367,7 @@ $("hil-start").onclick = async () => {
       )
         return;
     }
+    stopOperator('已切換外部飛控，操作員連線已關閉。');
     const paused = await requestApi({ type: "pause" });
     if (replay) throw new Error("已進入紀錄重播，請先返回內建模擬。");
     internalSaved = {

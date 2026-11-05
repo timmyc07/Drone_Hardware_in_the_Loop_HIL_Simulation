@@ -11,7 +11,7 @@ test("vehicle operations require and preserve explicit vehicle IDs", async () =>
     },
     () => () => {},
   );
-  assert.equal(api.version, "2.7");
+  assert.equal(api.version, "2.8");
   await api.getState("one");
   const target = { altitude: 3 };
   await api.setTargets("two", target);
@@ -103,6 +103,20 @@ test("subscriptions isolate delivered state and can be removed", () => {
   assert.equal(received.world.tick, 9);
   unsubscribe();
   assert.equal(removed, true);
+});
+
+test("operator gimbal commands retain their source and clone settings and replies", async () => {
+  const calls = [], reply = { world: { tick: 20 } };
+  const api = createFlightApi(async command => { calls.push(command); return reply; }, () => () => {});
+  const settings = { mode: "ned", target: { yaw: 0.2, pitch: 0.4, roll: 0 }, maxRate: { yaw: 1, pitch: 1, roll: 1 } };
+  const response = await api.setOperatorGimbal("B.2", settings);
+  settings.target.yaw = 1; response.world.tick = 99;
+  assert.equal(calls[0].type, "operatorGimbal");
+  assert.equal(calls[0].vehicleId, "B.2");
+  assert.equal(calls[0].value.target.yaw, 0.2);
+  assert.equal(reply.world.tick, 20);
+  assert.throws(() => api.setOperatorGimbal(), /vehicleId/);
+  assert.throws(() => api.setOperatorGimbal("bad id", settings), /vehicleId/);
 });
 
 test("NIST commands require explicit vehicle IDs and isolate values and reports", async () => {

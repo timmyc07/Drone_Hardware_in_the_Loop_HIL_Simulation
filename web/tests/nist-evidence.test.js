@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, writeFile, rm, truncate } from 'node:fs/promises';
+import { writeFile, rm, truncate } from 'node:fs/promises';
+import { createLocalDirectory } from '../../companion/local-directory.js';
 import { spawnSync } from 'node:child_process';
 import { createWorld, defaultWorldConfig } from '../world.js';
 import { createNistSession, nistReportToJson } from '../nist.js';
@@ -42,7 +43,7 @@ test('bad hash or pose rejects the entire volume without partial matches', async
 });
 test('file verifier handles separate bounded volumes, missing evidence and missing files', async t => {
   const { images, report } = await fixture();
-  const dir = await mkdtemp(`${process.cwd()}/local/tests/nist-evidence-`); t.after(() => rm(dir, { recursive: true, force: true }));
+  const dir = await createLocalDirectory('nist-evidence-'); t.after(() => rm(dir, { recursive: true, force: true }));
   const reportPath = `${dir}/report.json`, a = `${dir}/a.json`, b = `${dir}/b.json`;
   await Promise.all([writeFile(reportPath, report), writeFile(a, cameraDatasetToJson([images[0]])), writeFile(b, cameraDatasetToJson([images[1]]))]);
   assert.equal((await verifyNistFiles(reportPath, [a, b])).complete, true);

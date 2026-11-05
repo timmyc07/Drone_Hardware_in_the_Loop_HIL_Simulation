@@ -1,0 +1,238 @@
+{
+  "appVersion": "0.31.0",
+  "date": "2026-11-05",
+  "formats": {
+    "recording": 18,
+    "model": "0.12.0",
+    "scene": 7,
+    "api": "2.8",
+    "cameraDataset": 5,
+    "csvColumns": 199,
+    "operatorProtocol": 1
+  },
+  "scope": "Independent same-origin browser sensor operator page. One authoritative host Worker and renderer, independent vehicle binding, genuine RGB/depth/classes, bounded gimbal commands and acknowledgements; no remote network service or account-role authentication.",
+  "tests": {
+    "command": "npm test",
+    "passed": 523,
+    "failed": 0,
+    "durationMs": 90714.597458,
+    "log": "local/evidence/operator-v031/full-tests-release-final.log"
+  },
+  "build": {
+    "passed": true,
+    "command": "npm run build",
+    "viteVersion": "8.3.5",
+    "htmlEntries": [
+      "dist/index.html",
+      "dist/operator.html"
+    ],
+    "newDependencies": false
+  },
+  "browser": {
+    "dualStation": {
+      "passed": true,
+      "pilotSelected": "C.3",
+      "operatorTelemetry": "最新遙測 · 感測器六旋翼 (B.2) · hexarotor · flying · NED -0.00 / 6.00 / -2.00 m · tick 2421 · 模擬時間 12.105 s · 暫停",
+      "operatorExposure": "曝光 tick 2421 · 模擬時間 12.105 s · 載具 B.2 · NED -0.00 / 6.00 / -2.00 m · 雲台實際 yaw / pitch / roll 45.0 / 35.0 / -0.0° · 320 × 240 · capture 5bcc0944-eb1c-4b30-bad2-ead3f301f74a",
+      "gimbalAck": "已套用於 tick 2021 · NED · 目標 yaw / pitch / roll 45.0 / 35.0 / 0.0° · 模擬暫停，實際姿態需時間推進後才會改變",
+      "pilotVisibility": {
+        "hidden": false,
+        "visibility": "visible"
+      },
+      "operatorVehicle": "B.2",
+      "operatorAirframe": "hexarotor",
+      "otherAircraft": [
+        "quadrotor",
+        "octorotor"
+      ],
+      "sourceFrame": {
+        "recordVersion": 18,
+        "sourceVehicle": "B.2",
+        "airframe": "hexarotor",
+        "frameTick": 2421,
+        "width": 320,
+        "height": 240,
+        "poseAndGimbalExactlyMatchNativeRecordedState": true,
+        "strictDerivedIntrinsicsEquality": false,
+        "derivedIntrinsicsDifferences": [
+          {
+            "path": "intrinsics.verticalFovDeg",
+            "browser": 73.73979529168804,
+            "node": 73.73979529168803,
+            "difference": 1.4210854715202004e-14
+          }
+        ],
+        "existingVersion5MetadataTolerance": 1e-12,
+        "metadataValidated": true,
+        "operatorEvents": [
+          {
+            "type": "operatorGimbal",
+            "vehicleId": "B.2",
+            "tick": 2021,
+            "value": {
+              "mode": "ned",
+              "target": {
+                "yaw": 0.7853981633974483,
+                "pitch": 0.6108652381980153,
+                "roll": 0
+              },
+              "maxRate": {
+                "yaw": 1.5707963267948966,
+                "pitch": 1.5707963267948966,
+                "roll": 1.5707963267948966
+              }
+            }
+          }
+        ],
+        "otherVehiclesGimbalYawUnchanged": true,
+        "pixelsSha256": "c241b8d758daa486559ecad65db20bb71a7d5261430c9a3050c0f88cdd05764b",
+        "depthSamples": 76800,
+        "classSamples": 76800,
+        "rgbBytes": 307200
+      },
+      "independentReplay": {
+        "passed": true,
+        "vehicles": 3,
+        "frames": 245,
+        "ticks": 2421,
+        "simSeconds": 12.105000000000492,
+        "maximum": {
+          "positionM": 0,
+          "quaternion": 0,
+          "motors": 0,
+          "allState": 1.1102230246251565e-16,
+          "sensors": 7.105427357601002e-15
+        }
+      }
+    },
+    "threeImageViews": true,
+    "liveFrameUpdate": "local/evidence/operator-v031/live-frame-verification.json",
+    "singleClient": {
+      "status": "已有另一位操作員使用連線",
+      "bindEnabled": false,
+      "captureEnabled": false
+    },
+    "newSessionIsolation": {
+      "freshSession": true,
+      "oldClient": "連線逾時，資訊可能過期",
+      "oldCaptureEnabled": false,
+      "newClient": "已連線",
+      "newExposure": "曝光 tick 2421 · 模擬時間 12.105 s · 載具 B.2 · NED -0.00 / 6.00 / -2.00 m · 雲台實際 yaw / pitch / roll 45.0 / 35.0 / -0.0° · 320 × 240 · capture c7d17ad5-9642-4079-8fe7-cf9be6739e0e"
+    },
+    "explicitHostClose": {
+      "connection": "連線已關閉",
+      "frame": "已顯示影像 · 影像已過期，等待重新綁定載具",
+      "captureEnabled": false,
+      "applyEnabled": false
+    },
+    "replayClosesOperator": {
+      "connection": "連線已關閉",
+      "frame": "已顯示影像 · 影像已過期，等待重新綁定載具",
+      "captureEnabled": false,
+      "applyEnabled": false,
+      "hostReplay": "影格 1 / 245 · 0.000 秒（範圍 0.000–12.105 秒）"
+    },
+    "recordRoundTrip": {
+      "exactParsedJsonRoundTrip": true,
+      "version": 18,
+      "frames": 245,
+      "operatorEvents": 1
+    },
+    "operatorEventNavigation": {
+      "details": "事件 1 / 1：操作員雲台設定 · 10.105 秒 · 感測器六旋翼（B.2）",
+      "position": "影格 204 / 245 · 10.105 秒（範圍 0.000–12.105 秒）"
+    },
+    "productionArtifactLocalPreview": true,
+    "responsive": {
+      "bodyWidth": 390,
+      "documentWidth": 390,
+      "viewport": 390,
+      "horizontalOverflow": false,
+      "viewportRestored": true,
+      "screenshot": "local/evidence/operator-v031/operator-mobile-390.png"
+    },
+    "finalScreenshot": "local/evidence/operator-v031/operator-release-preview.png"
+  },
+  "protocolCoverage": [
+    "Strict message shapes, bounded monotonic sequence IDs, session/client/binding validation and forbidden command rejection",
+    "Actual native BroadcastChannel structured clone of all three typed pixel buffers",
+    "Five supported airframes and valid dotted vehicle IDs; unknown vehicle binding rejection",
+    "One active operator, 500ms host capture rate gate, one pending frame and gimbal command",
+    "Pending frame and acknowledgement dropped on rebind, timeout, close or expired owner",
+    "No automatic resend of unknown gimbal outcomes; unrelated successful images do not erase unknown outcomes",
+    "Heartbeat loss retains explicitly stale image and requires rebinding; explicit close clears timers/channels permanently",
+    "Canonical gimbal settings and bounded actual telemetry validated before accepting a context"
+  ],
+  "workerCoverage": [
+    "Canonical operatorGimbal source event, explicit vehicle identity and independent controlled aircraft",
+    "Frozen inspection/NIST lease and hard event/byte cap rejection without running/lease/state mutation",
+    "All gimbal epochs, same-tick exposure event order, strict record18 parsing and native replay mappings",
+    "Real thirty-minute 360000-step, 96MiB and ten-minute NIST capacity gates retained in the full suite"
+  ],
+  "knownValidationDifferences": {
+    "derivedIntrinsics": [
+      {
+        "path": "intrinsics.verticalFovDeg",
+        "browser": 73.73979529168804,
+        "node": 73.73979529168803,
+        "difference": 1.4210854715202004e-14
+      }
+    ],
+    "note": "One vertical field-of-view value differs by 1 ULP between browser and Node atan implementations; the existing version5 1e-12 metadata validation tolerance is unchanged. Pose, body quaternion, gimbal state and optical transform match the recorded native state exactly."
+  },
+  "backgroundExecution": {
+    "defaultAllowed": false,
+    "explicitUiOptIn": true,
+    "hiddenDisconnectPausePathStaticallyReviewed": true,
+    "nativeHiddenPagePauseEndToEndTested": false,
+    "observedPilotVisibility": {
+      "hidden": false,
+      "visibility": "visible"
+    },
+    "note": "The test browser reports pilot document.visible while both pages are operated. Native hidden-page scheduling/pause behavior was not claimed as end-to-end verified; no real-time guarantees."
+  },
+  "regressionFix": "Fresh-checkout NIST file verifier test now uses the existing project-local temporary-directory helper; no pre-created local/tests directory is required.",
+  "capabilityCatalog": {
+    "total": 72,
+    "statuses": {
+      "implemented": 8,
+      "partial": 56,
+      "external": 8
+    }
+  },
+  "limits": [
+    "Same origin/profile/storage partition only; cross-device/network operator service remains absent.",
+    "One operator per host session, built-in simulation only; no native SITL sensor-operator control.",
+    "Protocol is a convenience boundary, not authentication or a security isolation barrier.",
+    "Preview retains only the latest frame; export creates a single-frame dataset. No recorded video stream or remote persistence.",
+    "Background execution and loss handling depend on browser scheduling and are not hard real-time or hardware verified.",
+    "Recordings1-17 are rejected; no legacy compatibility adapter.",
+    "Market-wide civilian and military simulator capability objective remains incomplete."
+  ],
+  "sourceHashes": {
+    "web/operator-channel.js": "770522cbcff729243f97f5092b899b4476c31663b81c9930ac3d9e0809e11445",
+    "web/operator.js": "e6ef6460c39ea043fee2a2f4bd18fc2c57301961bf9a08235c18ca9bef666d8f",
+    "web/operator.html": "15b6594cba0a77fb3781b3269bcf2357efff835066100468d94457e5b62583db",
+    "web/operator.css": "2e39bf557b1ff7969792935504880a948aa38d508b9b3787118484734aa6fbe7",
+    "web/main.js": "7491ef2fd499e58795ad6799df92ffb5703b3cddc6539cd26a019bce80e35e89",
+    "web/api.js": "5c6e573d6343f2398246c148c3346bfcf421010b644920f854387bc9967e0c50",
+    "web/worker.js": "cf74a6e74425219fc5ffc7eccd473026f6123952e3f8f980bb2456a29bfacdbe",
+    "web/recording.js": "2851c25376072506a89cc3b09cab02624b086ff46c1aa4271ba8c13db3fc06fb",
+    "web/replay-controls.js": "4018b0257ae8d5699328b5e834b45637c6874dea1bcb85841af1a1e7c73b5e41",
+    "tools/replay-world.mjs": "cd7952e2d37196234f09d252c2659caec4e1ab092152a99f251adbe77a19ab66",
+    "vite.config.js": "51c2ff8ce399f368cb96aeda342a1def32c01a1ee69edc9ae4fb39383d78aaf7"
+  },
+  "artifactSha256": {
+    "local/evidence/operator-v031/operator-world-first.json": "2f47e4af6d7465481541e0ad67640410e6f73dded76ae768ec017b688675a4b4",
+    "local/evidence/operator-v031/operator-world-reexported.json": "2f47e4af6d7465481541e0ad67640410e6f73dded76ae768ec017b688675a4b4",
+    "local/evidence/operator-v031/operator-B2-camera.json": "457ed0786a2e4353a3fdce7c611455d9a5e51189b86cab40fd57addea614fc8e",
+    "local/evidence/operator-v031/operator-B2-final-camera.json": "99bcdcfe40f079c8355e601056877ea5bf5672f3a328a466aa677dbdc18788da",
+    "local/evidence/operator-v031/operator-B2-final-camera.png": "23e3c5784cd977b843cdf0efd7d6910ae392e7be7a0b2d63b8252915c95639ad",
+    "local/evidence/operator-v031/frame-source-verification.json": "ee28da552ae12688ed952aeb8d46dc4ab013d2ba9a36622b38e18cd76da4396d",
+    "local/evidence/operator-v031/dual-station-verification.json": "3ba2a06e779c8592692e66bfd6df01906b43a9f02ab4eee8388181fa345e21a8",
+    "local/evidence/operator-v031/live-frame-verification.json": "f578a28451e78434513e7d367771386bbaa6b4479249569e9a1af8b159bf26bd",
+    "local/evidence/operator-v031/host-close-final-verification.json": "3de3971e555bff9b03886a0d92d10a1a9c2f9de2cef38abb067e79f416110127",
+    "local/evidence/operator-v031/replay-close-verification.json": "852ead399b994e935fe017b1b185ebc113e04fa3ee251213be315f0110a78344",
+    "local/evidence/operator-v031/operator-event-replay-verification.json": "70bae03b447ec312cb08bc31e6e5a74293fb6722ffeeb2f5e8d2a5b88e4920f8"
+  }
+}

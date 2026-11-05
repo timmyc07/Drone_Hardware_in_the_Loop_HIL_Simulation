@@ -67,9 +67,23 @@
         ><button data-workspace="scene">場景編輯</button
         ><button data-workspace="inspection">設施巡檢</button
         ><button data-workspace="sensors">感測器</button
+        ><button data-workspace="operator">操作員站</button
         ><button data-workspace="hil">飛控介接</button
         ><button data-workspace="catalog">功能全覽</button>
       </nav>
+      <section id="operator-workspace" class="panel workspace-extra" hidden>
+        <h2>操作員站 <span>SENSOR OPERATOR</span></h2>
+        <p>操作員在獨立分頁查看主模擬的相機影像並控制指定載具的雲台；飛行員可繼續控制其他載具。每次連線僅接收一位操作員。</p>
+        <p>限同一瀏覽器及同源頁面；不支援跨裝置，也不是帳號權限隔離。重設實驗、匯入重播或切換外部飛控會關閉連線。</p>
+        <div class="feature-actions">
+          <button id="operator-start" type="button">啟用操作員連線</button>
+          <a id="operator-link" class="button secondary" target="_blank" rel="noopener" hidden>開啟操作員分頁 ↗</a>
+          <button id="operator-stop" type="button" disabled>關閉操作員連線</button>
+        </div>
+        <label class="operator-background"><input id="operator-background" type="checkbox">操作員站啟用時，允許主模擬在背景繼續運行</label>
+        <p>預設切到背景仍會暫停；勾選後不保證實時速度。操作員失聯時，背景模擬會暫停；返回主站後可手動繼續。</p>
+        <p id="operator-host-status" role="status">尚未啟用操作員連線。</p>
+      </section>
       <section id="mission-workspace" class="panel workspace-extra" hidden>
         <h2>任務規劃 <span>MISSION PLANNER</span></h2>
         <p>

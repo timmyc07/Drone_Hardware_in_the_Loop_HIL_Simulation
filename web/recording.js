@@ -32,7 +32,7 @@ import {
   validateGimbalState,
 } from "./gimbal.js";
 
-export const RECORDING_VERSION = 17;
+export const RECORDING_VERSION = 18;
 export const MODEL_VERSION = "0.12.0";
 const MODES = ["attitude", "position", "mission", "rtl", "land", "takeoff"];
 const TAKEOFF_PHASES = [
@@ -518,6 +518,7 @@ function event(input, sim, initialScene) {
       result.receipt = structuredClone(object(input.receipt));
       break;
     }
+    case "operatorGimbal":
     case "gimbal":
       result.value = validateGimbalSettings(input.value);
       break;
@@ -836,6 +837,7 @@ const VEHICLE_EVENTS = [
   "gust",
   "mode",
   "gimbal",
+  "operatorGimbal",
   "transition",
   "position",
   "mission",
@@ -1015,7 +1017,7 @@ export function validateRecording(value) {
   object(value);
   if (value.version !== RECORDING_VERSION)
     throw new Error(
-      "Unsupported recording version: version 17 required; legacy recordings are not supported",
+      "Unsupported recording version: version 18 required; legacy recordings are not supported",
     );
   exactKeys(
     value,
@@ -1177,8 +1179,8 @@ export function validateRecording(value) {
           c.trainingEpochTime = e.time;
           c.previousTutorial = undefined;
         }
-        if (["mission", "gimbal", "mode"].includes(e.type))
-          c.setup[e.type] = e.value;
+        if (["mission", "gimbal", "operatorGimbal", "mode"].includes(e.type))
+          c.setup[e.type === "operatorGimbal" ? "gimbal" : e.type] = e.value;
         if (e.type === "mission") c.routeText = JSON.stringify(e.value);
         if (e.type === "sensorConfig") {
           c.setup.sensors = e.value;
@@ -1359,7 +1361,7 @@ export function validateRecording(value) {
   const evidenceIds = new Set();
   const nistGimbals = new Map(world.vehicles.map(v => [v.id, structuredClone(v.setup.gimbal)]));
   for (const e of events) {
-    if (e.type === "gimbal") nistGimbals.set(e.vehicleId,e.value);
+    if (["gimbal", "operatorGimbal"].includes(e.type)) nistGimbals.set(e.vehicleId,e.value);
     if (["inspection","nistCapture"].includes(e.type)) {
       if (evidenceIds.has(e.value.captureId)) throw new Error("拍攝識別碼重複");
       evidenceIds.add(e.value.captureId);
@@ -1432,8 +1434,8 @@ export function recordingWorldAt(record, index) {
     }
     if (e.vehicleId) {
       const v = config.vehicles.find((v) => v.id === e.vehicleId);
-      if (["mission", "gimbal", "mode", "training"].includes(e.type))
-        v.setup[e.type] = e.value;
+      if (["mission", "gimbal", "operatorGimbal", "mode", "training"].includes(e.type))
+        v.setup[e.type === "operatorGimbal" ? "gimbal" : e.type] = e.value;
       if (e.type === "sensorConfig") v.setup.sensors = e.value;
     }
   }
@@ -1471,7 +1473,7 @@ export function recordingNistState(record, index) {
   for (const event of record.events) {
     if (event.tick > tick) break;
     if (event.type === "scene") scene = event.value;
-    if (event.type === "gimbal") gimbals.set(event.vehicleId,event.value);
+    if (["gimbal", "operatorGimbal"].includes(event.type)) gimbals.set(event.vehicleId,event.value);
     if (NIST_EVENT_TYPES.includes(event.type)) session.apply(event, nistExposureFrame(frames.get(event.tick),event,gimbals.get(event.vehicleId)), scene);
   }
   return session.getState(tick);

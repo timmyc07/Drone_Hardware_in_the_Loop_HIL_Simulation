@@ -1699,3 +1699,7 @@ select:disabled {
 #nist-landing button { margin: 0 .4rem .4rem 0; }
 #nist-image { display: block; width: min(100%, 640px); height: auto; image-rendering: pixelated; }
 #nist-image-label { overflow-wrap: anywhere; }
+.operator-background { display: flex; align-items: center; gap: .6rem; margin: 1rem 0; }
+.operator-background input { flex: 0 0 auto; }
+#operator-workspace .feature-actions { align-items: center; }
+#operator-host-status { overflow-wrap: anywhere; }

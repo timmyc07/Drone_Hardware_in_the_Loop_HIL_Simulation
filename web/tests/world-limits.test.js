@@ -121,7 +121,7 @@ function fleet(count, { ground = false, sensors = lowRays } = {}) {
   return input;
 }
 function assertFinalWorld(record, stopped) {
-  assert.equal(record.version, 17);
+  assert.equal(record.version, 18);
   assert.equal(record.samples.at(-1).tick, stopped.world.tick);
   assert.equal(record.samples.at(-1).time, stopped.world.time);
   assert.equal(record.sensorFrames.at(-1).tick, stopped.world.tick);

@@ -57,6 +57,7 @@ const VEHICLE_COMMANDS = [
   "gust",
   "mode",
   "gimbal",
+  "operatorGimbal",
   "transition",
   "position",
   "mission",
@@ -319,14 +320,15 @@ onmessage = async ({ data }) => {
     }
     let replyVehicle;
     if (VEHICLE_COMMANDS.includes(data.type)) {
-      world.command(data.vehicleId, data.type, data.value, data.fault);
+      const commandType = data.type === "operatorGimbal" ? "gimbal" : data.type;
+      world.command(data.vehicleId, commandType, data.value, data.fault);
       replyVehicle = data.vehicleId;
       // Store canonical setup values rather than partially specified input forms.
-      if (["mission", "gimbal", "sensorConfig"].includes(data.type)) {
+      if (["mission", "gimbal", "sensorConfig"].includes(commandType)) {
         const v = selected(state(), data.vehicleId);
         data = {
           ...data,
-          value: v.setup[data.type === "sensorConfig" ? "sensors" : data.type],
+          value: v.setup[commandType === "sensorConfig" ? "sensors" : commandType],
         };
       }
       recordEvent(data);

@@ -675,8 +675,8 @@ export const CAPABILITIES = [
     id: "camera-operator",
     category: "感測與通訊",
     title: "感測器操作員",
-    description: "以獨立角色練習感測器操作。",
-    status: "planned",
+    description: "同源獨立分頁可綁定指定載具、查看實際三種相機影像並控制雲台，含回執與失聯提示；限本機瀏覽器，不是跨裝置或帳號權限隔離。",
+    status: "partial",
     sources: [
       "https://www.airbus.com/en/products-services/defence/uas/uas-solutions/uas-simulation-trainer-se-rpas",
     ],
@@ -835,7 +835,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "JSON 重播",
     description:
-      "版本 17 JSON 保存全機隊、場景與事件；支援時間軸跳轉、逐幀和依載具／類型定位事件，拒絕版本 1 至 16。",
+      "版本 18 JSON 保存全機隊、場景與事件，標示操作員雲台來源；支援時間軸跳轉、逐幀和依載具／類型定位事件，拒絕版本 1 至 17。",
     status: "partial",
     sources: [
       "https://www.liftoff-game.com/news/full-release-liftoff-micro-drones",
@@ -909,7 +909,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "程式控制 API",
     description:
-      "同頁 API 2.7 支援指定載具、自動拍攝、六向近接、教官排程及 NIST 練習，共用世界時鐘、場景與風；外部 SITL 使用獨立本機服務。",
+      "同頁 API 2.8 支援指定載具、自動拍攝、六向近接、教官排程、NIST 練習與操作員雲台來源，共用世界時鐘、場景與風；外部 SITL 使用獨立本機服務。",
     status: "partial",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/apis.md"],
   },

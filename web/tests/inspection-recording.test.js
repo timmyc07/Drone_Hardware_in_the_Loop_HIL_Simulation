@@ -124,7 +124,7 @@ function fixture(peerPosition = [0, 5]) {
   function command(type, value, vehicleId = "drone-1") {
     const { tick, time } = world.snapshot();
     if (type === "scene") world.setScene(value);
-    else world.command(vehicleId, type, value);
+    else world.command(vehicleId, type === "operatorGimbal" ? "gimbal" : type, value);
     const event = {
       tick,
       time,
@@ -185,7 +185,7 @@ const state = (record, frame = -1, actor = 0) =>
 test("inspection receipts retain the exact off-cadence exposure tick and independently replay every world state", async () => {
   const f = await observedFixture(),
     clean = validateRecording(f.record);
-  assert.equal(RECORDING_VERSION, 17);
+  assert.equal(RECORDING_VERSION, 18);
   assert.deepEqual(
     clean.samples.map((frame) => frame.tick),
     [0, 7, 10, 20],
@@ -222,6 +222,29 @@ test("same-tick later gimbal settings and scene clearing preserve legitimate exp
   f.capture();
   const clean = validateRecording(f.record);
   assert.equal(captured.receipt.metadata.gimbal.target.yaw, 0);
+  assert.equal(state(clean, 1).gimbal.target.yaw, 0.6);
+  assert.equal(state(clean).inspection.attempts, 0);
+  assert.equal(state(clean).inspection.latest, null);
+  assert.equal(replayWorldRecording(clean).passed, true);
+});
+
+test("same-tick operator gimbal before and after inspection and scene clearing preserve legitimate exposure event order", async () => {
+  const f = fixture();
+  f.step(7);
+  f.command("operatorGimbal", { ...clone(DEFAULT_GIMBAL_SETTINGS), target: { yaw: 0.2, pitch: 0, roll: 0 } });
+  const captured = await f.inspect();
+  f.command("operatorGimbal", {
+    ...clone(DEFAULT_GIMBAL_SETTINGS),
+    target: { yaw: 0.6, pitch: 0, roll: 0 },
+  });
+  f.command("scene", {
+    ...clone(f.world.configuration.scene),
+    environment: { ...f.world.configuration.scene.environment, fog: 0.2 },
+  });
+  f.step(13);
+  f.capture();
+  const clean = validateRecording(f.record);
+  assert.equal(captured.receipt.metadata.gimbal.target.yaw, 0.2);
   assert.equal(state(clean, 1).gimbal.target.yaw, 0.6);
   assert.equal(state(clean).inspection.attempts, 0);
   assert.equal(state(clean).inspection.latest, null);

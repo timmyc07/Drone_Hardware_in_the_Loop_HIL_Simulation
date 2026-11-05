@@ -121,7 +121,7 @@ function fixture({
     const global = ["scene", "wind", "render"].includes(type);
     if (type === "scene") world.setScene(value);
     else if (type === "wind") world.setWind(value);
-    else if (type !== "render") world.command(vehicleId, type, value, fault);
+    else if (type !== "render") world.command(vehicleId, type === "operatorGimbal" ? "gimbal" : type, value, fault);
     record.events.push({
       tick,
       time,
@@ -199,10 +199,10 @@ const geographicSensors = {
   originVerticalDatum: "orthometric",
 };
 
-test("World17 round trip keeps parallel vehicle frames and 199 stable CSV columns", () => {
+test("World18 round trip keeps parallel vehicle frames and 199 stable CSV columns", () => {
   const input = shortRecord({ vehicles: [{ id: "alpha" }, { id: "beta" }] });
   const clean = roundTrip(input);
-  assert.equal(RECORDING_VERSION, 17);
+  assert.equal(RECORDING_VERSION, 18);
   assert.deepEqual(
     clean.samples[0].vehicles.map((v) => v.id),
     ["alpha", "beta"],
@@ -349,6 +349,50 @@ test("compact gimbal poses follow per-vehicle setting epochs and reject forged f
   f.command("gimbal", settings, "beta");
   f.step(20);
   const clean = roundTrip(f.record);
+  assert.deepEqual(stateAt(clean, -1, 1).gimbal.target, settings.target);
+  assert.deepEqual(
+    stateAt(clean, -1, 0).gimbal.target,
+    DEFAULT_GIMBAL_SETTINGS.target,
+  );
+  const restored = recordingWorldAt(clean, clean.samples.length - 1);
+  assert.deepEqual(restored.vehicles[1].setup.gimbal, settings);
+  assert.deepEqual(
+    restored.vehicles[1].snapshot.gimbal.actual,
+    f.world.snapshot().vehicles[1].snapshot.gimbal.actual,
+  );
+  rejects(f.record, [
+    (r) => {
+      stateAt(r).gimbal[3] = 8;
+    },
+    (r) => {
+      stateAt(r).gimbal.pop();
+    },
+    (r) => {
+      stateAt(r).gimbal[0] = NaN;
+    },
+    (r) => {
+      r.events[0].vehicleId = "alpha";
+    },
+    (r) => {
+      r.events[0].value.maxRate.yaw = 0;
+    },
+  ]);
+});
+
+test("operator gimbal poses preserve source and per-vehicle setting epochs and reject forged flags or settings", () => {
+  const f = fixture({ vehicles: [{ id: "alpha" }, { id: "beta" }] });
+  f.step();
+  const initial = stateAt(f.record, 0).gimbal;
+  assert.equal(initial.length, 6);
+  const settings = {
+    mode: "ned",
+    target: { yaw: 0.5, pitch: -0.7, roll: 0.1 },
+    maxRate: { yaw: 0.8, pitch: 0.6, roll: 0.4 },
+  };
+  f.command("operatorGimbal", settings, "beta");
+  f.step(20);
+  const clean = roundTrip(f.record);
+  assert.equal(clean.events[0].type, "operatorGimbal");
   assert.deepEqual(stateAt(clean, -1, 1).gimbal.target, settings.target);
   assert.deepEqual(
     stateAt(clean, -1, 0).gimbal.target,
@@ -1215,7 +1259,7 @@ test("radar acquisitions survive configuration epochs, packed faults and full-wo
   assert.throws(() => validateRecording(stale), /after/);
   const prior = clone(compact);
   prior.version = 12;
-  assert.throws(() => validateRecording(prior), /version 17/);
+  assert.throws(() => validateRecording(prior), /version 18/);
   const rows = recordingToCsv(f.record)
     .split("\n")
     .map((r) => r.split(","));

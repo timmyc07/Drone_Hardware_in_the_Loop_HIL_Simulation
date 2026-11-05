@@ -162,7 +162,7 @@ function replay(record) {
     if (event.type === "scene") world.setScene(event.value);
     else if (event.type === "wind") world.setWind(event.value);
     else if (event.type !== "render" && !event.type.startsWith("nist"))
-      world.command(event.vehicleId, event.type, event.value, event.fault);
+      world.command(event.vehicleId, event.type === "operatorGimbal" ? "gimbal" : event.type, event.value, event.fault);
   }
 }
 test("world worker targets explicit IDs, switches view without resetting, and exports one replayable clock", async (t) => {
@@ -403,7 +403,7 @@ test("radar exports identify the requested vehicle and retain delayed acquisitio
     "number",
   );
   const record = validateRecording(raw);
-  assert.equal(record.version, 17);
+  assert.equal(record.version, 18);
   replay(record);
 });
 
@@ -435,7 +435,7 @@ test("proximity exports preserve the requested vehicle, delayed pose and fault s
   assert.ok(faulted.reading.rangesM.every(v => v === null));
   assert.ok(faulted.reading.tooClose.every(v => v === false));
   const record = validateRecording(await h.call({ type: "apiExport" }));
-  assert.equal(record.version, 17);
+  assert.equal(record.version, 18);
   assert.equal(record.sensorFrames.at(-1).vehicles[1].sensors.faults.proximity, true);
   replay(record);
 });
@@ -570,7 +570,7 @@ test("inspection lease freezes the whole fleet, rejects mutations and mismatched
   );
 });
 
-test("successful inspection submissions hash actual buffers and retain replayable schema17 receipts without resuming an explicit pause", async (t) => {
+test("successful inspection submissions hash actual buffers and retain replayable schema18 receipts without resuming an explicit pause", async (t) => {
   const h = await harness(t);
   await h.call({ type: "resetWorld", value: inspectionFleet() });
   await h.call({ type: "play" });
@@ -598,7 +598,7 @@ test("successful inspection submissions hash actual buffers and retain replayabl
   assert.equal(inspected.world.vehicles[1].snapshot.inspection.attempts, 0);
   assert.equal((await submitInspection(h, lease, frame)).ok, false);
   const record = validateRecording(await h.call({ type: "apiExport" }));
-  assert.equal(record.version, 17);
+  assert.equal(record.version, 18);
   const event = record.events.find((event) => event.type === "inspection");
   assert.equal(event.tick, lease.world.tick);
   assert.equal(event.value.sha256, expectedHash);
@@ -672,7 +672,7 @@ test("reset or cancel while the real buffer digest is pending cannot commit stal
   }
 });
 
-test('instructor schedules native schema17 events in tick order independent of speed, rendering, selection and pause', async (t) => {
+test('instructor schedules native schema18 events in tick order independent of speed, rendering, selection and pause', async (t) => {
   const records=[];
   for (const fast of [false,true]) {
     const h=await harness(t);
@@ -696,7 +696,7 @@ test('instructor schedules native schema17 events in tick order independent of s
     assert.deepEqual(status.receipts.map(r=>r.tick),[2,2,3,4,5]);
     const record=validateRecording(await h.call({type:'apiExport'}));
     replay(record);
-    assert.equal(record.version,17);assert.equal(Object.hasOwn(record,'instructor'),false);
+    assert.equal(record.version,18);assert.equal(Object.hasOwn(record,'instructor'),false);
     assert.deepEqual(record.events.filter(e=>e.type!=='render').map(({time,...e})=>e),plan.events);
     records.push(record);
   }
@@ -939,4 +939,64 @@ test('NIST apparatus collision pushes the exact final crash state without a foll
   assert.ok(h.latest.world.tick>0&&h.latest.world.tick<6000);
   assert.notEqual(Math.round(h.latest.timing.wallSeconds*1000/7)%8,0,'crash fixture must end between the ordinary 56 ms publishes');
   const record=validateRecording(await h.call({type:'apiExport'}));assert.equal(record.samples.at(-1).tick,h.latest.nist.endTick);
+});
+
+
+test('operator gimbal commands target independently, ACK canonical settings and preserve their source in native replay', async t => {
+  const h = await harness(t), input = fleet(2);
+  await h.call({type:'resetWorld',value:input});
+  const settings = structuredClone(input.vehicles[1].setup.gimbal);
+  settings.target.yaw = .6;
+  const ack = await h.call({type:'operatorGimbal',vehicleId:'drone-2',value:settings});
+  assert.deepEqual(ack.snapshot.gimbal.target, settings.target);
+  const state = await h.call({type:'inspectWorld'});
+  assert.equal(state.activeVehicleId,'drone-1');
+  assert.deepEqual(state.world.vehicles[0].snapshot.gimbal.target,input.vehicles[0].setup.gimbal.target);
+  await h.call({type:'play'}); await h.advance(2); await h.call({type:'pause'});
+  const record = validateRecording(JSON.parse(JSON.stringify(await h.call({type:'apiExport'}))));
+  assert.equal(record.version,18);
+  assert.deepEqual(record.events[0],{tick:0,time:0,type:'operatorGimbal',vehicleId:'drone-2',value:settings});
+  assert.equal(replayWorldRecording(record).passed,true);
+  for (const command of [
+    {type:'operatorGimbal',vehicleId:'missing',value:settings},
+    {type:'operatorGimbal',vehicleId:'drone-2',value:{...settings,source:'pilot'}},
+    {type:'operatorGimbal',vehicleId:'drone-2',value:{...settings,target:{...settings.target,yaw:Infinity}}},
+  ]) {
+    const before = await h.call({type:'inspectWorld'});
+    assert.equal((await h.send(command)).ok,false);
+    assert.deepEqual(await h.call({type:'inspectWorld'}),before);
+  }
+});
+
+test('operator gimbal rejection preserves inspection and NIST frozen leases and their running state', async t => {
+  for (const isNist of [false,true]) {
+    const h = await harness(t), input = isNist ? fleet(1) : inspectionFleet();
+    input.scene.nistLane = isNist;
+    await h.call({type:'resetWorld',value:input});
+    const vehicleId = input.vehicles[0].id;
+    if (isNist) await h.call({type:'nistStart',vehicleId,value:{durationSeconds:30}});
+    await h.call({type:'play'}); await h.advance(1);
+    const lease = await h.call({type:isNist?'nistCaptureBegin':'inspectionBegin',vehicleId,value:{[isNist?'slotId':'targetId']:isNist?'s01-1':'panel',config:DEFAULT_CAMERA_CONFIG}});
+    const before = await h.call({type:'inspectWorld'});
+    const settings = structuredClone(input.vehicles[0].setup.gimbal); settings.target.yaw = .5;
+    assert.equal((await h.send({type:'operatorGimbal',vehicleId,value:settings})).ok,false);
+    assert.deepEqual(await h.call({type:'inspectWorld'}),before);
+    await h.advance(2);
+    assert.equal((await h.call({type:'inspectWorld'})).world.tick,lease.world.tick);
+    await h.call({type:isNist?'nistCaptureCancel':'inspectionCancel',vehicleId,value:{captureId:lease.captureId}});
+    assert.equal((await h.call({type:'inspectWorld'})).running,true);
+    await h.call({type:'pause'});
+  }
+});
+
+test('operator gimbal cannot bypass event or byte storage limits', async t => {
+  for (const limits of [{events:1},{bytes:1}]) {
+    const h=await harness(t,false,limits), input=fleet(1), vehicleId=input.vehicles[0].id;
+    await h.call({type:'resetWorld',value:input});
+    if (limits.events) await h.call({type:'operatorGimbal',vehicleId,value:input.vehicles[0].setup.gimbal});
+    const before=await h.call({type:'inspectWorld'}), exported=await h.call({type:'apiExport'});
+    assert.equal((await h.send({type:'operatorGimbal',vehicleId,value:input.vehicles[0].setup.gimbal})).ok,false);
+    assert.deepEqual(await h.call({type:'inspectWorld'}),before);
+    assert.deepEqual(await h.call({type:'apiExport'}),exported);
+  }
 });

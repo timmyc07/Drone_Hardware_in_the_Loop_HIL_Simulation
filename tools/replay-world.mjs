@@ -49,7 +49,7 @@ export function replayWorldRecording(input) {
       if (e.type === "scene") state = world.setScene(e.value);
       else if (e.type === "wind") state = world.setWind(e.value);
       else if (e.type !== "render" && !NIST_EVENT_TYPES.includes(e.type))
-        state = world.command(e.vehicleId, e.type, e.value, e.fault);
+        state = world.command(e.vehicleId, e.type === "operatorGimbal" ? "gimbal" : e.type, e.value, e.fault);
     }
   }
   for (const [index, frame] of record.samples.entries()) {

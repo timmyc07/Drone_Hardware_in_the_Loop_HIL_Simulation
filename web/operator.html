@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sensor Operator · Drone Flight Lab</title>
+  <link rel="stylesheet" href="./operator.css">
+</head>
+<body>
+  <header><div><span class="eyebrow">DRONE FLIGHT LAB</span><h1>SENSOR OPERATOR</h1><p>感測器操作員</p></div><a href="./">開啟模擬首頁</a></header>
+  <main>
+    <div class="notice" role="status" aria-live="polite"><strong id="connection-status">正在初始化</strong><span id="error-status"></span></div>
+    <p class="hint">主站需保持開啟，兩頁須在同一瀏覽器設定檔與網站。要返回既有飛行，請切回原本的主站分頁。</p>
+    <div class="layout">
+      <section class="panel controls" aria-labelledby="vehicle-heading">
+        <h2 id="vehicle-heading">載具與遙測</h2>
+        <div class="row"><label for="vehicle-select">操作員載具</label><select id="vehicle-select"><option value="">等待載具</option></select><button id="bind-button" type="button">綁定載具</button></div>
+        <p id="telemetry" class="readout">尚未綁定載具</p>
+        <h2>雲台目標</h2>
+        <form id="gimbal-form">
+          <label for="gimbal-mode">參考座標</label><select id="gimbal-mode"><option value="body">機體 Body</option><option value="ned">世界 NED</option></select>
+          <div class="angles"><label>偏航 Yaw (°)<input id="gimbal-yaw" type="number" step="any" required></label><label>俯仰 Pitch (°)<input id="gimbal-pitch" type="number" step="any" required></label><label>橫滾 Roll (°)<input id="gimbal-roll" type="number" step="any" required></label></div>
+          <button id="gimbal-apply" type="submit">套用目標</button>
+        </form>
+        <p id="apply-result" class="readout" role="status" aria-live="polite">尚未套用目標</p>
+        <button id="disconnect-button" class="secondary" type="button">中斷連線</button>
+      </section>
+      <section class="panel image-panel" aria-labelledby="image-heading">
+        <div class="section-title"><div><span class="eyebrow">CAMERA</span><h2 id="image-heading">感測影像</h2></div><label for="view-select">影像檢視 <select id="view-select"><option value="rgb">RGB</option><option value="depth">深度</option><option value="segmentation">類別</option></select></label></div>
+        <div class="preview"><canvas id="frame-canvas" aria-label="拍攝影像"></canvas><p id="frame-placeholder">尚未拍攝影像</p></div>
+        <div class="actions"><button id="capture-button" type="button">拍攝一張</button><label class="check"><input id="auto-capture" type="checkbox"> 每秒拍攝（上一張完成後）</label></div>
+        <p id="frame-status" class="readout" role="status" aria-live="polite">等待影像</p>
+        <h3>曝光時中繼資料</h3><p id="exposure-metadata" class="readout">尚無曝光資料</p>
+        <div class="actions"><button id="export-json" class="secondary" type="button">匯出資料集 JSON</button><button id="export-png" class="secondary" type="button">匯出 RGB PNG</button></div>
+      </section>
+    </div>
+  </main>
+  <script type="module" src="./operator.js"></script>
+</body>
+</html>

@@ -13,6 +13,7 @@ const eventLabels = {
   gust: "陣風",
   mode: "飛行模式",
   gimbal: "雲台設定",
+  operatorGimbal: "操作員雲台設定",
   transition: "飛行狀態轉換",
   position: "位置目標",
   mission: "任務航線",
