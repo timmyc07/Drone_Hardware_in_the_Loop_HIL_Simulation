@@ -1,3 +1,4 @@
+import { validateCollisionPreventionSettings } from "./collision-prevention.js";
 import { createNistLaneCollider } from "./nist-geometry.js";
 import { obstacleContainsVehicle } from "./obstacle-geometry.js";
 import { createSimulation, validateConfig, DEFAULT_CONFIG } from "./sim.js";
@@ -54,6 +55,7 @@ function simulation(config, setup, scene, spawn, home) {
   return createSimulation(config, {
     terrain: scene.terrain,
     gimbal: setup.gimbal,
+    collisionPrevention: setup.collisionPrevention,
     ...(spawn === undefined ? {} : { spawn }),
     ...(home === undefined ? {} : { home }),
   });
@@ -65,11 +67,12 @@ export function validateVehicleSetup(
   spawn,
   home,
 ) {
-  fields(value, ["mode", "mission", "sensors", "gimbal", "training"], []);
+  fields(value, ["mode", "mission", "sensors", "gimbal", "training", "collisionPrevention"], []);
   const config = validateConfig(configuration),
     surface = createTerrain(scene.terrain);
   const sensors = validateSensorConfig(value.sensors ?? {}),
-    gimbal = validateGimbalSettings(value.gimbal);
+    gimbal = validateGimbalSettings(value.gimbal),
+    collisionPrevention = validateCollisionPreventionSettings(value.collisionPrevention);
   assertGeographicSensors(scene, sensors);
   const training = value.training ?? "free",
     mode = value.mode ?? "attitude";
@@ -77,7 +80,7 @@ export function validateVehicleSetup(
     throw new Error("Training course is not supported by this airframe");
   if (training === "runway" && !surface.runwayCompatible)
     throw new Error("Runway training requires covered flat runway terrain");
-  const sim = simulation(config, { gimbal }, scene, spawn, home);
+  const sim = simulation(config, { gimbal, collisionPrevention }, scene, spawn, home);
   if (value.mission !== undefined && !Array.isArray(value.mission))
     throw new Error("Mission must be an array");
   const mission = copy(value.mission ?? []);
@@ -91,7 +94,7 @@ export function validateVehicleSetup(
     home ?? [0, 0],
     groundHeight,
   ).update(sim.snapshot());
-  return { mode, mission, sensors, gimbal, training };
+  return { mode, mission, sensors, gimbal, training, collisionPrevention };
 }
 export function defaultWorldConfig(
   configuration = {},
@@ -415,6 +418,12 @@ export function createWorld(input) {
     if (dt !== DT)
       throw new Error("The shared world requires fixed 0.005 second steps");
     return transaction(() => {
+      if (vehicles.some(v => v.spec.setup.collisionPrevention.enabled)) {
+        const committedPeers = peers();
+        for (const v of vehicles)
+          if (v.spec.setup.collisionPrevention.enabled)
+            v.sim.setCollisionPreventionPeers(committedPeers.filter(peer => peer.id !== v.spec.id));
+      }
       const before = vehicles.map((v) => v.sim.snapshot().position);
       for (const v of vehicles) {
         try {
@@ -464,6 +473,7 @@ export function createWorld(input) {
         position: "setPositionTarget",
         mission: "setMission",
         gimbal: "setGimbal",
+        collisionPrevention: "setCollisionPrevention",
         transition: "setTransition",
         scenario: "setScenario",
       };
@@ -566,6 +576,7 @@ export function createWorld(input) {
         v.spec.setup.mission = copy(v.sim.snapshot().navigation.waypoints);
       if (type === "gimbal")
         v.spec.setup.gimbal = validateGimbalSettings(value);
+      if (type === "collisionPrevention") v.spec.setup.collisionPrevention = validateCollisionPreventionSettings(value);
       if (type === "scenario") v.spec.scenario = value;
       updateSensors();
       return snapshot();

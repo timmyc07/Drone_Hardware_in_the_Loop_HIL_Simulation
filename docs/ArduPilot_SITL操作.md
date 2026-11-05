@@ -33,7 +33,7 @@ git -C "$ARDU_DIR" apply "$ARDU_PATCH"
 
 [JSON 外部物理介面](https://github.com/ArduPilot/ardupilot/blob/Copter-4.7.2/libraries/SITL/examples/JSON/readme.md)以 UDP 傳送 servo 輸出，物理端回傳絕對模擬時間、機體 IMU、NED 位置與速度、姿態。模擬物理步長 1 ms（1000 Hz），飛控主迴圈 400 Hz；等待或暫停時模擬時間停止。健康檢查保持 `ARMING_SKIPCHK=0`；GPS 使用 serial3／4 內部 pipe 與 protocol 5，`RC_PROTOCOLS=524288` 使用合成 RC。這些是模擬設定，不適用實機。
 
-ArduPilot 使用獨立 `flight-lab-ardupilot` 版本 1 紀錄，與內建 schema 19 及 PX4 紀錄不同。先匯出 SITL JSON；離線重播不重新執行飛控：
+ArduPilot 使用獨立 `flight-lab-ardupilot` 版本 1 紀錄，與內建 schema 20 及 PX4 紀錄不同。先匯出 SITL JSON；離線重播不重新執行飛控：
 
 ```sh
 node companion/replay.js /absolute/path/to/ardupilot-recording.json
@@ -47,4 +47,4 @@ Context7 沒有 Copter 4.7.2 的精確版本索引，協定以該版本的官方
 
 ## 0.32 電池推進模型
 
-現行獨立格式 1 紀錄必須包含 `modelVersion: "0.13.0"`；缺少此標記或使用舊模型的紀錄會被拒絕。物理端的電池供電現會改變實際旋翼推力，離線重播也核對電池與推進資料；ArduPilot 原有 JSON 電壓／電流通道沿用，PX4 未新增電池輸入通道。詳見[電池與推進供電](電池與推進供電.md)。以上先前版本的驗證數字屬歷史結果，不能代表新模型的起降驗證。
+現行獨立格式 1 紀錄必須包含 `modelVersion: "0.14.0"`；缺少此標記或使用舊模型的紀錄會被拒絕。物理端的電池供電現會改變實際旋翼推力，離線重播也核對電池與推進資料；ArduPilot 原有 JSON 電壓／電流通道沿用，PX4 未新增電池輸入通道。詳見[電池與推進供電](電池與推進供電.md)。以上先前版本的驗證數字屬歷史結果，不能代表新模型的起降驗證。

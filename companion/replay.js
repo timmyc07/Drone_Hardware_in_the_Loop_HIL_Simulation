@@ -191,6 +191,8 @@ function replayPlant(record, bootstrap, mapInput) {
     maxBatteryError = 0,
     maxPropulsionError = 0;
   function checkPower(actual, sample) {
+    if (sample.collisionPrevention !== null)
+      throw new Error("Native plant requires disabled collision prevention");
     const batteryRanges = {
       soc: [0, 1], voltage: [0, 100], openCircuitVoltage: [0, 100], motorSpeedScale: [0, 1],
       current: [0, 1e6], power: [0, 1e6], usedWh: [0, 1000], remainingSeconds: [0, 1e9],

@@ -1,3 +1,4 @@
+import { DEFAULT_COLLISION_PREVENTION, validateCollisionPreventionSettings, validateCollisionPreventionState } from "./collision-prevention.js";
 import { NIST_EVENT_TYPES, createNistSession, validateNistEventValue } from './nist.js';
 import { createSimulation, validateConfig, bodyToNedAngles } from "./sim.js";
 import {
@@ -32,8 +33,8 @@ import {
   validateGimbalState,
 } from "./gimbal.js";
 
-export const RECORDING_VERSION = 19;
-export const MODEL_VERSION = "0.13.0";
+export const RECORDING_VERSION = 20;
+export const MODEL_VERSION = "0.14.0";
 const BATTERY_FIELDS = [
   "soc", "voltage", "current", "power", "usedWh", "remainingSeconds", "low", "critical",
   "openCircuitVoltage", "motorSpeedScale", "powerLimited",
@@ -71,6 +72,7 @@ const GIMBAL_AXES = ["yaw", "pitch", "roll"];
 export const DEFAULT_SETUP = Object.freeze({
   sensors: DEFAULT_SENSOR_CONFIG,
   gimbal: DEFAULT_GIMBAL_SETTINGS,
+  collisionPrevention: DEFAULT_COLLISION_PREVENTION,
   mode: "attitude",
   mission: Object.freeze([]),
   scene: DEFAULT_SCENE,
@@ -237,6 +239,7 @@ function sample(
   terrain,
   expectedHome,
   activeCourse,
+  collisionPreventionSettings,
 ) {
   object(value);
   if (
@@ -376,6 +379,7 @@ function sample(
     velocity: vector(value.velocity, 3),
     quaternion,
     gimbal,
+    collisionPrevention: unpackCollisionPrevention(value.collisionPrevention, collisionPreventionSettings),
     attitude,
     rates: vector(value.rates, 3),
     motors: vector(value.motors, rotorCount(airframe), 0, 1),
@@ -534,6 +538,10 @@ function event(input, sim, initialScene) {
       result.receipt = structuredClone(object(input.receipt));
       break;
     }
+    case "collisionPrevention":
+      result.value = validateCollisionPreventionSettings(input.value);
+      sim.setCollisionPrevention(result.value);
+      break;
     case "operatorGimbal":
     case "gimbal":
       result.value = validateGimbalSettings(input.value);
@@ -626,6 +634,22 @@ function event(input, sim, initialScene) {
   }
   return result;
 }
+function unpackCollisionPrevention(value, settings) {
+  if (Array.isArray(value)) {
+    if (value.length !== 12 || Reflect.ownKeys(value).length !== 13 || !Array.from({ length: 12 }, (_, i) => Object.hasOwn(value, i)).every(Boolean))
+      throw new Error("Invalid compact collision prevention state");
+    value = { applicable: value[0], active: value[1], reason: value[2], obstacleType: value[3], obstacleId: value[4],
+      desiredVelocityNe: value.slice(5, 7), constrainedVelocityNe: value.slice(7, 9), commandedAccelerationNe: value.slice(9, 11), clearanceM: value[11] };
+  }
+  const state = validateCollisionPreventionState(value);
+  if ((state !== null) !== settings.enabled || (state && state.clearanceM !== settings.clearanceM))
+    throw new Error("Collision prevention state disagrees with settings");
+  return state;
+}
+function compactCollisionPrevention(state) {
+  return state === null ? null : [state.applicable, state.active, state.reason, state.obstacleType, state.obstacleId,
+    ...state.desiredVelocityNe, ...state.constrainedVelocityNe, ...state.commandedAccelerationNe, state.clearanceM];
+}
 export function compactSnapshot(snapshot) {
   const { waypoints, altitudeReference, positionAltitude, ...navigation } =
     object(snapshot.navigation);
@@ -635,6 +659,7 @@ export function compactSnapshot(snapshot) {
   return {
     ...state,
     battery: BATTERY_FIELDS.map(key => snapshot.battery[key]),
+    collisionPrevention: compactCollisionPrevention(snapshot.collisionPrevention),
     // Settings live in setup/events; retain every acquired angle and status without repeating them.
     gimbal: [
       ...GIMBAL_AXES.map((axis) => gimbal.actual[axis]),
@@ -855,6 +880,7 @@ const VEHICLE_EVENTS = [
   "mode",
   "gimbal",
   "operatorGimbal",
+  "collisionPrevention",
   "transition",
   "position",
   "mission",
@@ -1034,7 +1060,7 @@ export function validateRecording(value) {
   object(value);
   if (value.version !== RECORDING_VERSION)
     throw new Error(
-      "Unsupported recording version: version 19 required; legacy recordings are not supported",
+      "Unsupported recording version: version 20 required; legacy recordings are not supported",
     );
   exactKeys(
     value,
@@ -1108,6 +1134,7 @@ export function validateRecording(value) {
         channelTimes: {},
         validator: createSimulation(v.config, {
           gimbal: v.setup.gimbal,
+          collisionPrevention: v.setup.collisionPrevention,
           terrain: world.scene.terrain,
           spawn: v.spawn,
           home: v.home,
@@ -1196,7 +1223,7 @@ export function validateRecording(value) {
           c.trainingEpochTime = e.time;
           c.previousTutorial = undefined;
         }
-        if (["mission", "gimbal", "operatorGimbal", "mode"].includes(e.type))
+        if (["mission", "gimbal", "operatorGimbal", "mode", "collisionPrevention"].includes(e.type))
           c.setup[e.type === "operatorGimbal" ? "gimbal" : e.type] = e.value;
         if (e.type === "mission") c.routeText = JSON.stringify(e.value);
         if (e.type === "sensorConfig") {
@@ -1234,7 +1261,12 @@ export function validateRecording(value) {
         activeTerrain,
         v.home,
         c.setup.training,
+        c.setup.collisionPrevention,
       );
+      const prevention = state.collisionPrevention;
+      if ((prevention?.obstacleType === "obstacle" && Number(prevention.obstacleId) >= activeScene.obstacles.length) ||
+          (prevention?.obstacleType === "peer" && (!contexts.has(prevention.obstacleId) || prevention.obstacleId === entry.id)))
+        throw new Error("Collision prevention references unknown geometry");
       if (Math.abs(state.time - time) > 1e-8 || state.metrics.steps !== tick)
         throw new Error("Vehicle clock must match world clock");
       if (state.training.course === "tutorial") {
@@ -1451,7 +1483,7 @@ export function recordingWorldAt(record, index) {
     }
     if (e.vehicleId) {
       const v = config.vehicles.find((v) => v.id === e.vehicleId);
-      if (["mission", "gimbal", "operatorGimbal", "mode", "training"].includes(e.type))
+      if (["mission", "gimbal", "operatorGimbal", "mode", "training", "collisionPrevention"].includes(e.type))
         v.setup[e.type === "operatorGimbal" ? "gimbal" : e.type] = e.value;
       if (e.type === "sensorConfig") v.setup.sensors = e.value;
     }
@@ -1687,6 +1719,19 @@ export function recordingToCsv(record) {
     "battery_open_circuit_voltage_V",
     "battery_motor_speed_scale_fraction",
     "battery_power_limited_boolean",
+    "collision_prevention_enabled_boolean",
+    "collision_prevention_applicable_boolean",
+    "collision_prevention_active_boolean",
+    "collision_prevention_reason",
+    "collision_prevention_obstacle_type",
+    "collision_prevention_obstacle_id",
+    "collision_prevention_desired_velocity_n_m_s",
+    "collision_prevention_desired_velocity_e_m_s",
+    "collision_prevention_constrained_velocity_n_m_s",
+    "collision_prevention_constrained_velocity_e_m_s",
+    "collision_prevention_commanded_acceleration_n_m_s2",
+    "collision_prevention_commanded_acceleration_e_m_s2",
+    "collision_prevention_clearance_m",
   ];
   const rows = samples.map((s, index) =>
     [
@@ -1795,6 +1840,7 @@ export function recordingToCsv(record) {
       s.battery.openCircuitVoltage,
       s.battery.motorSpeedScale,
       Number(s.battery.powerLimited),
+      ...collisionPreventionCsv(s.collisionPrevention),
     ].join(","),
   );
   return [header.join(","), ...rows].join("\n");
@@ -1848,4 +1894,11 @@ function proximityCsv(reading) {
     ...reading.rangesM,
     ...reading.tooClose.map(Number),
   ].map((v) => v ?? "");
+}
+
+
+function collisionPreventionCsv(state) {
+  return state === null ? [0, ...Array(12).fill("")] : [1, Number(state.applicable), Number(state.active), state.reason,
+    state.obstacleType ?? "", state.obstacleId ?? "", ...state.desiredVelocityNe, ...state.constrainedVelocityNe,
+    ...state.commandedAccelerationNe, state.clearanceM];
 }

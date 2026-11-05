@@ -492,6 +492,14 @@ export const CAPABILITIES = [
     ],
   },
   {
+    id: "collision-prevention",
+    category: "控制與航行",
+    title: "幾何碰撞預防",
+    description: "位置控制依已知幾何限制水平速度及煞停；不提供未知障礙、地形或繞路保障。",
+    status: "partial",
+    sources: ["https://github.com/PX4/PX4-Autopilot/blob/v1.17.0/docs/en/computer_vision/collision_prevention.md"],
+  },
+  {
     id: "physical-obstacles",
     category: "環境",
     title: "障礙物",
@@ -826,7 +834,7 @@ export const CAPABILITIES = [
     id: "record-csv",
     category: "資料與整合",
     title: "CSV 飛行紀錄",
-    description: "可匯出 202 欄飛行及感測資料 CSV，標示載具 ID 與世界時間步。",
+    description: "可匯出 215 欄飛行及感測資料 CSV，標示載具 ID 與世界時間步。",
     status: "partial",
     sources: ["https://wiki.zephyr-sim.com/help/faqs"],
   },
@@ -835,7 +843,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "JSON 重播",
     description:
-      "版本 19 JSON 保存全機隊、場景與事件，標示操作員雲台來源；支援時間軸跳轉、逐幀和依載具／類型定位事件，拒絕版本 1 至 18。",
+      "版本 20 JSON 保存全機隊、場景與事件，標示操作員雲台來源；支援時間軸跳轉、逐幀和依載具／類型定位事件，拒絕版本 1 至 19。",
     status: "partial",
     sources: [
       "https://www.liftoff-game.com/news/full-release-liftoff-micro-drones",
@@ -909,7 +917,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "程式控制 API",
     description:
-      "同頁 API 2.8 支援指定載具、自動拍攝、六向近接、教官排程、NIST 練習與操作員雲台來源，共用世界時鐘、場景與風；外部 SITL 使用獨立本機服務。",
+      "同頁 API 2.9 支援幾何碰撞預防設定、指定載具、自動拍攝、六向近接、教官排程、NIST 練習與操作員雲台來源，共用世界時鐘、場景與風；外部 SITL 使用獨立本機服務。",
     status: "partial",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/apis.md"],
   },

@@ -1,3 +1,4 @@
+import { validateCollisionPreventionSettings, collisionPreventionInactive, constrainHorizontalMotion } from "./collision-prevention.js";
 import { batterySupply } from "./battery.js";
 import { createNistLaneCollider } from "./nist-geometry.js";
 import {
@@ -208,11 +209,11 @@ export function createSimulation(configuration = {}, options = {}) {
     Object.getPrototypeOf(options) !== Object.prototype ||
     Object.keys(options).some(
       (key) =>
-        !["controlSource", "gimbal", "terrain", "spawn", "home"].includes(key),
+        !["controlSource", "gimbal", "terrain", "spawn", "home", "collisionPrevention"].includes(key),
     )
   )
     throw new Error(
-      "Simulation options must contain only controlSource, gimbal, terrain, spawn and home",
+      "Simulation options must contain only controlSource, gimbal, terrain, spawn, home and collisionPrevention",
     );
   const controlSource = options.controlSource ?? "internal";
   if (!["internal", "external"].includes(controlSource))
@@ -265,6 +266,9 @@ export function createSimulation(configuration = {}, options = {}) {
     throw new Error(
       "Invalid physical spawn; altitude is AGL and must match ground/air start",
     );
+  const initialCollisionPrevention = validateCollisionPreventionSettings(options.collisionPrevention);
+  if (initialCollisionPrevention.enabled && (config.airframe === "fixedwing" || external)) throw Error("Collision prevention requires an internal multirotor or hovering VTOL");
+  let collisionPreventionSettings = initialCollisionPrevention, collisionPreventionState = null, collisionPreventionPeers = [];
   const initialGimbal = validateGimbalSettings(options.gimbal);
   const initialTerrain = createTerrain(options.terrain).data;
   if (external && initialTerrain.kind !== "flat")
@@ -424,6 +428,9 @@ export function createSimulation(configuration = {}, options = {}) {
         Math.sqrt(-2 * Math.log(random())) *
         Math.cos(2 * Math.PI * random());
   function reset() {
+    collisionPreventionSettings = { ...initialCollisionPrevention };
+    collisionPreventionState = collisionPreventionInactive(collisionPreventionSettings);
+    collisionPreventionPeers = [];
     terrain = createTerrain(initialTerrain);
     altitudeReference = "datum";
     externalInput = null;
@@ -927,6 +934,7 @@ export function createSimulation(configuration = {}, options = {}) {
     };
   }
   function setTransition(value) {
+    if (value === "cruise" && collisionPreventionSettings.enabled) throw Error("Disable collision prevention before VTOL cruise transition");
     if (config.airframe !== "vtol")
       throw new Error("Transition is only available for lift+cruise VTOL");
     if (!["hover", "cruise"].includes(value))
@@ -1490,6 +1498,7 @@ export function createSimulation(configuration = {}, options = {}) {
     }
     explicitPosition = false;
     navigation.targetPosition = [positionTarget.north, positionTarget.east];
+    refreshCollisionPreventionState();
   }
   function setMode(mode) {
     if (
@@ -1825,11 +1834,13 @@ export function createSimulation(configuration = {}, options = {}) {
   function setNistLane(enabled) {
     if (typeof enabled !== "boolean") throw new Error("Invalid NIST lane enabled");
     nistCollider = enabled ? createNistLaneCollider() : null;
+    refreshCollisionPreventionState();
   }
   function setObstacles(boxes) {
     obstacles = validateObstacles(boxes).map((box) =>
       obstacleBounds(box, collisionRadius),
     );
+    refreshCollisionPreventionState();
   }
   function intersectsBox(from, to, bounds) {
     // Conservative expanded-AABB sweep of the CG envelope, not mesh contact or elastic impact.
@@ -1868,7 +1879,25 @@ export function createSimulation(configuration = {}, options = {}) {
     safetyReason = reason;
     enterMode(mode, reason);
   }
+  function refreshCollisionPreventionState() {
+    collisionPreventionState = collisionPreventionInactive(collisionPreventionSettings);
+    if (collisionPreventionState && ["position", "mission", "rtl", "land"].includes(navigation.mode) &&
+        !fixedWing && (!hasWing || (transition === "hover" && transitionProgress === 0))) {
+      collisionPreventionState.applicable = true;
+      collisionPreventionState.reason = "clear";
+    }
+  }
+  function setCollisionPrevention(value) {
+    if (value === undefined) throw Error("Collision prevention requires complete settings");
+    const next = validateCollisionPreventionSettings(value);
+    if (next.enabled && (external || fixedWing || (hasWing && (transition !== "hover" || transitionProgress !== 0))))
+      throw Error("Collision prevention requires an internal multirotor or fully hovering VTOL");
+    collisionPreventionSettings = next;
+    refreshCollisionPreventionState();
+    return { ...next };
+  }
   function navigate(dt) {
+    refreshCollisionPreventionState();
     if (
       !armed ||
       crashed ||
@@ -1970,13 +1999,24 @@ export function createSimulation(configuration = {}, options = {}) {
       0.7,
       3 / Math.max(1e-9, Math.hypot(...errors)),
     );
-    let acceleration = errors.map(
-      (v, i) =>
-        2.2 * (v * velocityScale - observed.velocity[i]) +
-        0.12 * horizontalIntegral[i],
+    const desiredVelocityNe = errors.map(v => v * velocityScale);
+    let acceleration = desiredVelocityNe.map(
+      (v, i) => 2.2 * (v - observed.velocity[i]) + 0.12 * horizontalIntegral[i],
     );
+    if (collisionPreventionSettings.enabled && (!hasWing || (transition === "hover" && transitionProgress === 0))) {
+      collisionPreventionState = constrainHorizontalMotion({
+        settings: collisionPreventionSettings, positionNed: state.slice(0, 3),
+        velocityNe: state.slice(3, 5), desiredVelocityNe, radius: collisionRadius,
+        obstacles, nistCollider, peers: collisionPreventionPeers,
+      });
+      if (collisionPreventionState.active) {
+        horizontalIntegral = [0, 0];
+        acceleration = collisionPreventionState.commandedAccelerationNe;
+      }
+    }
     const scale = Math.min(1, 3 / Math.max(1e-9, Math.hypot(...acceleration)));
     acceleration = acceleration.map((v) => v * scale);
+    if (collisionPreventionState?.applicable) collisionPreventionState.commandedAccelerationNe = [...acceleration];
     const yaw = observed.attitude[2],
       north = acceleration[0],
       east = acceleration[1];
@@ -2112,6 +2152,9 @@ export function createSimulation(configuration = {}, options = {}) {
     const nistGeometry = nistCollider;
     const restoreGimbal = gimbal.checkpoint();
     const saved = structuredClone({
+      collisionPreventionSettings,
+      collisionPreventionState,
+      collisionPreventionPeers,
       state,
       time,
       target,
@@ -2180,6 +2223,9 @@ export function createSimulation(configuration = {}, options = {}) {
       nistCollider = nistGeometry;
       restoreGimbal();
       ({
+        collisionPreventionSettings,
+        collisionPreventionState,
+        collisionPreventionPeers,
         state,
         time,
         target,
@@ -2519,6 +2565,7 @@ export function createSimulation(configuration = {}, options = {}) {
       clearance = -state[2] - surface.heightM;
     return {
       time,
+      collisionPrevention: structuredClone(collisionPreventionState),
       gimbal: gimbal.snapshot(),
       ground: {
         heightM: surface.heightM,
@@ -2633,6 +2680,8 @@ export function createSimulation(configuration = {}, options = {}) {
   reset();
   return {
     checkpoint,
+    setCollisionPrevention,
+    setCollisionPreventionPeers: peers => { collisionPreventionPeers = structuredClone(peers); },
     crash: internalCommand(crash),
     setWind: internalCommand(setWind),
     setTerrain: internalCommand(setTerrain),

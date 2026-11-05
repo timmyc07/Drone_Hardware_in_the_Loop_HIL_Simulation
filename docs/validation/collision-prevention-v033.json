@@ -1,0 +1,508 @@
+{
+  "version": "0.33.0",
+  "date": "2026-11-05",
+  "scope": "Known-scene horizontal collision prevention for internal position-controlled hovering vehicles; full market-wide objective remains in progress.",
+  "formats": {
+    "recording": 20,
+    "model": "0.14.0",
+    "api": "2.9",
+    "csvColumns": 215,
+    "scene": 7,
+    "cameraDataset": 5,
+    "nativeRecording": 1,
+    "nativeModelMarkerRequired": "0.14.0"
+  },
+  "tests": {
+    "passed": 562,
+    "failed": 0,
+    "durationMs": 98163.727125,
+    "log": "full-tests.log"
+  },
+  "browser": {
+    "off": {
+      "file": "browser-off.json",
+      "frames": 3966,
+      "ticks": 39640,
+      "seconds": 198.19999999989224,
+      "status": "crashed",
+      "reason": "obstacle-collision",
+      "positionNed": [
+        7.131474662146227,
+        9.348625054669664e-17,
+        -2.001276260467803
+      ],
+      "speedMps": 0,
+      "targetPosition": [
+        20,
+        0
+      ],
+      "prevention": null,
+      "minimumWallClearanceM": -0.01147466214622661,
+      "activeFrames": 0
+    },
+    "on": {
+      "file": "browser-on.json",
+      "frames": 3939,
+      "ticks": 39367,
+      "seconds": 196.83499999989348,
+      "status": "flying",
+      "reason": "",
+      "positionNed": [
+        2.2482195073169633,
+        2.1493703906134553e-17,
+        -1.9999531970523239
+      ],
+      "speedMps": 2.2897545572218477e-9,
+      "targetPosition": [
+        20,
+        0
+      ],
+      "prevention": {
+        "applicable": true,
+        "active": true,
+        "reason": "obstacle",
+        "obstacleType": "obstacle",
+        "obstacleId": "0",
+        "desiredVelocityNe": [
+          3,
+          -4.111432195093959e-18
+        ],
+        "constrainedVelocityNe": [
+          0,
+          0
+        ],
+        "commandedAccelerationNe": [
+          5.028683845421419e-16,
+          1.2518538347308153e-15
+        ],
+        "clearanceM": 1
+      },
+      "minimumWallClearanceM": 4.816262951236584,
+      "activeFrames": 3816
+    },
+    "short": {
+      "file": "browser-short-on.json",
+      "frames": 320,
+      "ticks": 3175,
+      "seconds": 15.875000000001082,
+      "status": "flying",
+      "reason": "",
+      "positionNed": [
+        2.2535887200105225,
+        1.400366798446336e-16,
+        -1.9999606104647238
+      ],
+      "speedMps": 0.039268718006958934,
+      "targetPosition": [
+        20,
+        0
+      ],
+      "prevention": {
+        "applicable": true,
+        "active": true,
+        "reason": "obstacle",
+        "obstacleType": "obstacle",
+        "obstacleId": "0",
+        "desiredVelocityNe": [
+          3,
+          -2.363598197500163e-17
+        ],
+        "constrainedVelocityNe": [
+          0,
+          0
+        ],
+        "commandedAccelerationNe": [
+          0.08538212500636282,
+          -8.7680011718352e-17
+        ],
+        "clearanceM": 1
+      },
+      "minimumWallClearanceM": 4.815569663719496,
+      "activeFrames": 206
+    },
+    "replays": {
+      "off": {
+        "passed": true,
+        "vehicles": 1,
+        "frames": 3966,
+        "ticks": 39640,
+        "simSeconds": 198.19999999989224,
+        "maximum": {
+          "positionM": 8.881784197001252e-16,
+          "quaternion": 2.220446049250313e-16,
+          "motors": 2.220446049250313e-16,
+          "allState": 1.1368683772161603e-12,
+          "sensors": 3.197442310920451e-13
+        }
+      },
+      "on": {
+        "passed": true,
+        "vehicles": 1,
+        "frames": 3939,
+        "ticks": 39367,
+        "simSeconds": 196.83499999989348,
+        "maximum": {
+          "positionM": 9.769962616701378e-15,
+          "quaternion": 7.743485129149385e-16,
+          "motors": 4.440892098500626e-16,
+          "allState": 5.9117155615240335e-12,
+          "sensors": 7.744915819785092e-13
+        }
+      },
+      "short": {
+        "passed": true,
+        "vehicles": 1,
+        "frames": 320,
+        "ticks": 3175,
+        "simSeconds": 15.875000000001082,
+        "maximum": {
+          "positionM": 4.440892098500626e-15,
+          "quaternion": 3.3306690738754696e-16,
+          "motors": 3.3306690738754696e-16,
+          "allState": 1.5916157281026244e-12,
+          "sensors": 6.181721801112872e-13
+        }
+      },
+      "settings": {
+        "passed": true,
+        "vehicles": 1,
+        "frames": 320,
+        "ticks": 3175,
+        "simSeconds": 15.875000000001082,
+        "maximum": {
+          "positionM": 4.440892098500626e-15,
+          "quaternion": 3.3306690738754696e-16,
+          "motors": 3.3306690738754696e-16,
+          "allState": 1.5916157281026244e-12,
+          "sensors": 6.181721801112872e-13
+        }
+      }
+    },
+    "roundtripParsedJsonEqual": true,
+    "csv": {
+      "columns": 215,
+      "rows": 320,
+      "tailHeader": [
+        "collision_prevention_enabled_boolean",
+        "collision_prevention_applicable_boolean",
+        "collision_prevention_active_boolean",
+        "collision_prevention_reason",
+        "collision_prevention_obstacle_type",
+        "collision_prevention_obstacle_id",
+        "collision_prevention_desired_velocity_n_m_s",
+        "collision_prevention_desired_velocity_e_m_s",
+        "collision_prevention_constrained_velocity_n_m_s",
+        "collision_prevention_constrained_velocity_e_m_s",
+        "collision_prevention_commanded_acceleration_n_m_s2",
+        "collision_prevention_commanded_acceleration_e_m_s2",
+        "collision_prevention_clearance_m"
+      ]
+    },
+    "settingsOnly": {
+      "timePreserved": true,
+      "framesPreserved": true,
+      "eventRecorded": true,
+      "clearanceM": 2
+    },
+    "modelReset": {
+      "tick": 0,
+      "massKg": 1.3,
+      "clearanceM": 3,
+      "redundantPreventionEvents": 0
+    },
+    "roster": {
+      "vehicles": 2,
+      "clearancesM": [
+        3,
+        4
+      ],
+      "visibleDraftPreserved": true,
+      "unsupportedFixedWingRejectedWithoutWorldMutation": true
+    },
+    "eventUi": {
+      "details": "事件 1 / 1：幾何防撞設定 · 0.000 秒 · 飛行器 1（drone-1）"
+    },
+    "mobile": {
+      "width": 390,
+      "overflow": false
+    },
+    "screenshot": "cp-release-preview.png"
+  },
+  "native": {
+    "px4": {
+      "simSeconds": 91.40000000001977,
+      "hoverSeconds": 60.02000000000763,
+      "altitudeRmseM": 0.005995782942579622,
+      "maxHorizontalM": 0.36767265411964817,
+      "prevention": null,
+      "replay": {
+        "passed": true,
+        "bootstrapTicks": 41,
+        "acceptedActuators": 22809,
+        "checkedSamples": 1826,
+        "simSeconds": 91.40000000001977,
+        "maxPositionErrorM": 0,
+        "maxQuaternionError": 0,
+        "maxMotorError": 0,
+        "maxBatteryError": 0,
+        "maxPropulsionError": 0
+      }
+    },
+    "ardupilot": {
+      "simSeconds": 126.0670000002379,
+      "hoverSeconds": 60.00800000023724,
+      "altitudeRmseM": 0.0019400138441692946,
+      "maxHorizontalM": 0.29408153576814827,
+      "prevention": null,
+      "replay": {
+        "passed": true,
+        "bootstrapTicks": 1007,
+        "acceptedActuators": 126067,
+        "checkedSamples": 2523,
+        "simSeconds": 126.0670000002379,
+        "maxPositionErrorM": 0,
+        "maxQuaternionError": 0,
+        "maxMotorError": 0,
+        "maxBatteryError": 0,
+        "maxPropulsionError": 0
+      }
+    }
+  },
+  "productionLimits": {
+    "time": {
+      "ticks": 360000,
+      "frames": 36001,
+      "retainedBytes": 99618756,
+      "limitBytes": 100663296
+    },
+    "storage": {
+      "ticks": 2090,
+      "frames": 210,
+      "retainedBytes": 100685199,
+      "limitBytes": 100663296,
+      "retainsFinalAtomicFrame": true
+    },
+    "nist": {
+      "ticks": 120000,
+      "frames": 12001,
+      "retainedBytes": 41315535,
+      "spareBytes": 59347761,
+      "replayAllErrorsZero": true
+    }
+  },
+  "catalog": {
+    "total": 73,
+    "status": {
+      "implemented": 8,
+      "partial": 57,
+      "external": 8
+    }
+  },
+  "sources": [
+    {
+      "file": "web/collision-prevention.js",
+      "sha256": "ef8ec166ae98d6017ef6060945ad45073150a5d41009d6f156bd0f01973a0b97"
+    },
+    {
+      "file": "web/sim.js",
+      "sha256": "7c0f3e394ae7f2e191fef72b48d645a5be4b1034d891c02baa4089c81a5b710c"
+    },
+    {
+      "file": "web/world.js",
+      "sha256": "444aabce188c1bf3bbb5e1ed1a4c41fcb40bfdd22246b9af1de25d1d5ee7aae0"
+    },
+    {
+      "file": "web/worker.js",
+      "sha256": "6bcb4362c50b9a340b174b7ff2b6cad84031b1ec3d0b3d23218c10a5ff7ae321"
+    },
+    {
+      "file": "web/api.js",
+      "sha256": "7620d28c313e751dc28d712729ff3c313b60e38208a6496beef898d50f7cfcb7"
+    },
+    {
+      "file": "web/recording.js",
+      "sha256": "18f979ad211e42155099e230cb0765c9d0edf6b48a7029ff5e9c11216671eba9"
+    },
+    {
+      "file": "web/main.js",
+      "sha256": "048da6f84df6e6695c487a9761fe3e3c72ac8c4e512703191f101571036eab56"
+    },
+    {
+      "file": "web/index.html",
+      "sha256": "228b30a7a47dd071687e58b27dda24a26f8329ddf7026e6079389aa3140a48bd"
+    },
+    {
+      "file": "web/collision-prevention-panel.js",
+      "sha256": "a9f172bd3b682d5cb18368582b0a4266f286c62512ac34904854355667467648"
+    },
+    {
+      "file": "web/replay-controls.js",
+      "sha256": "15fea52db8833791ed0de45dd9f6e6adbcece5c583cdd5d4fd44a6c4af89a2f1"
+    },
+    {
+      "file": "companion/replay.js",
+      "sha256": "bec9ae91872431b513ada1363f335fbaacab31bce203168eb9b6d525f164ac7b"
+    }
+  ],
+  "artifacts": [
+    {
+      "file": "full-tests.log",
+      "bytes": 58739,
+      "sha256": "fc4700d10911e7d822fda95def78218cbde30de3c55efc39b6ad555c959425d0"
+    },
+    {
+      "file": "build-final.log",
+      "bytes": 1180,
+      "sha256": "b79679241dc4ed6e70f565eea5a919481653f434faafa1932c2bbbc6193fbf7b"
+    },
+    {
+      "file": "core-focused.log",
+      "bytes": 10432,
+      "sha256": "391cc4feeadbf19764687c066c12345f4e528e966ddb827bad06f3aa9b6743b6"
+    },
+    {
+      "file": "matrix-focused.log",
+      "bytes": 2460,
+      "sha256": "c20ba6fb8ca57254431bd1dcb98098ec45f71c7e0d48c9eb1e70369bc02d91ff"
+    },
+    {
+      "file": "numeric-bounds-focused.log",
+      "bytes": 876,
+      "sha256": "f4ebedd518d29be8fd3bb07871fe939f0957a7771bcbcbbda817df60421dba50"
+    },
+    {
+      "file": "wall.scene.json",
+      "bytes": 560,
+      "sha256": "29e059e545c7282fc40b3e0af379fe6589a4a90c738322b57ac351c0176dc879"
+    },
+    {
+      "file": "research-sources.json",
+      "bytes": 810,
+      "sha256": "ff5c7253431ecb7ad02336e96fc3ebeb7755af3b46fbb3963baaa1555ba4d76e"
+    },
+    {
+      "file": "browser-off.json",
+      "bytes": 100684809,
+      "sha256": "a826b098d2294e153018b3c329ed12147005059ca17f4a8e4bbcd14967a83c2b"
+    },
+    {
+      "file": "browser-off-replay.json",
+      "bytes": 325,
+      "sha256": "deb26f8536ee7c8e83da24e6d7a74bb6b4a731d56fae88b56f6e37d04c4b2549"
+    },
+    {
+      "file": "browser-on.json",
+      "bytes": 98825385,
+      "sha256": "4d86b49b2f5d7c77505b7b952fa5ad72fc4c2f7689646a6108a7cc7a8a2b30c5"
+    },
+    {
+      "file": "browser-on-replay.json",
+      "bytes": 325,
+      "sha256": "95b85969a7da9ea1f237edf33c8ad37a16f230c22591e3c18adaf8a1b88f0599"
+    },
+    {
+      "file": "browser-short-on.json",
+      "bytes": 7907586,
+      "sha256": "d0af3deedb51c336557c4cd3c219a4b82df067d1c9bf57eb39be3e0ece58a30d"
+    },
+    {
+      "file": "browser-short-reexported.json",
+      "bytes": 7907586,
+      "sha256": "d0af3deedb51c336557c4cd3c219a4b82df067d1c9bf57eb39be3e0ece58a30d"
+    },
+    {
+      "file": "browser-short-on.csv",
+      "bytes": 647089,
+      "sha256": "7d06e1a9cd6b83df66ed63683063d0b42f1f39187e3eb5bcce3acff17eebfbfa"
+    },
+    {
+      "file": "browser-short-replay.json",
+      "bytes": 325,
+      "sha256": "addd36d10959c82a252736a38f73ab1edd5c6f161f9aa612ac4cba8c74fd4dc5"
+    },
+    {
+      "file": "browser-settings-only.json",
+      "bytes": 7907705,
+      "sha256": "613978d11933df5667fa4eeb089b9b446a7464ab8c48cfa4067ab1faf9f593ee"
+    },
+    {
+      "file": "browser-settings-replay.json",
+      "bytes": 325,
+      "sha256": "addd36d10959c82a252736a38f73ab1edd5c6f161f9aa612ac4cba8c74fd4dc5"
+    },
+    {
+      "file": "browser-model-reset.json",
+      "bytes": 10769,
+      "sha256": "bae2718872207ccf2626dc63e5237ae55fab50c6660058397249af7d27453b2a"
+    },
+    {
+      "file": "browser-roster-settings.json",
+      "bytes": 18126,
+      "sha256": "b1ad2dd5a290c43dbd2f9e092a76387f137f2a7748f179a5ba073b72042b3e5a"
+    },
+    {
+      "file": "browser-unsupported-rejected.json",
+      "bytes": 18126,
+      "sha256": "b1ad2dd5a290c43dbd2f9e092a76387f137f2a7748f179a5ba073b72042b3e5a"
+    },
+    {
+      "file": "unsupported-ui-verification.json",
+      "bytes": 93,
+      "sha256": "3abb018af9e160c08993d91af0811e8d7e9029110d7f6544144e8a75c01d7b43"
+    },
+    {
+      "file": "mobile-verification.json",
+      "bytes": 159,
+      "sha256": "877d4dd6cc4bb806df41f4a6e3b41e512d1ec96f44056ee67e5ca3aa88d092ef"
+    },
+    {
+      "file": "event-ui-verification.json",
+      "bytes": 94,
+      "sha256": "f4ad5e1b6b9009c6493fe8207f3a7ccbb3c68f900b66da95b8f10e3f4f1d2286"
+    },
+    {
+      "file": "cp-release-preview.png",
+      "bytes": 89898,
+      "sha256": "adcf8305859f68e490878ebb485e7a80ff5e346d23077d1d6fa63c1915de13df"
+    },
+    {
+      "file": "px4/summary.json",
+      "bytes": 9730,
+      "sha256": "b1daee24f3794f4583c9b18abfdd239b4a070eda013bb2876c4020a0df503db1"
+    },
+    {
+      "file": "px4/recording.json",
+      "bytes": 11883620,
+      "sha256": "56fbd26455c1e1b56ea2300211917fe24a5f65183069fff4df7762fc6ae5c26e"
+    },
+    {
+      "file": "px4/replay.json",
+      "bytes": 262,
+      "sha256": "2775ea4432a11c388927b796194ea9ce00103c26680b800a8b494aab0abc2e3a"
+    },
+    {
+      "file": "ardupilot/summary.json",
+      "bytes": 18320,
+      "sha256": "a12f68d67df789085bf6d96066e11ed2c91acef990161493698132261699c928"
+    },
+    {
+      "file": "ardupilot/recording.json",
+      "bytes": 36884689,
+      "sha256": "45af51a2af3a8f1e81c715ff5d2242388523118785049082b45a73eb09b55b3c"
+    },
+    {
+      "file": "ardupilot/replay.json",
+      "bytes": 265,
+      "sha256": "4c3add312100b93979170afe47d57f050596397ade9b1a586767f0ffa010d67f"
+    }
+  ],
+  "limitations": [
+    "Uses known scene boxes, shared NIST mesh and peer envelopes; no sensor feedback or unknown-obstacle protection.",
+    "Horizontal braking only; no route planning or terrain protection.",
+    "Only internal multirotors and fully hovering VTOL position-controlled modes; native and fixed-wing enabling rejected.",
+    "Configured braking and delay are educational assumptions; wind, failed propulsion or insufficient stopping distance may still cause real simulated collisions.",
+    "CP settings retained within the flight/recording, reset to disabled after page reload.",
+    "Browser floating-point replay tolerance remains the existing 1e-9, not expanded for this feature.",
+    "Old internal schema 1-19 and native recordings without current model marker are rejected."
+  ]
+}

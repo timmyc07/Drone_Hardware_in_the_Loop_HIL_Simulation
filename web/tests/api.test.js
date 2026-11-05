@@ -11,7 +11,7 @@ test("vehicle operations require and preserve explicit vehicle IDs", async () =>
     },
     () => () => {},
   );
-  assert.equal(api.version, "2.8");
+  assert.equal(api.version, "2.9");
   await api.getState("one");
   const target = { altitude: 3 };
   await api.setTargets("two", target);
@@ -138,4 +138,17 @@ test("NIST commands require explicit vehicle IDs and isolate values and reports"
     assert.throws(() => api[method]("bad id", {}), /vehicleId/);
     assert.throws(() => api[method](), /vehicleId/);
   }
+});
+
+
+test('collision prevention reads and writes explicit vehicles with isolated settings and state', async () => {
+  const calls = [], result = { settings: { enabled: false }, state: null };
+  const api = createFlightApi(async c => { calls.push(c); return result; }, () => () => {});
+  const settings = { enabled: true, clearanceM: 1, responseDelaySeconds: .6, brakeAccelerationMps2: 2 };
+  await api.setCollisionPrevention('B.2', settings); settings.clearanceM = 5;
+  const response = await api.getCollisionPrevention('B.2'); response.settings.enabled = true;
+  assert.deepEqual(calls, [{ type: 'collisionPrevention', vehicleId: 'B.2', value: { enabled: true, clearanceM: 1, responseDelaySeconds: .6, brakeAccelerationMps2: 2 } }, { type: 'inspectCollisionPrevention', vehicleId: 'B.2' }]);
+  assert.equal(result.settings.enabled, false);
+  assert.throws(() => api.setCollisionPrevention(undefined, settings), /vehicleId/);
+  assert.throws(() => api.getCollisionPrevention('bad id'), /vehicleId/);
 });

@@ -403,7 +403,7 @@ test("radar exports identify the requested vehicle and retain delayed acquisitio
     "number",
   );
   const record = validateRecording(raw);
-  assert.equal(record.version, 19);
+  assert.equal(record.version, 20);
   replay(record);
 });
 
@@ -435,7 +435,7 @@ test("proximity exports preserve the requested vehicle, delayed pose and fault s
   assert.ok(faulted.reading.rangesM.every(v => v === null));
   assert.ok(faulted.reading.tooClose.every(v => v === false));
   const record = validateRecording(await h.call({ type: "apiExport" }));
-  assert.equal(record.version, 19);
+  assert.equal(record.version, 20);
   assert.equal(record.sensorFrames.at(-1).vehicles[1].sensors.faults.proximity, true);
   replay(record);
 });
@@ -570,7 +570,7 @@ test("inspection lease freezes the whole fleet, rejects mutations and mismatched
   );
 });
 
-test("successful inspection submissions hash actual buffers and retain replayable schema19 receipts without resuming an explicit pause", async (t) => {
+test("successful inspection submissions hash actual buffers and retain replayable schema20 receipts without resuming an explicit pause", async (t) => {
   const h = await harness(t);
   await h.call({ type: "resetWorld", value: inspectionFleet() });
   await h.call({ type: "play" });
@@ -598,7 +598,7 @@ test("successful inspection submissions hash actual buffers and retain replayabl
   assert.equal(inspected.world.vehicles[1].snapshot.inspection.attempts, 0);
   assert.equal((await submitInspection(h, lease, frame)).ok, false);
   const record = validateRecording(await h.call({ type: "apiExport" }));
-  assert.equal(record.version, 19);
+  assert.equal(record.version, 20);
   const event = record.events.find((event) => event.type === "inspection");
   assert.equal(event.tick, lease.world.tick);
   assert.equal(event.value.sha256, expectedHash);
@@ -672,7 +672,7 @@ test("reset or cancel while the real buffer digest is pending cannot commit stal
   }
 });
 
-test('instructor schedules native schema19 events in tick order independent of speed, rendering, selection and pause', async (t) => {
+test('instructor schedules native schema20 events in tick order independent of speed, rendering, selection and pause', async (t) => {
   const records=[];
   for (const fast of [false,true]) {
     const h=await harness(t);
@@ -696,7 +696,7 @@ test('instructor schedules native schema19 events in tick order independent of s
     assert.deepEqual(status.receipts.map(r=>r.tick),[2,2,3,4,5]);
     const record=validateRecording(await h.call({type:'apiExport'}));
     replay(record);
-    assert.equal(record.version,19);assert.equal(Object.hasOwn(record,'instructor'),false);
+    assert.equal(record.version,20);assert.equal(Object.hasOwn(record,'instructor'),false);
     assert.deepEqual(record.events.filter(e=>e.type!=='render').map(({time,...e})=>e),plan.events);
     records.push(record);
   }
@@ -954,7 +954,7 @@ test('operator gimbal commands target independently, ACK canonical settings and 
   assert.deepEqual(state.world.vehicles[0].snapshot.gimbal.target,input.vehicles[0].setup.gimbal.target);
   await h.call({type:'play'}); await h.advance(2); await h.call({type:'pause'});
   const record = validateRecording(JSON.parse(JSON.stringify(await h.call({type:'apiExport'}))));
-  assert.equal(record.version,19);
+  assert.equal(record.version,20);
   assert.deepEqual(record.events[0],{tick:0,time:0,type:'operatorGimbal',vehicleId:'drone-2',value:settings});
   assert.equal(replayWorldRecording(record).passed,true);
   for (const command of [
@@ -999,4 +999,26 @@ test('operator gimbal cannot bypass event or byte storage limits', async t => {
     assert.deepEqual(await h.call({type:'inspectWorld'}),before);
     assert.deepEqual(await h.call({type:'apiExport'}),exported);
   }
+});
+
+
+test('collision prevention Worker reads settings and records canonical per-vehicle mutations with real replay', async t => {
+  const h = await harness(t), input = fleet(2);
+  await h.call({ type:'resetWorld', value:input });
+  const initial = await h.call({type:'inspectCollisionPrevention',vehicleId:'drone-2'});
+  assert.equal(initial.settings.enabled,false); assert.equal(initial.state,null);
+  const settings={ enabled:true, clearanceM:1, responseDelaySeconds:.6, brakeAccelerationMps2:2 };
+  assert.equal((await h.send({type:'collisionPrevention',value:settings})).ok,false);
+  assert.equal((await h.send({type:'collisionPrevention',vehicleId:'drone-2',value:{enabled:true}})).ok,false);
+  await h.call({type:'collisionPrevention',vehicleId:'drone-2',value:settings});
+  const status=await h.call({type:'inspectCollisionPrevention',vehicleId:'drone-2'});
+  assert.deepEqual(status.settings,settings); assert.equal(status.state.reason,'unsupported-mode');
+  assert.equal((await h.call({type:'inspectCollisionPrevention',vehicleId:'drone-1'})).state,null);
+  await h.call({type:'play'}); await h.advance(2); await h.call({type:'pause'});
+  const record=validateRecording(await h.call({type:'apiExport'}));
+  assert.deepEqual(record.events.filter(e=>e.type==='collisionPrevention'),[{tick:0,time:0,type:'collisionPrevention',vehicleId:'drone-2',value:settings}]);
+  assert.equal(replayWorldRecording(record).passed,true);
+  const before=record.events.length;
+  const invalid=await h.send({type:'collisionPrevention',vehicleId:'drone-2',value:{...settings,clearanceM:NaN}});
+  assert.equal(invalid.ok,false); assert.equal((await h.call({type:'apiExport'})).events.length,before);
 });

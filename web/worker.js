@@ -58,6 +58,7 @@ const VEHICLE_COMMANDS = [
   "mode",
   "gimbal",
   "operatorGimbal",
+  "collisionPrevention",
   "transition",
   "position",
   "mission",
@@ -75,6 +76,7 @@ const VEHICLE_READS = [
   "inspect",
   "inspectSensors",
   "inspectGimbal",
+  "inspectCollisionPrevention",
   "pointCloudExport",
   "sensorExport",
   "radarExport",
@@ -324,7 +326,7 @@ onmessage = async ({ data }) => {
       world.command(data.vehicleId, commandType, data.value, data.fault);
       replyVehicle = data.vehicleId;
       // Store canonical setup values rather than partially specified input forms.
-      if (["mission", "gimbal", "sensorConfig"].includes(commandType)) {
+      if (["mission", "gimbal", "sensorConfig", "collisionPrevention"].includes(commandType)) {
         const v = selected(state(), data.vehicleId);
         data = {
           ...data,
@@ -668,6 +670,7 @@ onmessage = async ({ data }) => {
         case "inspectSensors":
         case "inspectScene":
         case "inspectGimbal":
+        case "inspectCollisionPrevention":
         case "apiExport": {
           if (data.requestId === undefined)
             throw new Error("此操作需要程式介面請求編號");
@@ -683,7 +686,9 @@ onmessage = async ({ data }) => {
                     ? selected(value, data.vehicleId).sensors
                     : data.type === "inspectGimbal"
                       ? selected(value, data.vehicleId).snapshot.gimbal
-                      : recording();
+                      : data.type === "inspectCollisionPrevention"
+                        ? { settings: selected(value, data.vehicleId).setup.collisionPrevention, state: selected(value, data.vehicleId).snapshot.collisionPrevention }
+                        : recording();
           postMessage({
             type: "apiReply",
             requestId: data.requestId,

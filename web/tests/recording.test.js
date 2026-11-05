@@ -1,3 +1,5 @@
+import { replayWorldRecording } from "../../tools/replay-world.mjs";
+import { DEFAULT_COLLISION_PREVENTION } from "../collision-prevention.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { AIRFRAMES, rotorCount } from "../rotor-geometry.js";
@@ -199,10 +201,10 @@ const geographicSensors = {
   originVerticalDatum: "orthometric",
 };
 
-test("World19 round trip keeps parallel vehicle frames and 202 stable CSV columns", () => {
+test("World20 round trip keeps parallel vehicle frames and 215 stable CSV columns", () => {
   const input = shortRecord({ vehicles: [{ id: "alpha" }, { id: "beta" }] });
   const clean = roundTrip(input);
-  assert.equal(RECORDING_VERSION, 19);
+  assert.equal(RECORDING_VERSION, 20);
   assert.deepEqual(
     clean.samples[0].vehicles.map((v) => v.id),
     ["alpha", "beta"],
@@ -211,7 +213,7 @@ test("World19 round trip keeps parallel vehicle frames and 202 stable CSV column
   const [header, ...rows] = recordingToCsv(input)
     .split("\n")
     .map((row) => row.split(","));
-  assert.equal(header.length, 202);
+  assert.equal(header.length, 215);
   assert.deepEqual(header.slice(0, 3), ["vehicle_id", "world_tick", "time_s"]);
   assert.equal(header[46], "steps_count");
   assert.equal(header[166], "gps_vertical_datum_code");
@@ -1259,11 +1261,11 @@ test("radar acquisitions survive configuration epochs, packed faults and full-wo
   assert.throws(() => validateRecording(stale), /after/);
   const prior = clone(compact);
   prior.version = 12;
-  assert.throws(() => validateRecording(prior), /version 19/);
+  assert.throws(() => validateRecording(prior), /version 20/);
   const rows = recordingToCsv(f.record)
     .split("\n")
     .map((r) => r.split(","));
-  assert.equal(rows[0].length, 202);
+  assert.equal(rows[0].length, 215);
   assert.deepEqual(rows[0].slice(167, 174), [
     "radar_sample_time_s",
     "radar_valid_boolean",
@@ -1293,7 +1295,7 @@ test("proximity preserves six acquired axes, strict payloads and historical vers
   assert.deepEqual(last.vehicles[1].sensors.proximity, sensorsAt(input, -1, 1).proximity);
   const rows = recordingToCsv(input).split("\n").map((row) => row.split(","));
   const row = rows.at(-2), header = rows[0];
-  assert.equal(header.length, 202);
+  assert.equal(header.length, 215);
   for (const [i, axis] of ["front", "back", "right", "left", "up", "down"].entries()) {
     assert.equal(row[header.indexOf(`proximity_${axis}_range_m`)], String(reading.rangesM[i] ?? ""));
     assert.equal(row[header.indexOf(`proximity_${axis}_too_close_boolean`)], String(Number(reading.tooClose[i])));
@@ -1412,13 +1414,13 @@ test("compact proximity empty ranges and exact identity poses expand without los
 });
 
 
-test('battery supply metadata survives schema19 JSON and CSV with strict new field validation', () => {
+test('battery supply metadata survives schema20 JSON and CSV with strict new field validation', () => {
   const input = shortRecord(), clean = roundTrip(input);
   const battery = stateAt(clean).battery;
   assert.deepEqual(battery, stateAt(validateRecording(input)).battery);
   const [header, row] = recordingToCsv(input).split('\n').map(line => line.split(','));
-  assert.deepEqual(header.slice(-3), ['battery_open_circuit_voltage_V', 'battery_motor_speed_scale_fraction', 'battery_power_limited_boolean']);
-  assert.deepEqual(row.slice(-3), [String(battery.openCircuitVoltage), String(battery.motorSpeedScale), String(Number(battery.powerLimited))]);
+  assert.deepEqual(header.slice(199, 202), ['battery_open_circuit_voltage_V', 'battery_motor_speed_scale_fraction', 'battery_power_limited_boolean']);
+  assert.deepEqual(row.slice(199, 202), [String(battery.openCircuitVoltage), String(battery.motorSpeedScale), String(Number(battery.powerLimited))]);
   rejects(input, [
     r => { r.version = 18; }, r => { r.modelVersion = '0.12.0'; },
     r => { delete stateAt(r).battery[8]; },
@@ -1430,7 +1432,7 @@ test('battery supply metadata survives schema19 JSON and CSV with strict new fie
 });
 
 
-test('schema19 battery packs eleven lossless fields and rejects malformed packed boundaries', () => {
+test('schema20 battery packs eleven lossless fields and rejects malformed packed boundaries', () => {
   const input = shortRecord(), clean = validateRecording(input), packed = stateAt(input).battery;
   const fields = ['soc','voltage','current','power','usedWh','remainingSeconds','low','critical','openCircuitVoltage','motorSpeedScale','powerLimited'];
   assert.equal(packed.length, 11);
@@ -1449,4 +1451,52 @@ test('schema19 battery packs eleven lossless fields and rejects malformed packed
     r => { stateAt(r).battery.extra = 1; },
   ]);
   rejects(clean, [r => { stateAt(r).battery.extra = 1; }, r => { delete stateAt(r).battery.powerLimited; }]);
+});
+
+
+test('collision prevention epochs preserve per-vehicle settings and lossless packed state through independent replay and CSV', () => {
+  const f = fixture({ scene: { ...clone(DEFAULT_SCENE), obstacles: [{ north: 5, east: 0, width: 2, depth: 4, height: 5, baseAltitude: 0 }] }, vehicles: [{ id:'alpha' }, { id:'beta' }] });
+  f.step(7);
+  const enabled = { ...DEFAULT_COLLISION_PREVENTION, enabled: true };
+  f.command('collisionPrevention', enabled, 'alpha');
+  f.command('mode', 'position', 'alpha');
+  f.command('position', { north:20, east:0, altitude:2 }, 'alpha');
+  f.step(240,10);
+  const input = f.record, clean = roundTrip(input), index = clean.samples.length - 1;
+  assert.equal(stateAt(clean, 0).collisionPrevention, null);
+  assert.ok(clean.samples.some(frame => frame.vehicles[0].snapshot.collisionPrevention?.active));
+  assert.equal(stateAt(clean, -1, 1).collisionPrevention, null);
+  const packed = stateAt(input, -1).collisionPrevention;
+  assert.equal(packed.length, 12);
+  const state = stateAt(clean, -1).collisionPrevention;
+  assert.deepEqual(packed, [state.applicable,state.active,state.reason,state.obstacleType,state.obstacleId,...state.desiredVelocityNe,...state.constrainedVelocityNe,...state.commandedAccelerationNe,state.clearanceM]);
+  assert.deepEqual(recordingWorldAt(clean,index).vehicles[0].setup.collisionPrevention, enabled);
+  assert.equal(recordingWorldAt(clean,index).vehicles[1].setup.collisionPrevention.enabled, false);
+  assert.equal(replayWorldRecording(clean).passed, true);
+  const rows = recordingToCsv(input).split('\n').map(row => row.split(','));
+  assert.equal(rows[0].length, 215); assert.equal(rows[1][202], '0'); assert.ok(rows[1].slice(203).every(v => v === ''));
+  const alpha = rows.at(-2); assert.equal(alpha[202], '1'); assert.equal(alpha[205], state.reason);
+  assert.equal(alpha[214], String(state.clearanceM));
+  rejects(input, [
+    r => { r.version = 19; },
+    r => { r.modelVersion = '0.13.0'; },
+    r => { stateAt(r,-1).collisionPrevention.pop(); },
+    r => { stateAt(r,-1).collisionPrevention.push(0); },
+    r => { delete stateAt(r,-1).collisionPrevention[5]; },
+    r => { stateAt(r,-1).collisionPrevention[0] = 1; },
+    r => { stateAt(r,-1).collisionPrevention[2] = 'fake'; },
+    r => { stateAt(r,-1).collisionPrevention[5] = Infinity; },
+    r => { stateAt(r,-1).collisionPrevention[11] = 2; },
+    r => { stateAt(r,-1).collisionPrevention = null; },
+    r => { stateAt(r,0).collisionPrevention = packed; },
+    r => { r.events.find(e => e.type === 'collisionPrevention').value.extra = true; },
+    r => { const p=stateAt(r,-1).collisionPrevention; p[0]=true;p[1]=true;p[2]='peer';p[3]='peer';p[4]='=SUM(1,2)\nforged'; },
+    r => { const p=stateAt(r,-1).collisionPrevention; p[0]=true;p[1]=true;p[2]='peer';p[3]='peer';p[4]='missing'; },
+    r => { const p=stateAt(r,-1).collisionPrevention; p[0]=true;p[1]=true;p[2]='obstacle';p[3]='obstacle';p[4]='49'; },
+  ]);
+  f.command('collisionPrevention', DEFAULT_COLLISION_PREVENTION, 'alpha');
+  const disabled = roundTrip(f.record);
+  assert.equal(stateAt(disabled,-1).collisionPrevention, null);
+  assert.equal(recordingWorldAt(disabled,disabled.samples.length-1).vehicles[0].setup.collisionPrevention.enabled,false);
+  assert.equal(replayWorldRecording(disabled).passed, true);
 });

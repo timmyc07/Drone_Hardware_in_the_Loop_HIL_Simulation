@@ -15,6 +15,8 @@ import { exportVehiclePointCloud } from "./pointcloud.js";
 import { exportRadarData } from "./radar.js";
 import { exportProximityData, PROXIMITY_BOUNDS } from "./proximity.js";
 import { createProximityPanel } from "./proximity-panel.js";
+import { formatCollisionPrevention } from "./collision-prevention-panel.js";
+import { DEFAULT_COLLISION_PREVENTION, validateCollisionPreventionSettings } from "./collision-prevention.js";
 import { formatBattery } from "./battery-panel.js";
 import { createInstructorPanel } from "./instructor-panel.js";
 import { createNistPanel } from "./nist-panel.js";
@@ -212,6 +214,7 @@ function sendWorker(command) {
     }
     const previousAirframe = vehicle.config.airframe;
     vehicle.config = { ...nextConfig };
+    if (command.collisionPrevention) vehicle.setup.collisionPrevention = command.collisionPrevention;
     vehicle.scenario = command.scenario || scenario;
     vehicle.spawn.altitude = nextConfig.startOnGround
       ? 0
@@ -781,8 +784,13 @@ function populateConfig(values) {
     $(`config-${key}`).value = Number((values[key] * factor).toFixed(8));
   $("settings-error").textContent = "";
 }
+let settingsVehicleId;
 $("settings-open").onclick = () => {
   if (!latest?.gimbal) return toast("模型正在初始化，請稍候再開啟參數。");
+  settingsVehicleId = activeVehicleId;
+  const cp = worldConfig.vehicles.find((vehicle) => vehicle.id === settingsVehicleId).setup.collisionPrevention;
+  $("cp-enabled").checked = cp.enabled;
+  for (const key of ["clearanceM", "responseDelaySeconds", "brakeAccelerationMps2"]) $(`cp-${key}`).value = cp[key];
   populateConfig(config);
   populateSensorConfig(sensorConfig);
   populateCameraConfig(cameraConfig);
@@ -802,13 +810,21 @@ $("settings-default").onclick = () => {
   populateConfig({ ...DEFAULT_CONFIG, startOnGround });
   populateSensorConfig(DEFAULT_SENSOR_CONFIG);
   populateCameraConfig(DEFAULT_CAMERA_CONFIG);
+  $("cp-enabled").checked = DEFAULT_COLLISION_PREVENTION.enabled;
+  for (const key of ["clearanceM", "responseDelaySeconds", "brakeAccelerationMps2"]) $(`cp-${key}`).value = DEFAULT_COLLISION_PREVENTION[key];
   for (const axis of ["yaw", "pitch", "roll"])
     $("gimbal-rate-" + axis).value = 90;
 };
 $("settings-form").onsubmit = async (event) => {
   event.preventDefault();
   try {
+    if (settingsVehicleId !== activeVehicleId) throw new Error("載具已變更，請重新開啟參數。");
     const selectedAirframe = $("config-airframe").value;
+    const previousCp = worldConfig.vehicles.find((vehicle) => vehicle.id === settingsVehicleId).setup.collisionPrevention;
+    const nextCp = validateCollisionPreventionSettings({ enabled: $("cp-enabled").checked, clearanceM: Number($("cp-clearanceM").value), responseDelaySeconds: Number($("cp-responseDelaySeconds").value), brakeAccelerationMps2: Number($("cp-brakeAccelerationMps2").value) });
+    if (nextCp.enabled && (externalActive || selectedAirframe === "fixedwing")) throw new Error("固定翼與外部飛控不能啟用幾何碰撞預防。");
+    if (nextCp.enabled && selectedAirframe === "vtol" && config.airframe === "vtol" && (latest.flight.transition !== "hover" || latest.flight.transitionProgress !== 0)) throw new Error("VTOL 須完成懸停才能啟用幾何碰撞預防。");
+    const cpChanged = JSON.stringify(nextCp) !== JSON.stringify(previousCp);
     const next =
       selectedAirframe === config.airframe
         ? { ...config }
@@ -866,11 +882,12 @@ $("settings-form").onsubmit = async (event) => {
     )
       return;
     if (!simulationChanged) {
+      if (cpChanged) await requestApi({ type: "collisionPrevention", vehicleId: settingsVehicleId, value: nextCp });
       if (gimbalChanged)
         await requestApi({ type: "gimbal", value: nextGimbal });
       applyCameraConfig(nextCamera);
       $("settings-dialog").close();
-      toast("相機設定已套用。");
+      toast("設定已套用。");
       return;
     }
     config = validated;
@@ -890,7 +907,7 @@ $("settings-form").onsubmit = async (event) => {
       toast("此瀏覽器無法儲存設定，本次實驗仍會使用新參數。");
     }
     $("settings-dialog").close();
-    newExperiment();
+    newExperiment(nextCp);
     sendWorker({ type: "sensorConfig", value: sensorConfig });
     if (gimbalChanged) sendWorker({ type: "gimbal", value: nextGimbal });
     toast("參數已套用，已建立新實驗。");
@@ -903,7 +920,7 @@ document.querySelectorAll("[data-close]").forEach((button) => {
   button.onclick = () => $(button.dataset.close).close();
 });
 
-function newExperiment() {
+function newExperiment(collisionPrevention) {
   clearCameraPreview();
   if (replay && replayPrevious) {
     activeVehicleId = replayPrevious.activeVehicleId;
@@ -931,7 +948,7 @@ function newExperiment() {
     scenario === "step"
       ? "階躍情境自動控制 Roll；其餘指令可即時調整。"
       : "指令即時生效；更換情境會建立新實驗。";
-  sendWorker({ type: "reset", config, scenario });
+  sendWorker({ type: "reset", config, scenario, collisionPrevention });
   setPlaying(false);
   $("reset").setAttribute("aria-label", "重設實驗");
 }
@@ -1435,6 +1452,7 @@ function updateTelemetry() {
   $("transition-controls").hidden = kind !== "vtol";
   for (const id of ["transition-hover", "transition-cruise"])
     $(id).disabled = !!replay || kind !== "vtol";
+  $("transition-cruise").disabled ||= !!worldConfig?.vehicles.find((vehicle) => vehicle.id === activeVehicleId)?.setup.collisionPrevention.enabled;
   $("fault-motor").disabled = $("fault-apply").disabled =
     !!replay || kind === "fixedwing";
   $("fault-pusher").disabled = !!replay || !wing;
@@ -1556,6 +1574,7 @@ function updateTelemetry() {
     $("runtime-status").textContent = "碰撞停機";
     $("view-status").innerHTML = '<span class="dot"></span>碰撞停機';
   }
+  $("collision-prevention-status").textContent = externalActive ? "幾何碰撞預防：外部飛控不適用" : formatCollisionPrevention(s.collisionPrevention);
   const battery = s.battery;
   $("battery-details").textContent = battery
     ? formatBattery(battery)
