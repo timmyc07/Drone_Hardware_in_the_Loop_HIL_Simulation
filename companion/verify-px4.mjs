@@ -1,7 +1,7 @@
+import { createLocalDirectory } from "./local-directory.js";
 // Opt-in real native PX4 proof, not a mock test: node companion/verify-px4.mjs /absolute/path/to/px4 [artifact-directory]
 import assert from "node:assert/strict";
-import { mkdir, writeFile, cp, mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile, cp } from "node:fs/promises";
 import path from "node:path";
 import { Px4Session } from "./px4-session.js";
 const binaryPath = process.argv[2];
@@ -9,7 +9,7 @@ if (!binaryPath)
   throw new Error("Pass the pinned native PX4 v1.17.0 binary path");
 const output =
   process.argv[3] ??
-  (await mkdtemp(path.join(tmpdir(), "flight-lab-px4-proof-")));
+  (await createLocalDirectory("flight-lab-px4-proof-"));
 await mkdir(output, { recursive: true });
 const session = new Px4Session();
 let sent = false,

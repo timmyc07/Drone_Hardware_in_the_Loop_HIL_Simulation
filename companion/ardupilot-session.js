@@ -1,11 +1,11 @@
+import { createLocalDirectory } from "./local-directory.js";
 import { GroundStationBridge } from "./gcs-bridge.js";
 import { ControllerHealth } from "./controller-health.js";
 import { EventEmitter } from "node:events";
 import dgram from "node:dgram";
 import net from "node:net";
 import { spawn } from "node:child_process";
-import { mkdtemp, writeFile, realpath, stat, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile, realpath, stat, rm } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -152,9 +152,7 @@ export class ArduPilotSession extends EventEmitter {
     };
     this.sim = createSimulation(validated, { controlSource: "external" });
     this.send = mavlinkEncoder();
-    this.directory = await mkdtemp(
-      path.join(tmpdir(), "flight-lab-ardupilot-"),
-    );
+    this.directory = await createLocalDirectory("flight-lab-ardupilot-");
     try {
       const params = {
         FRAME_CLASS: 1,

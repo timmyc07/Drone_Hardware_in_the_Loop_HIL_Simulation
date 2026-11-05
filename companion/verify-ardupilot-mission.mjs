@@ -1,14 +1,14 @@
+import { createLocalDirectory } from "./local-directory.js";
 // Real, opt-in native AUTO mission: node companion/verify-ardupilot-mission.mjs /path/to/arducopter [artifact-directory]
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, cp } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile, cp } from "node:fs/promises";
 import path from "node:path";
 import { ArduPilotSession } from "./ardupilot-session.js";
 const binaryPath = process.argv[2];
 if (!binaryPath) throw new Error("Pass native arducopter path");
 const output =
   process.argv[3] ??
-  (await mkdtemp(path.join(tmpdir(), "flight-lab-auto-mission-proof-")));
+  (await createLocalDirectory("flight-lab-auto-mission-proof-"));
 await mkdir(output, { recursive: true });
 const points = [
   [8, 0],

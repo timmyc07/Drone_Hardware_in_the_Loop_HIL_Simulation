@@ -1,3 +1,4 @@
+import { createLocalDirectory } from "./local-directory.js";
 import { GroundStationBridge } from "./gcs-bridge.js";
 import { ControllerHealth } from "./controller-health.js";
 import { EventEmitter } from "node:events";
@@ -8,14 +9,12 @@ import { Px4Gcs } from "./px4-gcs.js";
 import { Px4Mission } from "./px4-mission.js";
 import { spawn } from "node:child_process";
 import {
-  mkdtemp,
   mkdir,
   writeFile,
   stat,
   realpath,
   rm,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { createSimulation, validateConfig } from "../web/sim.js";
 import { packetReader } from "./mavlink.js";
@@ -191,7 +190,7 @@ export class Px4Session extends EventEmitter {
       samples: [this.sim.snapshot()],
       events: [],
     };
-    this.directory = await mkdtemp(path.join(tmpdir(), "flight-lab-px4-"));
+    this.directory = await createLocalDirectory("flight-lab-px4-");
     const wrappers = path.join(this.directory, "wrappers");
     await mkdir(wrappers);
     await writeFile(

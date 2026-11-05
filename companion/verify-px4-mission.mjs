@@ -1,15 +1,15 @@
+import { createLocalDirectory } from "./local-directory.js";
 // Opt-in real pinned PX4 mission proof; requires the reviewed loopback-native build.
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, cp } from "node:fs/promises";
+import { mkdir, writeFile, cp } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { Px4Session } from "./px4-session.js";
 const binaryPath = process.argv[2];
 if (!binaryPath) throw Error("Pass pinned native PX4 binary");
 const output =
   process.argv[3] ??
-  (await mkdtemp(path.join(tmpdir(), "flight-lab-px4-mission-proof-")));
+  (await createLocalDirectory("flight-lab-px4-mission-proof-"));
 await mkdir(output, { recursive: true });
 const session = new Px4Session(),
   logs = [],

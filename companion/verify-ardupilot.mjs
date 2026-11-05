@@ -1,7 +1,7 @@
+import { createLocalDirectory } from "./local-directory.js";
 // Opt-in real ArduCopter JSON-physics proof; requires the pinned locally patched native build.
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile, cp } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile, cp } from "node:fs/promises";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { ArduPilotSession } from "./ardupilot-session.js";
@@ -9,7 +9,7 @@ const binaryPath = process.argv[2];
 if (!binaryPath) throw new Error("Pass native arducopter path");
 const output =
   process.argv[3] ??
-  (await mkdtemp(path.join(tmpdir(), "flight-lab-ardupilot-proof-")));
+  (await createLocalDirectory("flight-lab-ardupilot-proof-"));
 await mkdir(output, { recursive: true });
 const session = new ArduPilotSession();
 const hover = [];

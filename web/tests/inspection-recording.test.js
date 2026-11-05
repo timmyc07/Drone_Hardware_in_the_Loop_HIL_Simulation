@@ -1,7 +1,7 @@
+import { createLocalDirectory } from "../../companion/local-directory.js";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { createWorld, defaultWorldConfig } from "../world.js";
@@ -395,7 +395,7 @@ test("standalone inspection report schemas reject bad identities, hashes, captur
 
 test("inspection verification CLI returns useful success, mismatch and missing-file exit statuses", async (t) => {
   const f = await observedFixture(),
-    directory = await mkdtemp(join(tmpdir(), "inspection-verify-"));
+    directory = await createLocalDirectory("inspection-verify-");
   t.after(() => rm(directory, { recursive: true, force: true }));
   const report = join(directory, "report.json"),
     dataset = join(directory, "frames.json");
