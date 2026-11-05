@@ -1,6 +1,11 @@
 // 公開資料盤點；狀態描述本專案，不代表外部產品狀態。
 export const SOURCES = [
   {
+    name: "QGroundControl 測繪規劃",
+    url: "https://github.com/mavlink/qgroundcontrol/blob/36436db319c731b70ab25dd3178896c4c22c75f6/docs/en/qgc-user-guide/plan_view/pattern_survey.md",
+    kind: "開源文件",
+  },
+  {
     name: "PX4 模擬",
     url: "https://github.com/PX4/PX4-Autopilot/blob/main/docs/en/simulation/index.md",
     kind: "開源文件",
@@ -352,6 +357,17 @@ export const CAPABILITIES = [
     status: "partial",
     sources: [
       "https://www.simnet.aero/product-page/introduction-to-arducopter-auto-missions-with-mission-planner",
+    ],
+  },
+  {
+    id: "survey-grid",
+    category: "控制與航行",
+    title: "測繪網格航線",
+    description:
+      "一般與凹形多邊形產生蛇形航線，含區內幾何連接；最多 50 個普通航點。未含避障、自動拍照或覆蓋率保證。",
+    status: "partial",
+    sources: [
+      "https://github.com/mavlink/qgroundcontrol/blob/36436db319c731b70ab25dd3178896c4c22c75f6/docs/en/qgc-user-guide/plan_view/pattern_survey.md",
     ],
   },
   {

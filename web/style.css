@@ -1617,3 +1617,41 @@ select:disabled {
   .replay-controls { padding: 10px; }
   .replay-range { order: -1; flex-basis: 100%; }
 }
+
+.survey-editor {
+  margin: 1rem 0;
+}
+.survey-settings, .survey-vertex {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  align-items: end;
+  margin: .5rem 0;
+}
+.survey-settings label, .survey-vertex label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.survey-settings input[type="number"], .survey-vertex input {
+  width: 7rem;
+  max-width: 100%;
+}
+
+@media (min-width: 900px) {
+  #mission-workspace:not([hidden]) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 500px);
+    gap: 0 1rem;
+  }
+  #mission-workspace > h2,
+  #mission-workspace > p,
+  #mission-workspace > #waypoint-list,
+  #mission-workspace > .feature-actions {
+    grid-column: 1 / -1;
+  }
+  #mission-workspace > .survey-editor,
+  #mission-workspace > #mission-map {
+    align-self: start;
+  }
+}

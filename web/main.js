@@ -48,6 +48,7 @@ import {
 import { createSceneEditor } from "./scene-editor.js";
 import { createDemEditor } from "./dem-editor.js";
 import { createReplayControls } from "./replay-controls.js";
+import { createSurveyEditor } from "./survey-editor.js";
 import { replayFrameAtTime } from "./replay.js";
 import { validateScene } from "./scene-data.js";
 import { createTerrain } from "./terrain.js";
@@ -1144,7 +1145,8 @@ worker.onmessage = ({ data }) => {
     rosterDraft = structuredClone(worldConfig);
     renderVehicleEditor();
   }
-  if (data.activeVehicleId !== activeVehicleId) {
+  const vehicleChanged = data.activeVehicleId !== activeVehicleId;
+  if (vehicleChanged) {
     vehicleHistories.set(activeVehicleId, history);
     vehicleDrafts.set(activeVehicleId, structuredClone(waypoints));
     activeVehicleId = data.activeVehicleId;
@@ -1152,7 +1154,6 @@ worker.onmessage = ({ data }) => {
     waypoints = structuredClone(
       vehicleDrafts.get(activeVehicleId) || data.snapshot.navigation.waypoints,
     );
-    renderWaypoints();
     clearCameraPreview();
   }
   latest = data.snapshot;
@@ -1203,6 +1204,7 @@ worker.onmessage = ({ data }) => {
     scene?.resetView();
   }
   if (data.setup?.scene) renderScene(data.setup.scene, false);
+  if (vehicleChanged) renderWaypoints();
   if (data.message === "reset") vehicleHistories.clear();
   for (const frame of data.worldSamples || [])
     for (const item of frame.vehicles) {
@@ -1625,21 +1627,20 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-const mapExtent = () =>
-  Math.min(
-    500,
-    Math.max(
-      1,
-      externalActive && hilState?.mission?.limits
-        ? hilState.mission.limits.radius
-        : config.geofenceRadius,
-    ),
-    externalActive
-      ? 500
-      : MULTIROTOR_AIRFRAMES.includes(config.airframe)
-        ? 50
-        : 500,
+const mapExtent = () => {
+  const radius = externalActive && hilState?.mission?.limits
+    ? hilState.mission.limits.radius
+    : config.geofenceRadius;
+  const base = Math.min(
+    Math.max(1, radius),
+    !externalActive && MULTIROTOR_AIRFRAMES.includes(config.airframe) ? 50 : 500,
   );
+  const areaExtent = surveyEditor?.extent() || 0;
+  return Math.min(500, Math.max(
+    areaExtent ? Math.max(5, areaExtent * 1.15) : base,
+    ...waypoints.map((p) => Math.max(Math.abs(p.north), Math.abs(p.east)) * 1.1),
+  ));
+};
 const squareMission = () => {
   const wing = !MULTIROTOR_AIRFRAMES.includes(config.airframe);
   const side = wing
@@ -1662,7 +1663,34 @@ const missionEditable = () =>
   (!externalActive ||
     ["ardupilot", "px4"].includes(hilState?.controller?.kind));
 let displayedExternalMission = "";
+let surveyEditor;
+let missionTerrain = createTerrain({ kind: "flat" });
+function missionContext() {
+  const selected = worldState?.vehicles.find((v) => v.id === activeVehicleId);
+  const vehicleConfig = externalActive ? config : selected?.config || config;
+  const home = externalActive ? [0, 0] : selected?.home || [0, 0];
+  const limits = externalActive ? hilState?.mission?.limits : null;
+  return {
+    vehicleId: externalActive
+      ? `external:${hilState?.controller?.kind || "pending"}`
+      : activeVehicleId,
+    readonly: !missionEditable(),
+    blocked: invalidWaypointInputs.size > 0 || missionBusy,
+    home,
+    radius: limits?.radius ?? vehicleConfig.geofenceRadius,
+    minAltitude: externalActive
+      ? (limits?.minAltitude ?? 1)
+      : missionTerrain.data.kind === "dem" ? -1000 : 0,
+    maxAltitude: externalActive
+      ? (limits?.height ?? vehicleConfig.geofenceHeight)
+      : Math.min(
+          1500,
+          missionTerrain.sample(...home).heightM + vehicleConfig.geofenceHeight,
+        ),
+  };
+}
 function drawMission() {
+  surveyEditor?.refresh();
   const extent = mapExtent();
   $("map-extent").textContent =
     `座標範圍 ±${extent.toFixed(0)} m；實際航點須在圍欄內。`;
@@ -1683,6 +1711,7 @@ function drawMission() {
     ctx.lineTo(w, (i * h) / 10);
     ctx.stroke();
   }
+  surveyEditor?.draw(ctx, w, h, extent);
   ctx.strokeStyle = "#ffbf78";
   ctx.fillStyle = "#ffbf78";
   ctx.lineWidth = 2;
@@ -1716,6 +1745,7 @@ function drawMission() {
 }
 function renderWaypoints() {
   const list = $("waypoint-list");
+  const limits = missionContext();
   invalidWaypointInputs.clear();
   list.replaceChildren();
   waypoints.forEach((point, index) => {
@@ -1725,20 +1755,9 @@ function renderWaypoints() {
     title.textContent = `${index + 1}`;
     row.append(title);
     for (const [key, label, min, max] of [
-      ["north", "北", -mapExtent(), mapExtent()],
-      ["east", "東", -mapExtent(), mapExtent()],
-      [
-        "altitude",
-        "高度",
-        externalActive
-          ? (hilState?.mission?.limits?.minAltitude ?? 1)
-          : sceneEditor?.getApplied().terrain.kind === "dem"
-            ? -1000
-            : 0,
-        externalActive && hilState?.mission?.limits
-          ? hilState.mission.limits.height
-          : 100,
-      ],
+      ["north", "北", -500, 500],
+      ["east", "東", -500, 500],
+      ["altitude", "高度", limits.minAltitude, limits.maxAltitude],
       ["hold", "停留秒", 0, 60],
     ]) {
       const wrapper = document.createElement("label");
@@ -1760,20 +1779,8 @@ function renderWaypoints() {
         if (
           input.value.trim() !== "" &&
           Number.isFinite(value) &&
-          value >=
-            (key === "north" || key === "east"
-              ? -mapExtent()
-              : key === "altitude" && externalActive
-                ? (hilState?.mission?.limits?.minAltitude ?? 1)
-                : min) &&
-          value <=
-            (key === "north" || key === "east"
-              ? mapExtent()
-              : key === "altitude" &&
-                  externalActive &&
-                  hilState?.mission?.limits
-                ? hilState.mission.limits.height
-                : max) &&
+          value >= Number(input.min) &&
+          value <= Number(input.max) &&
           !(
             externalActive &&
             key === "hold" &&
@@ -1812,15 +1819,18 @@ function renderWaypoints() {
   drawMission();
   updateMissionControls();
 }
+surveyEditor = createSurveyEditor({
+  getContext: missionContext,
+  onChange: drawMission,
+  onUse: (points) => {
+    waypoints = points;
+    renderWaypoints();
+  },
+});
 map.onclick = (event) => {
-  if (
-    !missionEditable() ||
-    invalidWaypointInputs.size ||
-    waypoints.length >= 50
-  )
-    return;
+  if (!missionEditable() || invalidWaypointInputs.size || missionBusy) return;
   const rect = map.getBoundingClientRect();
-  waypoints.push({
+  const point = {
     north:
       Math.round(
         (0.5 - (event.clientY - rect.top) / rect.height) * 2 * mapExtent() * 10,
@@ -1829,6 +1839,11 @@ map.onclick = (event) => {
       Math.round(
         ((event.clientX - rect.left) / rect.width - 0.5) * 2 * mapExtent() * 10,
       ) / 10,
+  };
+  if (surveyEditor.mapClick(point)) return;
+  if (waypoints.length >= 50) return;
+  waypoints.push({
+    ...point,
     altitude: Number($("position-altitude").value),
     hold: 1,
   });
@@ -1854,23 +1869,20 @@ $("mission-export").onclick = () => {
   download(JSON.stringify(waypoints, null, 2), "json", "application/json");
 };
 function updateMissionControls() {
+  if (surveyEditor?.refresh()) drawMission();
   const editable = missionEditable();
+  const limits = missionContext();
   document
     .querySelectorAll("#waypoint-list input, #waypoint-list button")
     .forEach((element) => {
       if (element.tagName === "INPUT") {
         const field = element.dataset.missionField;
         if (field === "north" || field === "east") {
-          element.min = -mapExtent();
-          element.max = mapExtent();
+          element.min = -500;
+          element.max = 500;
         } else if (field === "altitude") {
-          element.min = externalActive
-            ? (hilState?.mission?.limits?.minAltitude ?? 1)
-            : 0;
-          element.max =
-            externalActive && hilState?.mission?.limits
-              ? hilState.mission.limits.height
-              : 100;
+          element.min = limits.minAltitude;
+          element.max = limits.maxAltitude;
         }
         if (field === "hold")
           element.step =
@@ -2525,7 +2537,8 @@ function renderScene(value, viewOnly) {
     return;
   lastRenderedSceneKey = key;
   lastRenderedSceneReadonly = viewOnly;
-  runwayCompatible = createTerrain(value.terrain).runwayCompatible;
+  missionTerrain = createTerrain(value.terrain);
+  runwayCompatible = missionTerrain.runwayCompatible;
   sceneEditor?.setScene(value, viewOnly);
   demEditor?.setScene(value);
   demEditor?.setReadonly(viewOnly || externalActive || !!replay);
@@ -2543,7 +2556,7 @@ function renderScene(value, viewOnly) {
       config.airframe,
       latest?.training?.course || "free",
       home,
-      createTerrain(value.terrain).sample(...home).heightM,
+      missionTerrain.sample(...home).heightM,
     ),
   );
 }

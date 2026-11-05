@@ -1,0 +1,96 @@
+{
+  "release": "0.25.0",
+  "formats": {
+    "model": "0.10.0",
+    "recording": 15,
+    "scene": 6,
+    "camera": 5,
+    "inspectionReport": 2,
+    "api": "2.3",
+    "native": 1
+  },
+  "tests": {
+    "passed": 382,
+    "failed": 0,
+    "durationMs": 46968.437042
+  },
+  "rectangleFlight": {
+    "frames": 2365,
+    "simSeconds": 118.15999999996502,
+    "completed": true,
+    "firstCompletedSeconds": 30.149999999998286,
+    "waypoints": 6,
+    "sha256": "790cdba39c96cea6100695d32f49ab230aec1d8b426f77ec0fe1460ca965407c",
+    "crashes": 0,
+    "independentReplay": {
+      "passed": true,
+      "vehicles": 1,
+      "frames": 2365,
+      "ticks": 23632,
+      "simSeconds": 118.15999999996502,
+      "maximum": {
+        "positionM": 7.105427357601002e-15,
+        "quaternion": 9.575673587391975e-16,
+        "motors": 3.3306690738754696e-16,
+        "allState": 1.3642420526593924e-12,
+        "sensors": 2.2311041902867146e-12
+      }
+    }
+  },
+  "concaveFlight": {
+    "frames": 1592,
+    "simSeconds": 79.53000000000016,
+    "waypoints": 14,
+    "completed": true,
+    "firstCompletedSeconds": 44.80000000000447,
+    "maxDatumHeightM": 6.105639677018848,
+    "crashes": 0,
+    "fenceBreached": false,
+    "sha256": "2c375a516b9f0c94b59f4907c017e5489ba958af0d3b7d96ba7aa699905270a1",
+    "replay": {
+      "passed": true,
+      "vehicles": 1,
+      "frames": 1592,
+      "ticks": 15906,
+      "simSeconds": 79.53000000000016,
+      "maximum": {
+        "positionM": 5.329070518200751e-15,
+        "quaternion": 1.1934897514720433e-15,
+        "motors": 4.440892098500626e-16,
+        "allState": 1.1143974631977471e-11,
+        "sensors": 2.9416469260468148e-12
+      }
+    }
+  },
+  "roundtrip": {
+    "passed": true,
+    "originalSha256": "790cdba39c96cea6100695d32f49ab230aec1d8b426f77ec0fe1460ca965407c",
+    "exportedSha256": "790cdba39c96cea6100695d32f49ab230aec1d8b426f77ec0fe1460ca965407c",
+    "routeMatchesCurrentGeometry": true,
+    "maximumRouteDifferenceM": 0
+  },
+  "mobile": {
+    "grid": "block",
+    "mapWidth": 323.609375,
+    "scrollWidth": 390,
+    "status": "航點 8，航段 4，面積 256.0 m²，長度 72.7 m，實際間距 5.5 m。",
+    "width": 390
+  },
+  "uiChecks": [
+    "concave five transects with fourteen endpoints/connector vertices",
+    "over fifty points rejected without replacing existing six-point draft",
+    "replay disables planning and preserves imported mission",
+    "per-vehicle drafts, focus preservation and changed-limit invalidation covered by DOM test",
+    "desktop settings/map side by side; mobile has no horizontal overflow"
+  ],
+  "sourceReferences": [
+    "https://github.com/mavlink/qgroundcontrol/blob/36436db319c731b70ab25dd3178896c4c22c75f6/docs/en/qgc-user-guide/plan_view/pattern_survey.md",
+    "https://github.com/mavlink/qgroundcontrol/blob/36436db319c731b70ab25dd3178896c4c22c75f6/src/MissionManager/SurveyComplexItem.cc"
+  ],
+  "limits": [
+    "No obstacle or terrain clearance planning, automatic imaging, overlap or coverage guarantee",
+    "Polygon path can use boundary; approach and actual vehicle turns may leave the area",
+    "No new native SITL or physical hardware flight was performed",
+    "All-market capability remains incomplete"
+  ]
+}
