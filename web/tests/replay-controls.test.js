@@ -171,3 +171,12 @@ test("inspection details use concise translated fields and clear old filters", (
   assert.equal(e["event-vehicle"].options.length, 1);
   assert.equal(e["event-details"].textContent, "");
 });
+
+test("follow commands have readable event labels", () => {
+  const { elements: e, controls } = setup();
+  const record = recording();
+  record.events = [{ tick: 0, time: 0, type: 'follow', vehicleId: 'alpha' }];
+  controls.setRecording(record);
+  e['event-next'].dispatch('click');
+  assert.match(e['event-details'].textContent, /跟飛設定/);
+});

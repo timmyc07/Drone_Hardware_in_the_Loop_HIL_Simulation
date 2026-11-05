@@ -1,6 +1,16 @@
 // 公開資料盤點；狀態描述本專案，不代表外部產品狀態。
 export const SOURCES = [
   {
+    name: "PX4 v1.17.0 Follow-Me",
+    url: "https://github.com/PX4/PX4-Autopilot/blob/v1.17.0/docs/en/flight_modes_mc/follow_me.md",
+    kind: "開源文件",
+  },
+  {
+    name: "ArduPilot Follow",
+    url: "https://ardupilot.org/copter/docs/follow-mode.html",
+    kind: "官方文件",
+  },
+  {
     name: "NIST Level 1 基礎操控計分表 2023A",
     url: "https://www.nist.gov/document/nist-level-1-scoresheets-2-pages-v2023a",
     kind: "官方政府資料",
@@ -389,6 +399,17 @@ export const CAPABILITIES = [
     status: "partial",
     sources: [
       "https://www.simnet.aero/product-page/introduction-to-arducopter-auto-missions-with-mission-planner",
+    ],
+  },
+  {
+    id: "follow-me",
+    category: "控制與航行",
+    title: "載具跟飛",
+    description: "內建多旋翼及懸停 VTOL 可依共用世界領機真值跟飛，支援世界或航向偏移、高度差、偏航行為與停跟處置；使用有限速度與加速度，不提供網路目標協定、隊形避碰或實機精度。",
+    status: "partial",
+    sources: [
+      "https://github.com/PX4/PX4-Autopilot/blob/v1.17.0/docs/en/flight_modes_mc/follow_me.md",
+      "https://ardupilot.org/copter/docs/follow-mode.html",
     ],
   },
   {
@@ -836,7 +857,7 @@ export const CAPABILITIES = [
     id: "record-csv",
     category: "資料與整合",
     title: "CSV 飛行紀錄",
-    description: "可匯出 215 欄飛行及感測資料 CSV，標示載具 ID 與世界時間步。",
+    description: "可匯出 222 欄飛行、跟飛及感測資料 CSV，標示載具 ID 與世界時間步。",
     status: "partial",
     sources: ["https://wiki.zephyr-sim.com/help/faqs"],
   },
@@ -845,7 +866,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "JSON 重播",
     description:
-      "版本 20 JSON 保存全機隊、場景與事件，標示操作員雲台來源；支援時間軸跳轉、逐幀和依載具／類型定位事件，拒絕版本 1 至 19。",
+      "版本 22 JSON 保存全機隊、場景、跟飛與圍欄事件，標示操作員雲台來源；支援時間軸跳轉、逐幀和依載具／類型定位事件，拒絕版本 1 至 21。",
     status: "partial",
     sources: [
       "https://www.liftoff-game.com/news/full-release-liftoff-micro-drones",
@@ -919,7 +940,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "程式控制 API",
     description:
-      "同頁 API 2.9 支援幾何碰撞預防設定、指定載具、自動拍攝、六向近接、教官排程、NIST 練習與操作員雲台來源，共用世界時鐘、場景與風；外部 SITL 使用獨立本機服務。",
+      "同頁 API 2.11 支援載具跟飛、區域圍欄、幾何碰撞預防、指定載具、自動拍攝、六向近接、教官排程、NIST 練習與操作員雲台來源，共用世界時鐘、場景與風；外部 SITL 使用獨立本機服務。",
     status: "partial",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/apis.md"],
   },

@@ -403,7 +403,7 @@ test("radar exports identify the requested vehicle and retain delayed acquisitio
     "number",
   );
   const record = validateRecording(raw);
-  assert.equal(record.version, 21);
+  assert.equal(record.version, 22);
   replay(record);
 });
 
@@ -435,7 +435,7 @@ test("proximity exports preserve the requested vehicle, delayed pose and fault s
   assert.ok(faulted.reading.rangesM.every(v => v === null));
   assert.ok(faulted.reading.tooClose.every(v => v === false));
   const record = validateRecording(await h.call({ type: "apiExport" }));
-  assert.equal(record.version, 21);
+  assert.equal(record.version, 22);
   assert.equal(record.sensorFrames.at(-1).vehicles[1].sensors.faults.proximity, true);
   replay(record);
 });
@@ -570,7 +570,7 @@ test("inspection lease freezes the whole fleet, rejects mutations and mismatched
   );
 });
 
-test("successful inspection submissions hash actual buffers and retain replayable schema21 receipts without resuming an explicit pause", async (t) => {
+test("successful inspection submissions hash actual buffers and retain replayable schema22 receipts without resuming an explicit pause", async (t) => {
   const h = await harness(t);
   await h.call({ type: "resetWorld", value: inspectionFleet() });
   await h.call({ type: "play" });
@@ -598,7 +598,7 @@ test("successful inspection submissions hash actual buffers and retain replayabl
   assert.equal(inspected.world.vehicles[1].snapshot.inspection.attempts, 0);
   assert.equal((await submitInspection(h, lease, frame)).ok, false);
   const record = validateRecording(await h.call({ type: "apiExport" }));
-  assert.equal(record.version, 21);
+  assert.equal(record.version, 22);
   const event = record.events.find((event) => event.type === "inspection");
   assert.equal(event.tick, lease.world.tick);
   assert.equal(event.value.sha256, expectedHash);
@@ -672,7 +672,7 @@ test("reset or cancel while the real buffer digest is pending cannot commit stal
   }
 });
 
-test('instructor schedules native schema21 events in tick order independent of speed, rendering, selection and pause', async (t) => {
+test('instructor schedules native schema22 events in tick order independent of speed, rendering, selection and pause', async (t) => {
   const records=[];
   for (const fast of [false,true]) {
     const h=await harness(t);
@@ -696,7 +696,7 @@ test('instructor schedules native schema21 events in tick order independent of s
     assert.deepEqual(status.receipts.map(r=>r.tick),[2,2,3,4,5]);
     const record=validateRecording(await h.call({type:'apiExport'}));
     replay(record);
-    assert.equal(record.version,21);assert.equal(Object.hasOwn(record,'instructor'),false);
+    assert.equal(record.version,22);assert.equal(Object.hasOwn(record,'instructor'),false);
     assert.deepEqual(record.events.filter(e=>e.type!=='render').map(({time,...e})=>e),plan.events);
     records.push(record);
   }
@@ -954,7 +954,7 @@ test('operator gimbal commands target independently, ACK canonical settings and 
   assert.deepEqual(state.world.vehicles[0].snapshot.gimbal.target,input.vehicles[0].setup.gimbal.target);
   await h.call({type:'play'}); await h.advance(2); await h.call({type:'pause'});
   const record = validateRecording(JSON.parse(JSON.stringify(await h.call({type:'apiExport'}))));
-  assert.equal(record.version,21);
+  assert.equal(record.version,22);
   assert.deepEqual(record.events[0],{tick:0,time:0,type:'operatorGimbal',vehicleId:'drone-2',value:settings});
   assert.equal(replayWorldRecording(record).passed,true);
   for (const command of [
@@ -1039,5 +1039,28 @@ test('geofence Worker reads settings and records canonical per-vehicle mutations
   assert.equal(replayWorldRecording(record).passed,true);
   const before=await h.call({type:'apiExport'});
   assert.equal((await h.send({type:'geofenceZones',vehicleId:'drone-2',value:{...settings,zones:[]}})).ok,false);
+  assert.deepEqual(await h.call({type:'apiExport'}),before);
+});
+
+test('follow Worker reads settings, requires explicit vehicles, and records start and stop for independent replay', async t => {
+  const h=await harness(t), input=fleet(2,false), vehicleId='drone-2';
+  input.scene.obstacles=[];
+  await h.call({type:'resetWorld',value:input});
+  const initial=await h.call({type:'inspectFollow',vehicleId});
+  assert.equal(initial.settings.leaderId,null);assert.equal(initial.state,null);
+  const settings={leaderId:'drone-1',frame:'leader-heading',offset:{x:-5,y:0,altitude:1},maxDistanceM:100,lostAction:'hold',yawMode:'leader'};
+  assert.equal((await h.send({type:'follow',value:settings})).ok,false);
+  assert.equal((await h.send({type:'follow',vehicleId,value:{leaderId:'drone-1'}})).ok,false);
+  await h.call({type:'follow',vehicleId,value:settings});await h.call({type:'startFollow',vehicleId});
+  assert.equal((await h.call({type:'inspectFollow',vehicleId})).state.active,true);
+  assert.equal((await h.call({type:'inspectFollow',vehicleId:'drone-1'})).state,null);
+  await h.call({type:'play'});await h.advance(2);await h.call({type:'pause'});await h.call({type:'stopFollow',vehicleId});
+  const status=await h.call({type:'inspectFollow',vehicleId});assert.equal(status.state.reason,'pilot');
+  const record=validateRecording(await h.call({type:'apiExport'}));
+  assert.deepEqual(record.events.filter(e=>['follow','startFollow','stopFollow'].includes(e.type)).map(e=>e.type),['follow','startFollow','stopFollow']);
+  assert.deepEqual(record.events.find(e=>e.type==='follow').value,settings);
+  assert.equal(replayWorldRecording(record).passed,true);
+  const before=await h.call({type:'apiExport'});
+  assert.equal((await h.send({type:'follow',vehicleId,value:{...settings,leaderId:vehicleId}})).ok,false);
   assert.deepEqual(await h.call({type:'apiExport'}),before);
 });

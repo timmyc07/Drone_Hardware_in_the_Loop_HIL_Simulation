@@ -201,10 +201,10 @@ const geographicSensors = {
   originVerticalDatum: "orthometric",
 };
 
-test("World21 round trip keeps parallel vehicle frames and 215 stable CSV columns", () => {
+test("World22 round trip keeps parallel vehicle frames and 222 stable CSV columns", () => {
   const input = shortRecord({ vehicles: [{ id: "alpha" }, { id: "beta" }] });
   const clean = roundTrip(input);
-  assert.equal(RECORDING_VERSION, 21);
+  assert.equal(RECORDING_VERSION, 22);
   assert.deepEqual(
     clean.samples[0].vehicles.map((v) => v.id),
     ["alpha", "beta"],
@@ -213,7 +213,7 @@ test("World21 round trip keeps parallel vehicle frames and 215 stable CSV column
   const [header, ...rows] = recordingToCsv(input)
     .split("\n")
     .map((row) => row.split(","));
-  assert.equal(header.length, 215);
+  assert.equal(header.length, 222);
   assert.deepEqual(header.slice(0, 3), ["vehicle_id", "world_tick", "time_s"]);
   assert.equal(header[46], "steps_count");
   assert.equal(header[166], "gps_vertical_datum_code");
@@ -1261,11 +1261,11 @@ test("radar acquisitions survive configuration epochs, packed faults and full-wo
   assert.throws(() => validateRecording(stale), /after/);
   const prior = clone(compact);
   prior.version = 12;
-  assert.throws(() => validateRecording(prior), /version 21/);
+  assert.throws(() => validateRecording(prior), /version 22/);
   const rows = recordingToCsv(f.record)
     .split("\n")
     .map((r) => r.split(","));
-  assert.equal(rows[0].length, 215);
+  assert.equal(rows[0].length, 222);
   assert.deepEqual(rows[0].slice(167, 174), [
     "radar_sample_time_s",
     "radar_valid_boolean",
@@ -1295,7 +1295,7 @@ test("proximity preserves six acquired axes, strict payloads and historical vers
   assert.deepEqual(last.vehicles[1].sensors.proximity, sensorsAt(input, -1, 1).proximity);
   const rows = recordingToCsv(input).split("\n").map((row) => row.split(","));
   const row = rows.at(-2), header = rows[0];
-  assert.equal(header.length, 215);
+  assert.equal(header.length, 222);
   for (const [i, axis] of ["front", "back", "right", "left", "up", "down"].entries()) {
     assert.equal(row[header.indexOf(`proximity_${axis}_range_m`)], String(reading.rangesM[i] ?? ""));
     assert.equal(row[header.indexOf(`proximity_${axis}_too_close_boolean`)], String(Number(reading.tooClose[i])));
@@ -1414,7 +1414,7 @@ test("compact proximity empty ranges and exact identity poses expand without los
 });
 
 
-test('battery supply metadata survives schema21 JSON and CSV with strict new field validation', () => {
+test('battery supply metadata survives schema22 JSON and CSV with strict new field validation', () => {
   const input = shortRecord(), clean = roundTrip(input);
   const battery = stateAt(clean).battery;
   assert.deepEqual(battery, stateAt(validateRecording(input)).battery);
@@ -1432,7 +1432,7 @@ test('battery supply metadata survives schema21 JSON and CSV with strict new fie
 });
 
 
-test('schema21 battery packs eleven lossless fields and rejects malformed packed boundaries', () => {
+test('schema22 battery packs eleven lossless fields and rejects malformed packed boundaries', () => {
   const input = shortRecord(), clean = validateRecording(input), packed = stateAt(input).battery;
   const fields = ['soc','voltage','current','power','usedWh','remainingSeconds','low','critical','openCircuitVoltage','motorSpeedScale','powerLimited'];
   assert.equal(packed.length, 11);
@@ -1474,7 +1474,7 @@ test('collision prevention epochs preserve per-vehicle settings and lossless pac
   assert.equal(recordingWorldAt(clean,index).vehicles[1].setup.collisionPrevention.enabled, false);
   assert.equal(replayWorldRecording(clean).passed, true);
   const rows = recordingToCsv(input).split('\n').map(row => row.split(','));
-  assert.equal(rows[0].length, 215); assert.equal(rows[1][202], '0'); assert.ok(rows[1].slice(203).every(v => v === ''));
+  assert.equal(rows[0].length, 222); assert.equal(rows[1][202], '0'); assert.ok(rows[1].slice(203).every(v => v === ''));
   const alpha = rows.at(-2); assert.equal(alpha[202], '1'); assert.equal(alpha[205], state.reason);
   assert.equal(alpha[214], String(state.clearanceM));
   rejects(input, [
@@ -1511,7 +1511,7 @@ test('geofence epochs preserve nested per-vehicle settings through JSON, frame r
   assert.deepEqual(recordingWorldAt(clean,last).vehicles[0].setup.geofenceZones,settings);
   assert.equal(recordingWorldAt(clean,last).vehicles[1].setup.geofenceZones.enabled,false);
   assert.equal(replayWorldRecording(clean).passed,true);
-  assert.equal(recordingToCsv(clean).split('\n')[0].split(',').length,215);
+  assert.equal(recordingToCsv(clean).split('\n')[0].split(',').length,222);
   rejects(f.record,[
     r=>{r.version=20;},r=>{r.modelVersion='0.14.0';},
     r=>{delete r.events.find(e=>e.type==='geofenceZones').value;},
@@ -1536,4 +1536,78 @@ test('initial geofence headers and later disable events validate targets against
   assert.equal(recordingWorldAt(clean,clean.samples.length-1).vehicles[0].setup.geofenceZones.enabled,false);
   assert.equal(replayWorldRecording(clean).passed,true);
   rejects(f.record,[r=>{r.world.vehicles[0].setup.geofenceZones.zones[0].center=[50,0];}]);
+});
+
+test('follow settings, start, stop and restart epochs round trip with lossless state and independent world replay', () => {
+  const f=fixture({scene:{...clone(DEFAULT_SCENE),obstacles:[]},vehicles:[{id:'alpha'},{id:'beta',spawn:{north:15,east:0,altitude:5}}]});
+  const settings={leaderId:'beta',frame:'world',offset:{x:-5,y:0,altitude:1},maxDistanceM:100,lostAction:'hold',yawMode:'face-leader'};
+  f.step(7); f.command('follow',settings); f.command('startFollow');
+  f.command('mode','position','beta'); f.command('position',{north:20,east:4,altitude:6},'beta'); f.step(60,10);
+  const activeIndex=f.record.samples.length-1,active=roundTrip(f.record);
+  assert.equal(stateAt(active).follow,null);
+  assert.equal(stateAt(active,-1).navigation.mode,'follow');
+  assert.equal(stateAt(active,-1).follow.active,true);
+  assert.equal(stateAt(active,-1,1).follow,null);
+  assert.deepEqual(recordingWorldAt(active,activeIndex).vehicles[0].setup.follow,settings);
+  const packed=stateAt(f.record,-1).follow,state=stateAt(active,-1).follow;
+  assert.deepEqual(packed,[state.active,state.leaderId,state.reason,state.sourceTick,state.targetPosition]);
+  assert.equal(replayWorldRecording(active).passed,true);
+  const rows=recordingToCsv(active).split('\n').map(row=>row.split(','));
+  assert.equal(rows[0].length,222); assert.ok(rows[1].slice(215).every(value=>value===''));
+  assert.deepEqual(rows.at(-2).slice(215),['1','beta','',String(state.sourceTick),...state.targetPosition.map(String)]);
+  rejects(f.record,[
+    r=>{r.version=21;},r=>{r.modelVersion='0.15.0';},
+    r=>{delete stateAt(r,-1).follow;},r=>{stateAt(r,-1).follow=null;},
+    r=>{stateAt(r,-1).follow.pop();},r=>{stateAt(r,-1).follow.push(0);},
+    r=>{delete stateAt(r,-1).follow[0];},r=>{stateAt(r,-1).follow.extra=true;},
+    r=>{stateAt(r,-1).follow[0]=1;},r=>{stateAt(r,-1).follow[1]='alpha';},
+    r=>{stateAt(r,-1).follow[1]='missing';},r=>{stateAt(r,-1).follow[1]='=SUM(1,2)';},
+    r=>{stateAt(r,-1).follow[2]='pilot';},r=>{stateAt(r,-1).follow[3]=r.samples.at(-1).tick+1;},
+    r=>{stateAt(r,-1).follow[3]=0;},
+    r=>{stateAt(r,-1).follow[4][0]=Infinity;},r=>{delete stateAt(r,-1).follow[4][1];},
+    r=>{r.events.find(e=>e.type==='follow').value.extra=true;},
+    r=>{r.events.find(e=>e.type==='follow').value=undefined;},
+    r=>{delete r.events.find(e=>e.type==='follow').value;},
+    r=>{r.events.find(e=>e.type==='follow').value.leaderId='missing';},
+    r=>{r.events.find(e=>e.type==='follow').value.leaderId='alpha';},
+    r=>{r.events.find(e=>e.type==='follow').value.offset.x=101;},
+    r=>{r.events.find(e=>e.type==='startFollow').value={};},
+  ]);
+  f.command('stopFollow'); f.step(10);
+  const stopped=roundTrip(f.record);
+  assert.equal(stateAt(stopped,-1).follow.active,false);
+  assert.equal(stateAt(stopped,-1).follow.reason,'pilot');
+  assert.equal(replayWorldRecording(stopped).passed,true);
+  const inactive=clone(stateAt(f.record,-1).follow);
+  f.command('follow',{...settings,leaderId:null});
+  assert.equal(stateAt(roundTrip(f.record),-1).follow,null);
+  const stale=clone(f.record); stateAt(stale,-1).follow=inactive;
+  assert.throws(()=>validateRecording(stale),/Follow state disagrees/);
+  f.command('follow',settings);
+  f.command('mode','follow'); f.step(10);
+  assert.equal(stateAt(roundTrip(f.record),-1).follow.active,true);
+  f.command('mode','position');f.command('follow',{...settings,offset:{x:-7,y:1,altitude:2}});f.step(10);
+  assert.equal(stateAt(roundTrip(f.record),-1).follow,null);
+});
+
+test('recording validates configured follow graph after each settings event, including cycles between retained samples', () => {
+  const f=fixture({scene:{...clone(DEFAULT_SCENE),obstacles:[]},vehicles:[{id:'alpha'},{id:'beta'}]});
+  const settings={leaderId:'beta',frame:'world',offset:{x:-5,y:0,altitude:0},maxDistanceM:100,lostAction:'hold',yawMode:'hold'};
+  f.command('follow',settings);f.step(10);
+  const record=clone(f.record);
+  record.events.splice(1,0,{tick:0,time:0,type:'follow',vehicleId:'beta',value:{...settings,leaderId:'alpha'}});
+  assert.throws(()=>validateRecording(record),/cycles/);
+});
+
+test('initial follow mode and plausible forged targets are checked by independent world replay', () => {
+  const settings={leaderId:'beta',frame:'world',offset:{x:-5,y:0,altitude:0},maxDistanceM:100,lostAction:'hold',yawMode:'hold'};
+  const f=fixture({scene:{...clone(DEFAULT_SCENE),obstacles:[]},vehicles:[{id:'alpha',setup:{mode:'follow',follow:settings}},{id:'beta'}]});
+  f.step(20,10);
+  const clean=roundTrip(f.record);
+  assert.equal(stateAt(clean).follow.active,true);
+  assert.equal(replayWorldRecording(clean).passed,true);
+  const forged=clone(f.record);
+  stateAt(forged,-1).follow[4][0]+=0.123456789;
+  assert.doesNotThrow(()=>validateRecording(forged));
+  assert.equal(replayWorldRecording(forged).passed,false);
 });

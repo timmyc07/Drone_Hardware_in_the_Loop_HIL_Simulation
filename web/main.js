@@ -16,6 +16,8 @@ import { exportRadarData } from "./radar.js";
 import { exportProximityData, PROXIMITY_BOUNDS } from "./proximity.js";
 import { createProximityPanel } from "./proximity-panel.js";
 import { formatCollisionPrevention } from "./collision-prevention-panel.js";
+import { createFollowPanel, formatFollow } from "./follow-panel.js";
+import { DEFAULT_FOLLOW } from "./follow.js";
 import { DEFAULT_COLLISION_PREVENTION, validateCollisionPreventionSettings } from "./collision-prevention.js";
 import { formatBattery } from "./battery-panel.js";
 import { createGeofenceZonesPanel, zonePoints } from "./geofence-zones-panel.js";
@@ -437,13 +439,22 @@ $("vehicle-add").onclick = () => {
   vehicle.home = [vehicle.spawn.north, vehicle.spawn.east];
   vehicle.setup.mode = "attitude";
   vehicle.setup.mission = [];
+  vehicle.setup.follow = structuredClone(DEFAULT_FOLLOW);
   rosterDraft.vehicles.push(vehicle);
   renderVehicleEditor();
 };
 $("vehicle-apply").onclick = async () => {
   if (!rosterDraft || replay || externalActive) return;
   try {
-    const value = validateWorldConfig(rosterDraft);
+    const proposed = structuredClone(rosterDraft);
+    const ids = new Set(proposed.vehicles.map((vehicle) => vehicle.id));
+    for (const vehicle of proposed.vehicles) {
+      if (vehicle.setup.follow?.leaderId && (!ids.has(vehicle.setup.follow.leaderId) || vehicle.setup.follow.leaderId === vehicle.id)) {
+        vehicle.setup.follow.leaderId = null;
+        if (vehicle.setup.mode === "follow") vehicle.setup.mode = "attitude";
+      }
+    }
+    const value = validateWorldConfig(proposed);
     if (
       dirty() &&
       !(await confirmAction(
@@ -791,12 +802,29 @@ const geofencePanel = createGeofenceZonesPanel({
     await requestApi({ type: "geofenceZones", vehicleId, value });
   },
 });
+const followPanel = createFollowPanel({
+  async apply(vehicleId, value) {
+    if (replay || externalActive || vehicleId !== activeVehicleId) throw new Error("載具或模式已變更，請重新開啟參數。");
+    await requestApi({ type: "follow", vehicleId, value });
+  },
+});
+let followPanelKey;
+function refreshFollowPanel(force = false) {
+  if (!$('settings-dialog').open || !worldState) return;
+  const vehicle = worldState.vehicles.find(v => v.id === settingsVehicleId);
+  if (!vehicle) return;
+  const key = JSON.stringify([vehicle.id, vehicle.setup.follow, worldState.vehicles.map(v => [v.id, v.name]), !!replay, externalActive]);
+  if (force || key !== followPanelKey) {
+    followPanelKey = key;
+    followPanel.open(vehicle.id, vehicle.setup.follow, worldState.vehicles, !!replay || externalActive);
+  }
+}
 let settingsVehicleId;
 $("settings-open").onclick = () => {
   if (!latest?.gimbal) return toast("模型正在初始化，請稍候再開啟參數。");
   settingsVehicleId = activeVehicleId;
   geofencePanel.open(settingsVehicleId, worldState.vehicles.find((vehicle) => vehicle.id === settingsVehicleId).setup.geofenceZones, !!replay || externalActive);
-  const cp = worldConfig.vehicles.find((vehicle) => vehicle.id === settingsVehicleId).setup.collisionPrevention;
+  const cp = worldState.vehicles.find((vehicle) => vehicle.id === settingsVehicleId).setup.collisionPrevention;
   $("cp-enabled").checked = cp.enabled;
   for (const key of ["clearanceM", "responseDelaySeconds", "brakeAccelerationMps2"]) $(`cp-${key}`).value = cp[key];
   populateConfig(config);
@@ -807,6 +835,7 @@ $("settings-open").onclick = () => {
       latest.gimbal.maxRate[axis] * DEG
     ).toFixed(2);
   $("settings-dialog").showModal();
+  refreshFollowPanel(true);
 };
 $("config-airframe").onchange = (event) => {
   const startOnGround = $("config-start-on-ground").checked;
@@ -1213,6 +1242,9 @@ worker.onmessage = ({ data }) => {
   }
   worldState = data.world;
   worldConfig = data.worldConfig;
+  if (data.message === "reset") { followPanel.clear(); followPanelKey = undefined; }
+  followPanel.retain(worldConfig.vehicles.map((vehicle) => vehicle.id));
+  refreshFollowPanel();
   geofencePanel.retain(worldConfig.vehicles.map((vehicle) => vehicle.id));
   if ($("settings-dialog").open && !worldConfig.vehicles.some((vehicle) => vehicle.id === settingsVehicleId)) $("settings-dialog").close();
   instructorState = data.instructor;
@@ -1463,6 +1495,7 @@ function updateTelemetry() {
   for (const id of ["transition-hover", "transition-cruise"])
     $(id).disabled = !!replay || kind !== "vtol";
   $("transition-cruise").disabled ||= !!worldConfig?.vehicles.find((vehicle) => vehicle.id === activeVehicleId)?.setup.collisionPrevention.enabled;
+  $("transition-cruise").disabled ||= !!s.follow?.active;
   $("fault-motor").disabled = $("fault-apply").disabled =
     !!replay || kind === "fixedwing";
   $("fault-pusher").disabled = !!replay || !wing;
@@ -1551,6 +1584,7 @@ function updateTelemetry() {
     attitude: "姿態",
     takeoff: "跑道起飛",
     position: kind === "fixedwing" ? "位置盤旋" : "位置",
+    follow: "跟飛",
     mission: "任務",
     rtl: "返航",
     land: "降落",
@@ -1585,6 +1619,10 @@ function updateTelemetry() {
     $("view-status").innerHTML = '<span class="dot"></span>碰撞停機';
   }
   $("collision-prevention-status").textContent = externalActive ? "幾何碰撞預防：外部飛控不適用" : formatCollisionPrevention(s.collisionPrevention);
+  const followVehicle = worldState?.vehicles.find(v => v.id === activeVehicleId);
+  $("follow-flight-status").textContent = externalActive ? "跟飛：外部飛控不適用" : followVehicle ? formatFollow(followVehicle.setup.follow, s.follow, s, worldState.vehicles) : "跟飛：等待狀態";
+  $("follow-start").disabled = !!replay || externalActive || kind === "fixedwing" || !!s.follow?.active || !followVehicle?.setup.follow.leaderId || (kind === "vtol" && (s.flight.transition !== "hover" || s.flight.transitionProgress !== 0));
+  $("follow-stop").disabled = !!replay || externalActive || !s.follow?.active;
   const battery = s.battery;
   $("battery-details").textContent = battery
     ? formatBattery(battery)
@@ -2424,6 +2462,12 @@ $("tutorial-action").onclick = async () => {
 };
 $("flight-mode").onchange = (event) =>
   sendWorker({ type: "mode", value: event.target.value });
+for (const [id, type] of [["follow-start", "startFollow"], ["follow-stop", "stopFollow"]])
+  $(id).onclick = async () => {
+    if (replay || externalActive) return;
+    try { await requestApi({ type, vehicleId: activeVehicleId }); }
+    catch (error) { toast(`跟飛操作失敗：${error.message}`); }
+  };
 document.querySelectorAll("[data-command]").forEach(
   (button) =>
     (button.onclick = () => {
@@ -2770,6 +2814,7 @@ function showReplayEvent(type, value) {
 }
 function projectReplayWorld(resetHistory = false) {
   worldState = recordingWorldAt(replay, replayIndex);
+  refreshFollowPanel();
   nistState = recordingNistState(replay, replayIndex);
   worldTermination =
     replayIndex === replay.samples.length - 1 ? replay.termination : null;

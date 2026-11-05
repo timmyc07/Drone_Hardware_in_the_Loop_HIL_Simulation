@@ -59,6 +59,9 @@ const VEHICLE_COMMANDS = [
   "gimbal",
   "operatorGimbal",
   "collisionPrevention",
+  "follow",
+  "startFollow",
+  "stopFollow",
   "geofenceZones",
   "transition",
   "position",
@@ -78,6 +81,7 @@ const VEHICLE_READS = [
   "inspectSensors",
   "inspectGimbal",
   "inspectCollisionPrevention",
+  "inspectFollow",
   "inspectGeofenceZones",
   "pointCloudExport",
   "sensorExport",
@@ -242,6 +246,8 @@ function recordEvent(data) {
       "clearFaults",
       "takeoff",
       "abortTakeoff",
+      "startFollow",
+      "stopFollow",
       "arm",
       "disarm",
     ].includes(data.type)
@@ -328,7 +334,7 @@ onmessage = async ({ data }) => {
       world.command(data.vehicleId, commandType, data.value, data.fault);
       replyVehicle = data.vehicleId;
       // Store canonical setup values rather than partially specified input forms.
-      if (["mission", "gimbal", "sensorConfig", "collisionPrevention", "geofenceZones"].includes(commandType)) {
+      if (["mission", "gimbal", "sensorConfig", "collisionPrevention", "geofenceZones", "follow"].includes(commandType)) {
         const v = selected(state(), data.vehicleId);
         data = {
           ...data,
@@ -673,6 +679,7 @@ onmessage = async ({ data }) => {
         case "inspectScene":
         case "inspectGimbal":
         case "inspectCollisionPrevention":
+        case "inspectFollow":
         case "inspectGeofenceZones":
         case "apiExport": {
           if (data.requestId === undefined)
@@ -689,6 +696,8 @@ onmessage = async ({ data }) => {
                     ? selected(value, data.vehicleId).sensors
                     : data.type === "inspectGimbal"
                       ? selected(value, data.vehicleId).snapshot.gimbal
+                      : data.type === "inspectFollow"
+                        ? { settings: selected(value, data.vehicleId).setup.follow, state: selected(value, data.vehicleId).snapshot.follow }
                       : data.type === "inspectCollisionPrevention"
                         ? { settings: selected(value, data.vehicleId).setup.collisionPrevention, state: selected(value, data.vehicleId).snapshot.collisionPrevention }
                         : data.type === "inspectGeofenceZones"

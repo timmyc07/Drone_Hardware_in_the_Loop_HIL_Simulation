@@ -1,3 +1,4 @@
+import { validateFollowSettings } from "./follow.js";
 import { validateCollisionPreventionSettings, collisionPreventionInactive, constrainHorizontalMotion } from "./collision-prevention.js";
 import { validateGeofenceZones, geofenceContains, geofenceSegmentAllowed } from "./geofence-zones.js";
 import { batterySupply } from "./battery.js";
@@ -210,11 +211,11 @@ export function createSimulation(configuration = {}, options = {}) {
     Object.getPrototypeOf(options) !== Object.prototype ||
     Object.keys(options).some(
       (key) =>
-        !["controlSource", "gimbal", "terrain", "spawn", "home", "collisionPrevention", "geofenceZones"].includes(key),
+        !["controlSource", "gimbal", "terrain", "spawn", "home", "collisionPrevention", "geofenceZones", "follow"].includes(key),
     )
   )
     throw new Error(
-      "Simulation options must contain only controlSource, gimbal, terrain, spawn, home, collisionPrevention and geofenceZones",
+      "Simulation options must contain only controlSource, gimbal, terrain, spawn, home, collisionPrevention, geofenceZones and follow",
     );
   const controlSource = options.controlSource ?? "internal";
   if (!["internal", "external"].includes(controlSource))
@@ -350,6 +351,12 @@ export function createSimulation(configuration = {}, options = {}) {
     wind,
     gustUntil,
     gustVector;
+  const initialFollow = validateFollowSettings(options.follow);
+  let followSettings = structuredClone(initialFollow),
+    followState = null,
+    followSource = null,
+    followHeading = 0;
+  if ((external || config.airframe === "fixedwing") && followSettings.leaderId !== null) throw Error("Follow requires an internal multirotor or VTOL");
   let navigation,
     positionTarget,
     explicitPosition,
@@ -474,6 +481,10 @@ export function createSimulation(configuration = {}, options = {}) {
     takeoffStarted = 0;
     runwayBrake = fixedWing ? 1 : 0;
     launchAuthorized = !config.startOnGround;
+    followSettings = structuredClone(initialFollow);
+    followState = null;
+    followSource = null;
+    followHeading = 0;
     missionLegStart = [0, 0];
     missionRejoin = false;
     target = {
@@ -840,6 +851,7 @@ export function createSimulation(configuration = {}, options = {}) {
     if (armed && time - observed.time > 0.5 + 1e-10) {
       failed = true;
       navigation.reason = "stale-sensor";
+      if (followState?.active) stopFollow("follower-failsafe", "hold");
       if (
         fixedWing &&
         ["runup", "roll", "rotate", "climb"].includes(takeoffPhase)
@@ -943,6 +955,7 @@ export function createSimulation(configuration = {}, options = {}) {
     };
   }
   function setTransition(value) {
+    if (value === "cruise" && followState?.active) throw Error("Stop follow before VTOL cruise transition");
     if (value === "cruise" && collisionPreventionSettings.enabled) throw Error("Disable collision prevention before VTOL cruise transition");
     if (config.airframe !== "vtol")
       throw new Error("Transition is only available for lift+cruise VTOL");
@@ -1304,6 +1317,7 @@ export function createSimulation(configuration = {}, options = {}) {
     );
   }
   function setTargets(values) {
+    if (followState?.active) throw Error("Stop follow before changing manual targets");
     if (takeoffActive())
       throw new Error("Abort runway takeoff before changing targets");
     if (
@@ -1382,6 +1396,7 @@ export function createSimulation(configuration = {}, options = {}) {
     return value;
   }
   function setPositionTarget(value) {
+    if (followState?.active) throw Error("Stop follow before changing position target");
     if (takeoffActive())
       throw new Error("Abort runway takeoff before changing position target");
     if (safetyReason || ["rtl", "land", "mission"].includes(navigation.mode))
@@ -1432,6 +1447,8 @@ export function createSimulation(configuration = {}, options = {}) {
     }
   }
   function enterMode(mode, reason = "") {
+    if (followState?.active && mode !== "follow")
+      followState = { ...followState, active: false, reason: safetyReason ? "safety-action" : "mode-change" };
     if (fixedWing && mode === "land" && !terrain.runwayCompatible)
       throw new Error("Terrain does not support fixed-wing runway landing");
     if (mode !== "position") altitudeReference = "datum";
@@ -1449,7 +1466,7 @@ export function createSimulation(configuration = {}, options = {}) {
         airspeed: hasWing ? config.cruiseAirspeed : 0,
       };
       target = { ...baseTarget };
-    } else if (mode === "position") {
+    } else if (mode === "position" || mode === "follow") {
       // Capture current position unless an explicit target was supplied immediately beforehand.
       if (!explicitPosition)
         positionTarget = {
@@ -1511,6 +1528,7 @@ export function createSimulation(configuration = {}, options = {}) {
     refreshCollisionPreventionState();
   }
   function setMode(mode) {
+    if (mode === "follow") return startFollow();
     if (
       fixedWing &&
       !terrain.runwayCompatible &&
@@ -1563,6 +1581,7 @@ export function createSimulation(configuration = {}, options = {}) {
     integrals.fill(0);
   }
   function disarm() {
+    if (followState?.active) stopFollow(crashed ? "follower-crashed" : "follower-disarmed", "hold");
     if (takeoffActive() && groundRolling) {
       stopTakeoff("pilot");
       return;
@@ -1894,9 +1913,101 @@ export function createSimulation(configuration = {}, options = {}) {
     safetyReason = reason;
     enterMode(mode, reason);
   }
+  function followCandidate(settings = followSettings) {
+    const source = followSource;
+    if (!source || source.leaderId !== settings.leaderId || !source.snapshot)
+      return { reason: "leader-missing" };
+    if (source.tick !== steps || !Number.isFinite(source.snapshot.time) ||
+        Math.abs(source.snapshot.time - time) > 1e-8)
+      return { reason: "leader-stale" };
+    const leader = source.snapshot;
+    if (![leader.position, leader.velocity, leader.attitude].every(v =>
+      Array.isArray(v) && v.length === 3 && Reflect.ownKeys(v).length === 4 &&
+      Array.from(v).every(Number.isFinite)) || typeof leader.armed !== "boolean" ||
+      !["flying", "ready", "landed", "crashed", "failsafe"].includes(leader.status))
+      return { reason: "leader-invalid" };
+    if (leader.status === "crashed") return { reason: "leader-crashed" };
+    if (leader.status === "failsafe") return { reason: "leader-failsafe" };
+    if (!leader.armed) return { reason: "leader-disarmed" };
+    if (leader.faults?.linkLost) return { reason: "leader-link-loss" };
+    if (!["flying", "ready"].includes(leader.status) || !(leader.ground?.clearanceM > .2))
+      return { reason: "leader-landed" };
+    if (Math.hypot(...leader.position.map((v, i) => v - state[i])) > settings.maxDistanceM)
+      return { reason: "target-range" };
+    const heading = settings.frame === "leader-heading" ? leader.attitude[2] : 0;
+    const { x, y, altitude } = settings.offset;
+    const point = {
+      north: leader.position[0] + x * Math.cos(heading) - y * Math.sin(heading),
+      east: leader.position[1] + x * Math.sin(heading) + y * Math.cos(heading),
+      altitude: -leader.position[2] + altitude,
+    };
+    if (!Object.values(point).every(Number.isFinite) || Math.abs(point.north) > 500 ||
+        Math.abs(point.east) > 500 || point.altitude < -1000 || point.altitude > 1500)
+      return { reason: "target-invalid" };
+    if (!positionInsideGeofence([point.north, point.east, -point.altitude]))
+      return { reason: "target-geofence" };
+    if (!terrain.contains(point.north, point.east)) return { reason: "target-terrain" };
+    if (point.altitude <= terrain.sample(point.north, point.east).heightM + .2)
+      return { reason: "target-ground" };
+    return { point, leader, sourceTick: source.tick };
+  }
+  function applyFollowCandidate(candidate) {
+    positionTarget = candidate.point;
+    altitudeReference = "datum";
+    navigation.targetPosition = [positionTarget.north, positionTarget.east];
+    followState = {
+      active: true,
+      leaderId: followSettings.leaderId,
+      reason: "",
+      sourceTick: candidate.sourceTick,
+      targetPosition: [positionTarget.north, positionTarget.east, -positionTarget.altitude],
+    };
+    if (followSettings.yawMode === "leader") followHeading = candidate.leader.attitude[2];
+    else if (followSettings.yawMode === "face-leader") {
+      const dn = candidate.leader.position[0] - state[0],
+        de = candidate.leader.position[1] - state[1];
+      if (Math.hypot(dn, de) > .001) followHeading = Math.atan2(de, dn);
+    }
+  }
+  function setFollowSettings(value) {
+    if (value === undefined) throw Error("Follow requires complete settings");
+    const next = validateFollowSettings(value);
+    if ((external || fixedWing) && next.leaderId !== null)
+      throw Error("Follow requires an internal multirotor or VTOL");
+    const candidate = followState?.active ? followCandidate(next) : null;
+    if (candidate?.reason) throw Error(`Cannot update active follow: ${candidate.reason}`);
+    followSettings = next;
+    if (candidate) {
+      if (next.yawMode === "hold") followHeading = angles(state.slice(6, 10))[2];
+      applyFollowCandidate(candidate);
+    } else followState = null;
+    return structuredClone(next);
+  }
+  function startFollow() {
+    if (external || fixedWing) throw Error("Follow requires an internal multirotor or VTOL");
+    if (hasWing && (transition !== "hover" || transitionProgress !== 0))
+      throw Error("Follow requires fully hovering VTOL");
+    if (!followSettings.leaderId) throw Error("Select a follow leader first");
+    if (!armed || crashed || failed || safetyReason || battery.low || faults.linkLost ||
+        -state[2] - groundAt().heightM <= .2)
+      throw Error("Take off before starting follow; safety actions cannot be overridden");
+    const candidate = followCandidate();
+    if (candidate.reason) throw Error(`Cannot start follow: ${candidate.reason}`);
+    explicitPosition = false;
+    enterMode("follow");
+    followHeading = angles(state.slice(6, 10))[2];
+    applyFollowCandidate(candidate);
+  }
+  function stopFollow(reason = "pilot", action = "hold") {
+    if (!followState?.active) return;
+    followState = { ...followState, active: false, reason };
+    if (safetyReason) return;
+    explicitPosition = false;
+    enterMode(action === "rtl" ? "rtl" : "position", crashed || failed ? navigation.reason : "");
+  }
   function refreshCollisionPreventionState() {
     collisionPreventionState = collisionPreventionInactive(collisionPreventionSettings);
-    if (collisionPreventionState && ["position", "mission", "rtl", "land"].includes(navigation.mode) &&
+    if (collisionPreventionState && ["position", "follow", "mission", "rtl", "land"].includes(navigation.mode) &&
         !fixedWing && (!hasWing || (transition === "hover" && transitionProgress === 0))) {
       collisionPreventionState.applicable = true;
       collisionPreventionState.reason = "clear";
@@ -1925,7 +2036,7 @@ export function createSimulation(configuration = {}, options = {}) {
       const spawnHeight = createTerrain(initialTerrain).sample(spawn.north, spawn.east).heightM + spawn.altitude;
       if (!positionInsideGeofence([spawn.north, spawn.east, -spawnHeight], next)) throw Error("Initial spawn is outside the geofence");
       if (!positionInsideGeofence(state, next)) throw Error("Current position is outside the geofence");
-      if (explicitPosition || ["position", "mission", "rtl", "land"].includes(navigation.mode))
+      if (explicitPosition || ["position", "follow", "mission", "rtl", "land"].includes(navigation.mode))
         validatePoint(positionTarget, Object.hasOwn(positionTarget, "hold"), altitudeReference, next);
       for (const point of navigation.waypoints) validatePoint(point, true, "datum", next);
     }
@@ -1955,6 +2066,11 @@ export function createSimulation(configuration = {}, options = {}) {
       if (faults.linkLost && !safetyReason) safetyMode("rtl", "link-loss");
       if (battery.low && !safetyReason && navigation.mode !== "land")
         safetyMode("rtl", "low-battery");
+    }
+    if (navigation.mode === "follow") {
+      const candidate = followCandidate();
+      if (candidate.reason) stopFollow(candidate.reason, followSettings.lostAction);
+      else applyFollowCandidate(candidate);
     }
     if (fixedWing && navigation.mode === "takeoff") {
       if (takeoffActive()) navigateTakeoff(dt);
@@ -2035,7 +2151,12 @@ export function createSimulation(configuration = {}, options = {}) {
       0.7,
       3 / Math.max(1e-9, Math.hypot(...errors)),
     );
-    const desiredVelocityNe = errors.map(v => v * velocityScale);
+    let desiredVelocityNe = errors.map(v => v * velocityScale);
+    if (navigation.mode === "follow") {
+      desiredVelocityNe = desiredVelocityNe.map((v, i) => v + followSource.snapshot.velocity[i]);
+      const speedScale = Math.min(1, 3 / Math.max(1e-9, Math.hypot(...desiredVelocityNe)));
+      desiredVelocityNe = desiredVelocityNe.map(v => v * speedScale);
+    }
     let acceleration = desiredVelocityNe.map(
       (v, i) => 2.2 * (v - observed.velocity[i]) + 0.12 * horizontalIntegral[i],
     );
@@ -2063,7 +2184,7 @@ export function createSimulation(configuration = {}, options = {}) {
           : positionTarget.altitude,
       roll: Math.atan2(-Math.sin(yaw) * north + Math.cos(yaw) * east, G),
       pitch: -Math.atan2(Math.cos(yaw) * north + Math.sin(yaw) * east, G),
-      yawRate: 0,
+      yawRate: navigation.mode === "follow" ? clamp(2 * wrap(followHeading - observed.attitude[2]), -1, 1) : 0,
       airspeed: hasWing ? baseTarget.airspeed : 0,
     };
     navigation.targetPosition = [positionTarget.north, positionTarget.east];
@@ -2189,6 +2310,7 @@ export function createSimulation(configuration = {}, options = {}) {
     const restoreGimbal = gimbal.checkpoint();
     const saved = structuredClone({
       geofenceZones,
+      followSettings, followState, followSource, followHeading,
       collisionPreventionSettings,
       collisionPreventionState,
       collisionPreventionPeers,
@@ -2261,6 +2383,7 @@ export function createSimulation(configuration = {}, options = {}) {
       restoreGimbal();
       ({
         geofenceZones,
+        followSettings, followState, followSource, followHeading,
         collisionPreventionSettings,
         collisionPreventionState,
         collisionPreventionPeers,
@@ -2604,6 +2727,7 @@ export function createSimulation(configuration = {}, options = {}) {
       clearance = -state[2] - surface.heightM;
     return {
       time,
+      follow: structuredClone(followState),
       collisionPrevention: structuredClone(collisionPreventionState),
       gimbal: gimbal.snapshot(),
       ground: {
@@ -2719,6 +2843,11 @@ export function createSimulation(configuration = {}, options = {}) {
   reset();
   return {
     checkpoint,
+    getFollowSettings: () => structuredClone(followSettings),
+    setFollowSettings: internalCommand(setFollowSettings),
+    setFollowSource: source => { followSource = structuredClone(source); },
+    startFollow: internalCommand(startFollow),
+    stopFollow: internalCommand(() => stopFollow()),
     getGeofenceZones: () => structuredClone(geofenceZones),
     setGeofenceZones,
     setCollisionPrevention,

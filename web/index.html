@@ -1038,6 +1038,7 @@
               <select id="flight-mode">
                 <option value="attitude">姿態</option>
                 <option value="position">位置</option>
+                <option value="follow" disabled>跟飛（使用下方按鈕啟動）</option>
                 <option value="mission">任務</option>
                 <option value="rtl">返航</option>
                 <option value="land">降落</option>
@@ -1090,6 +1091,9 @@
             <p id="airframe-status">機型：等待狀態</p>
             <p id="flight-details">等待狀態</p>
             <p id="collision-prevention-status" role="status">幾何碰撞預防：關閉</p>
+            <p id="follow-flight-status" role="status">跟飛：等待狀態</p>
+            <div class="feature-actions"><button id="follow-start" type="button">開始跟飛</button><button id="follow-stop" type="button">停止並保持位置</button></div>
+            <p>先在管理參數選擇領航機；兩機須先解鎖起飛。跟飛不會自動起飛。</p>
             <p id="ground-status">地表高度：等待狀態</p>
             <p id="flight-mission-status" aria-live="polite" hidden></p>
             <p id="wing-telemetry">空速與翼面狀態：—</p>
@@ -1283,6 +1287,21 @@
           從地面靜止、未解鎖狀態開始</label
         >
         <div id="settings-fields"></div>
+        <section class="settings-group">
+          <h3>載具跟飛</h3>
+          <p>選擇同一世界的另一架載具。世界座標偏移為北／東；領航機航向偏移為前／右；高度差向上為正，以共同基準面計算。設定獨立套用，不重設實驗。</p>
+          <div class="settings-grid">
+            <div class="settings-field"><label for="follow-leader">領航機</label><select id="follow-leader"></select></div>
+            <div class="settings-field"><label for="follow-frame">偏移座標</label><select id="follow-frame"><option value="world">世界北／東</option><option value="leader-heading">領航機前／右</option></select></div>
+            <div class="settings-field"><label for="follow-x">北／前偏移 (m)</label><input id="follow-x" type="number" min="-100" max="100" step="any"></div>
+            <div class="settings-field"><label for="follow-y">東／右偏移 (m)</label><input id="follow-y" type="number" min="-100" max="100" step="any"></div>
+            <div class="settings-field"><label for="follow-altitude">高度差 (m)</label><input id="follow-altitude" type="number" min="-100" max="100" step="any"></div>
+            <div class="settings-field"><label for="follow-distance">最大距離 (m)</label><input id="follow-distance" type="number" min="1" max="500" step="any"></div>
+            <div class="settings-field"><label for="follow-lost">停止時動作</label><select id="follow-lost"><option value="hold">保持位置</option><option value="rtl">返航</option></select></div>
+            <div class="settings-field"><label for="follow-yaw">航向</label><select id="follow-yaw"><option value="hold">保持航向</option><option value="leader">領航機航向</option><option value="face-leader">面向領航機</option></select></div>
+          </div>
+          <button id="follow-apply" type="button">套用跟飛設定</button><p id="follow-status" role="status"></p>
+        </section>
         <section class="settings-group">
           <h3>區域圍欄</h3>
           <p>目前載具的水平區域，以世界座標北、東（公尺）設定。原家點半徑與高度上限仍然生效；允許區取聯集，再扣除禁入區。沒有允許區時，僅扣除禁入區。</p>

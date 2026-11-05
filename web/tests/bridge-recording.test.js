@@ -163,13 +163,13 @@ function safeScene(f) {
 const inspection = (record, index = -1) =>
   record.samples.at(index).vehicles[0].snapshot.inspection;
 
-test("bridge record21 preserves two actual upward exposures at tick7 and independently replays all world states", async () => {
+test("bridge record22 preserves two actual upward exposures at tick7 and independently replays all world states", async () => {
   const f = await observed();
   f.step(13);
   f.capture();
   const clean = validateRecording(f.record);
-  assert.equal(RECORDING_VERSION, 21);
-  assert.equal(MODEL_VERSION, "0.15.0");
+  assert.equal(RECORDING_VERSION, 22);
+  assert.equal(MODEL_VERSION, "0.16.0");
   assert.deepEqual(
     clean.samples.map((frame) => frame.tick),
     [0, 7, 20],

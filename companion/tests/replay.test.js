@@ -217,6 +217,8 @@ for (const [kind, makeRecord, replay] of [
     for (const mutate of [
       r => { delete r.modelVersion; }, r => { r.modelVersion = '0.13.0'; },
       ...['samples', 'finalSnapshot'].flatMap(location => [
+        r => { const s = location === 'samples' ? r.samples[0] : r.finalSnapshot; s.follow = {}; },
+        r => { const s = location === 'samples' ? r.samples[0] : r.finalSnapshot; delete s.follow; },
         r => { const s = location === 'samples' ? r.samples[0] : r.finalSnapshot; s.collisionPrevention = {}; },
         r => { const s = location === 'samples' ? r.samples[0] : r.finalSnapshot; delete s.collisionPrevention; },
         r => { const s = location === 'samples' ? r.samples[0] : r.finalSnapshot; delete s.battery.openCircuitVoltage; },

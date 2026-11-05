@@ -1,3 +1,4 @@
+import { DEFAULT_FOLLOW, validateFollowSettings, validateFollowState, validateFollowRoster } from "./follow.js";
 import { DEFAULT_GEOFENCE_ZONES, validateGeofenceZones } from "./geofence-zones.js";
 import { DEFAULT_COLLISION_PREVENTION, validateCollisionPreventionSettings, validateCollisionPreventionState } from "./collision-prevention.js";
 import { NIST_EVENT_TYPES, createNistSession, validateNistEventValue } from './nist.js';
@@ -34,8 +35,8 @@ import {
   validateGimbalState,
 } from "./gimbal.js";
 
-export const RECORDING_VERSION = 21;
-export const MODEL_VERSION = "0.15.0";
+export const RECORDING_VERSION = 22;
+export const MODEL_VERSION = "0.16.0";
 const BATTERY_FIELDS = [
   "soc", "voltage", "current", "power", "usedWh", "remainingSeconds", "low", "critical",
   "openCircuitVoltage", "motorSpeedScale", "powerLimited",
@@ -49,7 +50,7 @@ function unpackBattery(value) {
   exactKeys(value, BATTERY_FIELDS, "battery");
   return value;
 }
-const MODES = ["attitude", "position", "mission", "rtl", "land", "takeoff"];
+const MODES = ["attitude", "position", "mission", "rtl", "land", "takeoff", "follow"];
 const TAKEOFF_PHASES = [
   "idle",
   "runup",
@@ -74,6 +75,7 @@ export const DEFAULT_SETUP = Object.freeze({
   sensors: DEFAULT_SENSOR_CONFIG,
   gimbal: DEFAULT_GIMBAL_SETTINGS,
   collisionPrevention: DEFAULT_COLLISION_PREVENTION,
+  follow: DEFAULT_FOLLOW,
   geofenceZones: DEFAULT_GEOFENCE_ZONES,
   mode: "attitude",
   mission: Object.freeze([]),
@@ -242,6 +244,7 @@ function sample(
   expectedHome,
   activeCourse,
   collisionPreventionSettings,
+  followSettings,
 ) {
   object(value);
   if (
@@ -294,6 +297,14 @@ function sample(
   const mode = choice(nav.mode, MODES);
   if (mode === "takeoff" && airframe !== "fixedwing")
     throw new Error("Runway takeoff mode requires a fixed-wing airframe");
+  if (mode === "follow" && airframe === "fixedwing")
+    throw new Error("Follow requires a hover-capable airframe");
+  const follow = unpackFollow(value.follow);
+  if ((mode === "follow") !== Boolean(follow?.active) ||
+      (follow && follow.leaderId !== followSettings.leaderId) ||
+      (follow?.active && airframe === "vtol" &&
+        (value.flight?.transition !== "hover" || value.flight?.transitionProgress !== 0)))
+    throw new Error("Follow state disagrees with navigation or settings");
   if (mode === "mission" && !route.length)
     throw new Error("Mission mode requires waypoints");
   const home = vector(nav.home, 2, -500, 500);
@@ -382,6 +393,7 @@ function sample(
     quaternion,
     gimbal,
     collisionPrevention: unpackCollisionPrevention(value.collisionPrevention, collisionPreventionSettings),
+    follow,
     attitude,
     rates: vector(value.rates, 3),
     motors: vector(value.motors, rotorCount(airframe), 0, 1),
@@ -540,6 +552,14 @@ function event(input, sim, initialScene) {
       result.receipt = structuredClone(object(input.receipt));
       break;
     }
+    case "follow":
+      result.value = validateFollowSettings(object(input.value));
+      break;
+    case "startFollow":
+    case "stopFollow":
+      if (sim.snapshot().airframe === "fixedwing")
+        throw new Error("Follow requires a hover-capable airframe");
+      break;
     case "geofenceZones":
       result.value = validateGeofenceZones(object(input.value));
       break;
@@ -580,6 +600,8 @@ function event(input, sim, initialScene) {
       break;
     case "mode":
       result.value = choice(input.value, MODES);
+      if (result.value === "follow" && sim.snapshot().airframe === "fixedwing")
+        throw new Error("Follow requires a hover-capable airframe");
       if (result.value === "takeoff" && sim.snapshot().airframe !== "fixedwing")
         throw new Error("Runway takeoff mode requires a fixed-wing airframe");
       break;
@@ -655,6 +677,17 @@ function compactCollisionPrevention(state) {
   return state === null ? null : [state.applicable, state.active, state.reason, state.obstacleType, state.obstacleId,
     ...state.desiredVelocityNe, ...state.constrainedVelocityNe, ...state.commandedAccelerationNe, state.clearanceM];
 }
+function unpackFollow(value) {
+  if (Array.isArray(value)) {
+    if (value.length !== 5 || Reflect.ownKeys(value).length !== 6)
+      throw new Error("Invalid compact follow state");
+    value = { active: value[0], leaderId: value[1], reason: value[2], sourceTick: value[3], targetPosition: value[4] };
+  }
+  return validateFollowState(value);
+}
+function compactFollow(state) {
+  return state === null ? null : [state.active, state.leaderId, state.reason, state.sourceTick, state.targetPosition];
+}
 export function compactSnapshot(snapshot) {
   const { waypoints, altitudeReference, positionAltitude, ...navigation } =
     object(snapshot.navigation);
@@ -665,6 +698,7 @@ export function compactSnapshot(snapshot) {
     ...state,
     battery: BATTERY_FIELDS.map(key => snapshot.battery[key]),
     collisionPrevention: compactCollisionPrevention(snapshot.collisionPrevention),
+    follow: compactFollow(snapshot.follow),
     // Settings live in setup/events; retain every acquired angle and status without repeating them.
     gimbal: [
       ...GIMBAL_AXES.map((axis) => gimbal.actual[axis]),
@@ -886,6 +920,9 @@ const VEHICLE_EVENTS = [
   "gimbal",
   "operatorGimbal",
   "collisionPrevention",
+  "follow",
+  "startFollow",
+  "stopFollow",
   "geofenceZones",
   "transition",
   "position",
@@ -1066,7 +1103,7 @@ export function validateRecording(value) {
   object(value);
   if (value.version !== RECORDING_VERSION)
     throw new Error(
-      "Unsupported recording version: version 21 required; legacy recordings are not supported",
+      "Unsupported recording version: version 22 required; legacy recordings are not supported",
     );
   exactKeys(
     value,
@@ -1229,8 +1266,12 @@ export function validateRecording(value) {
           c.trainingEpochTime = e.time;
           c.previousTutorial = undefined;
         }
-        if (["mission", "gimbal", "operatorGimbal", "mode", "collisionPrevention", "geofenceZones"].includes(e.type))
+        if (["mission", "gimbal", "operatorGimbal", "mode", "collisionPrevention", "geofenceZones", "follow"].includes(e.type))
           c.setup[e.type === "operatorGimbal" ? "gimbal" : e.type] = e.value;
+        if ((e.type === "startFollow" || (e.type === "mode" && e.value === "follow")) && c.setup.follow.leaderId === null)
+          throw new Error("Follow requires a configured leader");
+        if (e.type === "follow")
+          validateFollowRoster(world.vehicles.map(v => ({ ...v, setup: contexts.get(v.id).setup })));
         if (e.type === "mission") c.routeText = JSON.stringify(e.value);
         if (e.type === "sensorConfig") {
           c.setup.sensors = e.value;
@@ -1268,7 +1309,12 @@ export function validateRecording(value) {
         v.home,
         c.setup.training,
         c.setup.collisionPrevention,
+        c.setup.follow,
       );
+      if (state.follow && (!contexts.has(state.follow.leaderId) || state.follow.leaderId === entry.id || state.follow.sourceTick > tick))
+        throw new Error("Follow references unknown leader or future source tick");
+      if (state.follow?.active && state.follow.sourceTick < Math.max(0, tick - 1))
+        throw new Error("Active follow source tick is stale");
       const prevention = state.collisionPrevention;
       if ((prevention?.obstacleType === "obstacle" && Number(prevention.obstacleId) >= activeScene.obstacles.length) ||
           (prevention?.obstacleType === "peer" && (!contexts.has(prevention.obstacleId) || prevention.obstacleId === entry.id)))
@@ -1489,7 +1535,7 @@ export function recordingWorldAt(record, index) {
     }
     if (e.vehicleId) {
       const v = config.vehicles.find((v) => v.id === e.vehicleId);
-      if (["mission", "gimbal", "operatorGimbal", "mode", "training", "collisionPrevention", "geofenceZones"].includes(e.type))
+      if (["mission", "gimbal", "operatorGimbal", "mode", "training", "collisionPrevention", "geofenceZones", "follow"].includes(e.type))
         v.setup[e.type === "operatorGimbal" ? "gimbal" : e.type] = e.value;
       if (e.type === "sensorConfig") v.setup.sensors = e.value;
     }
@@ -1738,6 +1784,13 @@ export function recordingToCsv(record) {
     "collision_prevention_commanded_acceleration_n_m_s2",
     "collision_prevention_commanded_acceleration_e_m_s2",
     "collision_prevention_clearance_m",
+    "follow_active_boolean",
+    "follow_leader_id",
+    "follow_reason",
+    "follow_source_tick",
+    "follow_target_north_m",
+    "follow_target_east_m",
+    "follow_target_down_m",
   ];
   const rows = samples.map((s, index) =>
     [
@@ -1847,6 +1900,7 @@ export function recordingToCsv(record) {
       s.battery.motorSpeedScale,
       Number(s.battery.powerLimited),
       ...collisionPreventionCsv(s.collisionPrevention),
+      ...(s.follow === null ? Array(7).fill("") : [Number(s.follow.active), s.follow.leaderId, s.follow.reason, s.follow.sourceTick, ...s.follow.targetPosition]),
     ].join(","),
   );
   return [header.join(","), ...rows].join("\n");

@@ -1,0 +1,583 @@
+{
+  "version": "0.35.0",
+  "date": "2026-11-05",
+  "scope": "Cooperative same-world vehicle follow flight using frozen committed truth; full market-wide objective remains active.",
+  "formats": {
+    "recording": 22,
+    "model": "0.16.0",
+    "api": "2.11",
+    "csvColumns": 222,
+    "scene": 7,
+    "cameraDataset": 5,
+    "nativeRecording": 1,
+    "nativeModelMarkerRequired": "0.16.0"
+  },
+  "tests": {
+    "passed": 614,
+    "failed": 0,
+    "durationMs": 108834.816208,
+    "log": "full-tests.log",
+    "postSuiteChanges": "Capability display descriptions corrected; final build and browser catalog check passed. No flight or recording logic changed after the full suite."
+  },
+  "browser": {
+    "world": {
+      "file": "browser-follow-world.json",
+      "frames": 2925,
+      "ticks": 29210,
+      "seconds": 146.04999999993967,
+      "activeSeconds": 144.3399999999397,
+      "firstActive": {
+        "tick": 342,
+        "time": 1.7099999999999855,
+        "leaderPositionNed": [
+          0,
+          0,
+          -1.804163135721239
+        ],
+        "followerPositionNed": [
+          0,
+          6,
+          -1.3539300318835494
+        ],
+        "follow": {
+          "active": true,
+          "leaderId": "drone-1",
+          "reason": "",
+          "sourceTick": 342,
+          "targetPosition": [
+            -5,
+            0,
+            -2.804163135721239
+          ]
+        },
+        "leaderYawRad": 0,
+        "followerYawRad": 0
+      },
+      "lastActive": {
+        "tick": 29210,
+        "time": 146.04999999993967,
+        "leaderPositionNed": [
+          15.08875167003462,
+          -2.2529318756134964e-16,
+          -3.999953651165145
+        ],
+        "followerPositionNed": [
+          10.119314996101757,
+          -1.4129775801167777e-06,
+          -4.999911689168596
+        ],
+        "follow": {
+          "active": true,
+          "leaderId": "drone-1",
+          "reason": "",
+          "sourceTick": 29209,
+          "targetPosition": [
+            10.088806113204232,
+            -2.23188541321712e-16,
+            -4.999953651860024
+          ]
+        },
+        "leaderYawRad": -1.0908014443656985e-15,
+        "followerYawRad": 3.0938614055899285e-07
+      },
+      "events": [
+        {
+          "time": 0,
+          "type": "follow",
+          "value": {
+            "leaderId": "drone-1",
+            "frame": "world",
+            "offset": {
+              "x": -5,
+              "y": 0,
+              "altitude": 1
+            },
+            "maxDistanceM": 100,
+            "lostAction": "hold",
+            "yawMode": "face-leader"
+          },
+          "tick": 0,
+          "vehicleId": "drone-2"
+        },
+        {
+          "time": 1.7099999999999855,
+          "type": "startFollow",
+          "tick": 342,
+          "vehicleId": "drone-2"
+        }
+      ],
+      "final": {
+        "leaderStatus": "flying",
+        "followerStatus": "flying",
+        "leaderArmed": true,
+        "followerArmed": true,
+        "follow": {
+          "active": true,
+          "leaderId": "drone-1",
+          "reason": "",
+          "sourceTick": 29209,
+          "targetPosition": [
+            10.088806113204232,
+            -2.23188541321712e-16,
+            -4.999953651860024
+          ]
+        }
+      },
+      "modelDraftDidNotApply": true,
+      "replay": {
+        "passed": true,
+        "vehicles": 2,
+        "frames": 2925,
+        "ticks": 29210,
+        "simSeconds": 146.04999999993967,
+        "maximum": {
+          "positionM": 7.105427357601002e-15,
+          "quaternion": 2.4147350785597155e-15,
+          "motors": 8.881784197001252e-16,
+          "allState": 6.821210263296962e-12,
+          "sensors": 8.981260180007666e-12
+        }
+      },
+      "steadyError": {
+        "windowSeconds": 5,
+        "maxHorizontalM": 0.1471481455943023,
+        "maxAltitudeM": 0.0003917535439597053
+      }
+    },
+    "heading": {
+      "file": "browser-follow-heading.json",
+      "frames": 575,
+      "ticks": 5695,
+      "seconds": 28.47499999999862,
+      "activeSeconds": 2.114999999999955,
+      "firstActive": {
+        "tick": 342,
+        "time": 1.7099999999999855,
+        "leaderPositionNed": [
+          0,
+          0,
+          -1.804163135721239
+        ],
+        "followerPositionNed": [
+          0,
+          6,
+          -1.348006543754625
+        ],
+        "follow": {
+          "active": true,
+          "leaderId": "drone-1",
+          "reason": "",
+          "sourceTick": 342,
+          "targetPosition": [
+            -5,
+            0,
+            -4.8041631357212395
+          ]
+        },
+        "leaderYawRad": 0,
+        "followerYawRad": 0
+      },
+      "lastActive": {
+        "tick": 765,
+        "time": 3.8249999999999407,
+        "leaderPositionNed": [
+          1.2944576489393258e-17,
+          -6.349553877989113e-18,
+          -2.024938709319925
+        ],
+        "followerPositionNed": [
+          -2.483395617780754,
+          2.9904350536295174,
+          -5.017408029309251
+        ],
+        "follow": {
+          "active": true,
+          "leaderId": "drone-1",
+          "reason": "",
+          "sourceTick": 764,
+          "targetPosition": [
+            -4.665286845884015,
+            -1.7986379973806779,
+            -5.024919083348713
+          ]
+        },
+        "leaderYawRad": 0.3722122317309401,
+        "followerYawRad": 0.05650056183251568
+      },
+      "events": [
+        {
+          "time": 0,
+          "type": "follow",
+          "value": {
+            "leaderId": "drone-1",
+            "frame": "leader-heading",
+            "offset": {
+              "x": -5,
+              "y": 0,
+              "altitude": 3
+            },
+            "maxDistanceM": 100,
+            "lostAction": "hold",
+            "yawMode": "leader"
+          },
+          "tick": 0,
+          "vehicleId": "drone-2"
+        },
+        {
+          "time": 1.7099999999999855,
+          "type": "startFollow",
+          "tick": 342,
+          "vehicleId": "drone-2"
+        },
+        {
+          "time": 3.8249999999999407,
+          "type": "fault",
+          "fault": "link",
+          "value": {
+            "lost": true
+          },
+          "tick": 765,
+          "vehicleId": "drone-1"
+        },
+        {
+          "time": 4.3499999999999295,
+          "type": "clearFaults",
+          "tick": 870,
+          "vehicleId": "drone-1"
+        },
+        {
+          "time": 4.3499999999999295,
+          "type": "startFollow",
+          "tick": 870,
+          "vehicleId": "drone-2"
+        },
+        {
+          "time": 4.3499999999999295,
+          "type": "stopFollow",
+          "tick": 870,
+          "vehicleId": "drone-2"
+        }
+      ],
+      "final": {
+        "leaderStatus": "landed",
+        "followerStatus": "landed",
+        "leaderArmed": false,
+        "followerArmed": false,
+        "follow": {
+          "active": false,
+          "leaderId": "drone-1",
+          "reason": "pilot",
+          "sourceTick": 870,
+          "targetPosition": [
+            -3.8723864928544516,
+            -3.1630085124701135,
+            -5.258150950188973
+          ]
+        }
+      },
+      "modelDraftDidNotApply": true,
+      "replay": {
+        "passed": true,
+        "vehicles": 2,
+        "frames": 575,
+        "ticks": 5695,
+        "simSeconds": 28.47499999999862,
+        "maximum": {
+          "positionM": 1.7763568394002505e-15,
+          "quaternion": 6.591949208711867e-16,
+          "motors": 3.3306690738754696e-16,
+          "allState": 1.5916157281026244e-12,
+          "sensors": 1.1780798558902461e-11
+        }
+      },
+      "headingFrameRotationVerified": true,
+      "leaderLossStickyHoldVerified": true,
+      "pilotStopVerified": true
+    }
+  },
+  "browserRoundtrip": {
+    "jsonDeepEqual": true,
+    "original": "browser-follow-heading.json",
+    "reexport": "browser-reexported.json"
+  },
+  "csv": {
+    "columns": 222,
+    "rows": 1150,
+    "allRowsMatch": true,
+    "activeFollowAndPilotStopPresent": true
+  },
+  "replayReadOnly": {
+    "status": "重播設定為唯讀。",
+    "controls": [
+      {
+        "disabled": true,
+        "id": "follow-leader",
+        "value": "drone-1"
+      },
+      {
+        "disabled": true,
+        "id": "follow-frame",
+        "value": "leader-heading"
+      },
+      {
+        "disabled": true,
+        "id": "follow-x",
+        "value": "-5"
+      },
+      {
+        "disabled": true,
+        "id": "follow-y",
+        "value": "0"
+      },
+      {
+        "disabled": true,
+        "id": "follow-altitude",
+        "value": "3"
+      },
+      {
+        "disabled": true,
+        "id": "follow-distance",
+        "value": "100"
+      },
+      {
+        "disabled": true,
+        "id": "follow-lost",
+        "value": "hold"
+      },
+      {
+        "disabled": true,
+        "id": "follow-yaw",
+        "value": "leader"
+      },
+      {
+        "disabled": true,
+        "id": "follow-apply",
+        "value": ""
+      }
+    ]
+  },
+  "mobile": {
+    "bodyWidth": 390,
+    "documentWidth": 390,
+    "sectionScrollWidth": 316,
+    "sectionWidth": 316,
+    "viewport": 390
+  },
+  "finalUi": {
+    "catalog": "載具跟飛\n控制與航行 · 部分實作\n\n內建多旋翼及懸停 VTOL 可依共用世界領機真值跟飛，支援世界或航向偏移、高度差、偏航行為與停跟處置；使用有限速度與加速度，不提供網路目標協定、隊形避碰或實機精度。\n\nPX4 v1.17.0 Follow-Me ↗ ArduPilot Follow ↗",
+    "errors": []
+  },
+  "native": {
+    "px4": {
+      "simSeconds": 91.40800000001978,
+      "hoverSeconds": 60.02000000000765,
+      "altitudeRmseM": 0.006215551803531605,
+      "maxHorizontalM": 0.3629436405076356,
+      "replay": {
+        "passed": true,
+        "bootstrapTicks": 22,
+        "acceptedActuators": 22830,
+        "checkedSamples": 1829,
+        "simSeconds": 91.40800000001978,
+        "maxPositionErrorM": 0,
+        "maxQuaternionError": 0,
+        "maxMotorError": 0,
+        "maxBatteryError": 0,
+        "maxPropulsionError": 0
+      }
+    },
+    "ardupilot": {
+      "simSeconds": 126.07300000023793,
+      "hoverSeconds": 60.01900000023752,
+      "altitudeRmseM": 0.0019343006709240183,
+      "maxHorizontalM": 0.29479564495182,
+      "replay": {
+        "passed": true,
+        "bootstrapTicks": 1007,
+        "acceptedActuators": 126073,
+        "checkedSamples": 2523,
+        "simSeconds": 126.07300000023793,
+        "maxPositionErrorM": 0,
+        "maxQuaternionError": 0,
+        "maxMotorError": 0,
+        "maxBatteryError": 0,
+        "maxPropulsionError": 0
+      }
+    }
+  },
+  "research": {
+    "checkedAt": "2026-11-05T14:17:22.464707+00:00",
+    "githubFirst": true,
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/PX4/PX4-Autopilot/v1.17.0/docs/en/flight_modes_mc/follow_me.md",
+        "path": "local/downloads/follow-research/px4-v1.17.0-follow-me.md",
+        "bytes": 13437,
+        "sha256": "080b5196ec17a49d3a9dbca6d63b3a333e1a07557787522500163de7cb0b2df4",
+        "status": 200
+      },
+      {
+        "url": "https://ardupilot.org/copter/docs/follow-mode.html",
+        "path": "local/downloads/follow-research/ardupilot-follow-mode.html",
+        "bytes": 25771,
+        "sha256": "5caedde05d17acea831b0a3a40f49e72a5f5548535131514b20c317b49b249c4",
+        "status": 200
+      },
+      {
+        "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.2/ArduCopter/mode_follow.cpp",
+        "path": "local/downloads/follow-research/ardupilot-Copter-4.7.2-mode-follow.cpp",
+        "bytes": 6150,
+        "sha256": "5abe90b18fe650d236eaa7f6a781a6ed465cb320c7f5a45c5d1486497eeeda58",
+        "status": 200
+      },
+      {
+        "url": "https://raw.githubusercontent.com/ArduPilot/ardupilot/Copter-4.7.2/libraries/AP_Follow/AP_Follow.cpp",
+        "path": "local/downloads/follow-research/ardupilot-Copter-4.7.2-AP-Follow.cpp",
+        "bytes": 40729,
+        "sha256": "3c35c3bfa8e72f203ad430e922204e525b7eca58eae250ac68f664b4c0091101",
+        "status": 200
+      }
+    ]
+  },
+  "sourceSha256": {
+    "web/radar.js": "edc738c70a8f6299380cfc922bbda89d08871c5de728b19bc97c1d9e7b43e290",
+    "web/proximity-panel.js": "128f7f4441b3ab3395b254fca045dd3e0eb13d2900e651dc8f3ca856f8c3f2c7",
+    "web/aerodynamics.js": "690d41e0080d030d7bfa9510dd5d49d9e50d33b47f41227e5ed6cbdd6be28e89",
+    "web/collision-prevention-panel.js": "a9f172bd3b682d5cb18368582b0a4266f286c62512ac34904854355667467648",
+    "web/nist-panel.js": "76fa043e05d3331fdaa70cdfe1966524961b70cda0f33e86fa1a2cda16287e86",
+    "web/battery.js": "b32534e26a3c00d1b42c47d34774c22c88ee21543e4f838f2de37479b0e39c33",
+    "web/survey-editor.js": "998a01737bbcdfb47b3db692bcbce2bf1c410b7783cc3cb4736fbf7795a10064",
+    "web/hil-client.js": "0405497a8dd0fba3b44a6b5f56e1e8dceeae8746b263e3d73a7c673174bb1353",
+    "web/nist-geometry.js": "9670f86cbeabde81b87f5e6aeca734ddf6415bfb0ecdcb52d35653423d08ddb3",
+    "web/instructor.js": "f22db3295ef1a0b1e758be117eb9224330cb7ca4917c7cdfa484f9b34188e3a5",
+    "web/scene.js": "8320f089a38ab8a94b5c53632d308df656e3b51431d9e53d6c6fac26919e77dd",
+    "web/operator.js": "e6ef6460c39ea043fee2a2f4bd18fc2c57301961bf9a08235c18ca9bef666d8f",
+    "web/terrain.js": "3d66e238a464dba35ff7b4ffca6b4ea67ffb9275675842487bc6cd4eb9e2677b",
+    "web/automatic-camera.js": "1276b26c3796373e2c885fa19b2c2ad42bc9aea806abbb930079f814e3873e38",
+    "web/world.js": "48d24de69483c8245ec382fd2ed4a0ccb7d07d3d1691013529b3aee88057225c",
+    "web/sim.js": "2eca37e24e16d99053be0bac9a3c270f58b457f22759687e4aa3232e019941db",
+    "web/worker.js": "c094aeaf2485da8accf616038972e464cff5ac4f1a2b42feec0154dbedde6031",
+    "web/survey.js": "93738768650635fb1d24d66f3c2710f16066a71586b72673b07e534569a38d42",
+    "web/camera-renderer.js": "b1b472f6a8f780c5ea0f6f1fbbacb069c051394fae9583b42767a3406dbb1931",
+    "web/nist-setup.js": "be764c6538707b126becc3f4dff5dc59311c3fcd1b13e2767fab0e9b87c6873d",
+    "web/geofence-zones.js": "3392a97fcf593815d48418dea769ef035bb6ebd64074111b7c42c72cdd6a5d50",
+    "web/obstacle-geometry.js": "1a5699f36c49017afb1e2d9987d15134966912c3769da4076455da0f99c4f8d9",
+    "web/collision-prevention.js": "ef8ec166ae98d6017ef6060945ad45073150a5d41009d6f156bd0f01973a0b97",
+    "web/recording.js": "6e878e5bad83d5a2950d5da3e8cc9d5d3fe02769eeb95f7d3893d15541f7c95d",
+    "web/nist-evidence.js": "8e9172f1d8b878453abb2092407493403ce82a79867ebee112971ae9e36f9beb",
+    "web/geography.js": "06f753f7605ff3ed190274d24880d3f760e2a55f8644f23c58b17c09bcc64887",
+    "web/nist.js": "89ae5790bb8521f919752810ce0081e4fb7b01995cbe94dff691048c7c65362b",
+    "web/rotor-geometry.js": "857bb0f6f5d4f3d03722c5d86d2345075c12e99e23d61f313549568fef97d889",
+    "web/sensors.js": "b4a017cc613ca91770b19bd7b03885476da388c0a7ea584ab696b41c5fc4208d",
+    "web/follow.js": "694bb570a9551afdce9c61f8fa66cfc5a52eff08248dc83ec4c6a2ab50375fb5",
+    "web/dem-editor.js": "a571234fb4224f93d18d55c9f976746e1cc24e77aa7116d6c7463cc6a290eb27",
+    "web/battery-panel.js": "ef4748ab8eaa66ef91d395b73ef39ede41cbb48473ce9f3a9dfe45ca6034b832",
+    "web/survey-camera.js": "db2976608ac6d5d4a39c77a0c619aa8aa0cdf0fcb9b392f9f86afa467d382cb3",
+    "web/main.js": "77ea1d11b907e5b10381fb3dc6a2a27ffd9687385542c24b1d3cc766eb05b469",
+    "web/gimbal.js": "aa48e51c8ae4de336d241df7a19ed091968cc8b1d23638e550009306f685abd8",
+    "web/instructor-panel.js": "f5e7a4a13cc14281b8598106162e00a2445070dc31f5b58494ed425d19c8d71e",
+    "web/dem-import.js": "7ce50679a80201b829e202f2a47bb819afce997cbc7c23cc8b3bb0bfd1bd0cc1",
+    "web/dem-worker.js": "01d49ca4229b0ecc01c0364cc598cc126f4eeaf5a3be7a517aa08bffda157b86",
+    "web/operator-channel.js": "770522cbcff729243f97f5092b899b4476c31663b81c9930ac3d9e0809e11445",
+    "web/scene-editor.js": "ae4e82fbd8b938b4013035ce39574ed0e43a38d180f241c888919577715f49db",
+    "web/training.js": "a0233ed86f0135c9466e32203440dfa5bd65ea46480f41477da7c995314869bd",
+    "web/proximity.js": "d1c08bc661cf78c93a92a56b2a875e5220f8849a429c9312e21d27dcf79d6f5c",
+    "web/geofence-zones-panel.js": "b490e269daa3389c90140569042e6f5c1d0cd4ecb0534cce21e1b5aa5eb2e92e",
+    "web/capabilities.js": "65804d5e044721b75ca3d576850361e2100302c3e8c07a0de9e3bb25bbf85a5b",
+    "web/camera.js": "2412884617d53b5bd67c748ce1e85b3393dba4d204c27dc92419b3ad581c749b",
+    "web/replay.js": "84fdfc092a40f1d40f92e68ee4fcc530feb95767a0594159c3542fc67216fb61",
+    "web/replay-controls.js": "62a27b18ff9b234608628dda58422b27852be236f64fcb1d3f25c0954f8fde54",
+    "web/api.js": "2b9763a9b7bd4cb9194a4b1b792463baeffbc53670ac9052a9dab16274dfb3fa",
+    "web/inspection.js": "a0f9f8cb4cee44bf8e37d3e30baeb6fe0fab3fdc163f789622eb596a925d1a57",
+    "web/peer-geometry.js": "9431fa928209fd4d8004fd62b6e7cfe09386da3ca571b5f357585f020d146e82",
+    "web/scene-data.js": "92e9b8580c51df0a56ce39b580ed508d79a82b7fa02d239c655ac74ffcf33fb5",
+    "web/automatic-camera-controls.js": "4fff746c8b0baae52ff4367684f5e152a8432488837a6ae01f22a3ebe81ff54f",
+    "web/input.js": "2329e5a20b84a1ea10a7b0b7d1fd6679a1a75319acfc46a66f6747e5a7cb02cf",
+    "web/pointcloud.js": "18d9004a66bcfd7478e03c5e2fd203408c308aa75d5cd6664a5eeb9292b5870c",
+    "web/follow-panel.js": "199951f93055e4ede22fa56a530c8efec984f7a6474d5d5b1efa943624d449fe",
+    "companion/ardupilot-protocol.js": "26f8ed3d33a1564cb8e63dbed88bad31f525e7392372dcc72b213da3dfa1a81b",
+    "companion/px4-mission.js": "8fdb79fd85519044638717ce1d7276391e48050230ee31b1d1b13a0e6d4bf656",
+    "companion/mavlink.js": "284ad76718cb95d6fadaffd72023df8d08b07f48f542afe60fef953ec8173d09",
+    "companion/server.js": "5e5bc5173339086bf59f91ffbb9e56ac5da3ea5d17b2c353d93824a3a33acf80",
+    "companion/gcs-bridge.js": "812c6692902cc5904f1158180f84ebba8ad355424ceb7625d9150c5039374db2",
+    "companion/controller-health.js": "d5059d983643bb40694e8c168b5ca808069559929d2f4fab53e01419743f7bf8",
+    "companion/ardupilot-session.js": "6d05612dd46a89eb869819508f1155b50bdb2503f14fac8916a7ac6e48634354",
+    "companion/px4-gcs.js": "39bd3a97d26576b63281557bdb40697376f28f21f045e1e4d19240d404b52eb8",
+    "companion/mission-transfer.js": "d9a3f4d955e7cbe7a3284693d22b7ad9fea3d1927431fcb774fae5af506dbc61",
+    "companion/local-directory.js": "f91c33ba8fa224f58a728265b54489718da672c105ee067005742e7f4e5281f0",
+    "companion/px4-protocol.js": "74f8fcc79d4d38145189a3bb3628bcb81bdfe0ac6a8252a57000b635a70e13a2",
+    "companion/ardupilot-mission.js": "3a4ecf73aec1303154326563449ec5384907e791bc3a75c0987b57c4c0211bbf",
+    "companion/replay.js": "401ca9a94f03d46d166163844aa0a7f950e587dbc37d5fd7e5c01f096dc15851",
+    "companion/px4-session.js": "be511f2177b586fd5759e22772417ef907129ec53a37eac70e2548f90af40851",
+    "companion/px4-wmm.js": "1168036de32e27781203d187e81ae4843f71a56ca5adb0eaef81e6304371d4e3",
+    "tools/replay-world.mjs": "cd7952e2d37196234f09d252c2659caec4e1ab092152a99f251adbe77a19ab66",
+    "package.json": "4c8585d77b8daa0e12e0570c44623d1272241ae628f231d8a0bea6fbeb06c9b7",
+    "package-lock.json": "dac08ceb475fb01e1fc00879d9383299abd001174e3e5da77cf56884ca235aa5"
+  },
+  "artifacts": {
+    "browser-follow-world.json": {
+      "bytes": 99459458,
+      "sha256": "2cd4eb53841203e2bd5474b587c8f54b8bcac6545929ba59666ac2572c0f9a6f"
+    },
+    "browser-follow-heading.json": {
+      "bytes": 12792919,
+      "sha256": "84884d8d038cbde97a3406a6fd7c196d76c99898d7afdf787fdde2569aaf23f0"
+    },
+    "browser-follow-heading.csv": {
+      "bytes": 1980585,
+      "sha256": "7fb2f56f689d8bc613419133cd97350f2e33a6915601685d3f47d29d82350b17"
+    },
+    "browser-reexported.json": {
+      "bytes": 12792919,
+      "sha256": "84884d8d038cbde97a3406a6fd7c196d76c99898d7afdf787fdde2569aaf23f0"
+    },
+    "follow-release-preview.png": {
+      "bytes": 82405,
+      "sha256": "34a3270bc26bd65656ef5ed704bed30ff7669f277202a67427d81193090f29fb"
+    },
+    "follow-mobile.png": {
+      "bytes": 31528,
+      "sha256": "00e30267b5ef102a30f54fe2f462e398bfa2763b45263c0f1947e932502cf095"
+    },
+    "full-tests.log": {
+      "bytes": 64648,
+      "sha256": "a7c2c08e31a04308d8cd263d79dee027f7541b554cbe2323efb41b737e80fd9f"
+    },
+    "build.log": {
+      "bytes": 1180,
+      "sha256": "fa0892d4464aba6f581421e0e8164d2a13fd7c17629dd02026ca9226ee05ec45"
+    }
+  },
+  "catalog": {
+    "total": 74,
+    "implemented": 8,
+    "partial": 58,
+    "planned": 0,
+    "external": 8
+  },
+  "fileLocations": {
+    "worktrees": 20,
+    "allWorktreesInsideRoot": true,
+    "worktree": "local/worktrees/Drone_HIL_follow_me",
+    "evidence": "local/evidence/follow-me-v035",
+    "downloads": "local/downloads/follow-research"
+  },
+  "limits": [
+    "Same-world committed truth, not GNSS estimation or network FOLLOW_TARGET.",
+    "Followers: quadrotor, hexarotor, octorotor, fully hovering VTOL. Fixed-wing and external control cannot follow.",
+    "Horizontal target speed and commanded acceleration stay limited to 3 m/s and 3 m/s squared; body physics can still drift under wind or insufficient power.",
+    "Heading-frame turns use position correction and leader linear velocity feedforward, without offset tangential velocity feedforward; the follower can lag.",
+    "No formation-aware route planning or guaranteed collision avoidance. Peer collision still latches and stops the whole world.",
+    "Inactive state retains its last applied request and source tick, without automatic reactivation.",
+    "No real-aircraft calibration. Production deployment verified natively without a separate production browser smoke test."
+  ],
+  "workerLimits": {
+    "thirtyMinuteRetainedBytes": 100122770,
+    "thirtyMinuteFrames": 36001,
+    "ticks": 360000,
+    "maximumScannerRetainedBytes": 100696959,
+    "maximumScannerFrames": 210,
+    "maximumScannerTick": 2090,
+    "capPolicy": "Approximately 96 MiB; retain the entire atomic final frame."
+  }
+}

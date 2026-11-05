@@ -11,7 +11,7 @@ test("vehicle operations require and preserve explicit vehicle IDs", async () =>
     },
     () => () => {},
   );
-  assert.equal(api.version, "2.10");
+  assert.equal(api.version, "2.11");
   await api.getState("one");
   const target = { altitude: 3 };
   await api.setTargets("two", target);
@@ -164,4 +164,18 @@ test('geofence API uses explicit vehicles and isolates nested settings in both d
   assert.equal(settings.zones[0].center[0],5);
   assert.throws(()=>api.setGeofenceZones(undefined,settings),/vehicleId/);
   assert.throws(()=>api.getGeofenceZones('bad id'),/vehicleId/);
+});
+
+
+test('follow API requires explicit vehicle IDs and isolates nested settings and state', async () => {
+  const calls=[], settings={leaderId:'leader',frame:'world',offset:{x:-5,y:0,altitude:2},maxDistanceM:100,lostAction:'hold',yawMode:'hold'};
+  const value={settings,state:null};
+  const api=createFlightApi(async command=>{calls.push(command);return value;},()=>()=>{});
+  await api.setFollow('follower',settings); settings.offset.x=-9;
+  await api.startFollow('follower'); await api.stopFollow('follower');
+  const result=await api.getFollow('follower'); result.settings.offset.y=10;
+  assert.equal(calls[0].value.offset.x,-5);
+  assert.deepEqual(calls.slice(1),[{type:'startFollow',vehicleId:'follower'},{type:'stopFollow',vehicleId:'follower'},{type:'inspectFollow',vehicleId:'follower'}]);
+  assert.equal(settings.offset.y,0);
+  for (const action of [api.getFollow,api.setFollow,api.startFollow,api.stopFollow]) assert.throws(()=>action('bad id',settings),/vehicleId/);
 });

@@ -1,3 +1,5 @@
+import { validateFollowSettings, validateFollowRoster } from "./follow.js";
+export { validateFollowRoster } from "./follow.js";
 import { validateGeofenceZones } from "./geofence-zones.js";
 import { validateCollisionPreventionSettings } from "./collision-prevention.js";
 import { createNistLaneCollider } from "./nist-geometry.js";
@@ -56,6 +58,7 @@ function simulation(config, setup, scene, spawn, home) {
   return createSimulation(config, {
     terrain: scene.terrain,
     gimbal: setup.gimbal,
+    follow: setup.follow,
     collisionPrevention: setup.collisionPrevention,
     geofenceZones: setup.geofenceZones,
     ...(spawn === undefined ? {} : { spawn }),
@@ -69,13 +72,14 @@ export function validateVehicleSetup(
   spawn,
   home,
 ) {
-  fields(value, ["mode", "mission", "sensors", "gimbal", "training", "collisionPrevention", "geofenceZones"], []);
+  fields(value, ["mode", "mission", "sensors", "gimbal", "training", "collisionPrevention", "geofenceZones", "follow"], []);
   const config = validateConfig(configuration),
     surface = createTerrain(scene.terrain);
   const sensors = validateSensorConfig(value.sensors ?? {}),
     gimbal = validateGimbalSettings(value.gimbal),
     collisionPrevention = validateCollisionPreventionSettings(value.collisionPrevention),
-    geofenceZones = validateGeofenceZones(value.geofenceZones);
+    geofenceZones = validateGeofenceZones(value.geofenceZones),
+    follow = validateFollowSettings(value.follow);
   assertGeographicSensors(scene, sensors);
   const training = value.training ?? "free",
     mode = value.mode ?? "attitude";
@@ -83,12 +87,12 @@ export function validateVehicleSetup(
     throw new Error("Training course is not supported by this airframe");
   if (training === "runway" && !surface.runwayCompatible)
     throw new Error("Runway training requires covered flat runway terrain");
-  const sim = simulation(config, { gimbal, collisionPrevention, geofenceZones }, scene, spawn, home);
+  const sim = simulation(config, { gimbal, collisionPrevention, geofenceZones, follow }, scene, spawn, home);
   if (value.mission !== undefined && !Array.isArray(value.mission))
     throw new Error("Mission must be an array");
   const mission = copy(value.mission ?? []);
   if (mission.length) sim.setMission(mission);
-  sim.setMode(mode);
+  if (mode !== "follow") sim.setMode(mode);
   const groundHeight = surface.sample(...(home ?? [0, 0])).heightM;
   createTrainer(
     training,
@@ -97,7 +101,7 @@ export function validateVehicleSetup(
     home ?? [0, 0],
     groundHeight,
   ).update(sim.snapshot());
-  return { mode, mission, sensors, gimbal, training, collisionPrevention, geofenceZones };
+  return { mode, mission, sensors, gimbal, training, collisionPrevention, geofenceZones, follow };
 }
 export function defaultWorldConfig(
   configuration = {},
@@ -219,6 +223,15 @@ export function validateWorldConfig(input) {
       setup,
     };
   }).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  validateFollowRoster(vehicles);
+  if (vehicles.some(v => v.setup.mode === "follow")) {
+    const initialSimulations = new Map(vehicles.map(v => [v.id, simulation(v.config, v.setup, scene, v.spawn, v.home)]));
+    for (const v of vehicles) if (v.setup.mode === "follow") {
+      const sim = initialSimulations.get(v.id);
+      sim.setFollowSource({tick:0,leaderId:v.setup.follow.leaderId,snapshot:initialSimulations.get(v.setup.follow.leaderId)?.snapshot()});
+      sim.startFollow();
+    }
+  }
   for (let i = 0; i < vehicles.length; i++)
     for (let j = i + 1; j < vehicles.length; j++) {
       const a = vehicles[i],
@@ -285,7 +298,7 @@ export function createWorld(input) {
     sim.setObstacles(scene.obstacles);
     sim.setNistLane(scene.nistLane === true);
     if (spec.setup.mission.length) sim.setMission(spec.setup.mission);
-    sim.setMode(spec.setup.mode);
+    if (spec.setup.mode !== "follow") sim.setMode(spec.setup.mode);
     const suite = createSensorSuite(spec.setup.sensors, spec.config.seed);
     suite.setTerrain(scene.terrain);
     suite.setObstacles(scene.obstacles);
@@ -308,6 +321,12 @@ export function createWorld(input) {
       receipts: [],
     };
   });
+  const frozenSources = () => new Map(vehicles.map(v => [v.spec.id, v.sim.snapshot()]));
+  function supplyFollowSource(v, sources = frozenSources(), leaderId = v.spec.setup.follow.leaderId) {
+    v.sim.setFollowSource({tick, leaderId, snapshot:sources.get(leaderId)});
+  }
+  const initialSources = frozenSources();
+  for (const v of vehicles) if (v.spec.setup.mode === "follow") { supplyFollowSource(v, initialSources); v.sim.startFollow(); }
   const peers = () =>
     vehicles.map((v) => {
       const state = v.sim.snapshot();
@@ -421,13 +440,18 @@ export function createWorld(input) {
     if (dt !== DT)
       throw new Error("The shared world requires fixed 0.005 second steps");
     return transaction(() => {
+      const committedSources = frozenSources();
+      for (const v of vehicles) if (committedSources.get(v.spec.id).follow?.active) supplyFollowSource(v, committedSources);
       if (vehicles.some(v => v.spec.setup.collisionPrevention.enabled)) {
-        const committedPeers = peers();
+        const committedPeers = vehicles.map(v => {
+          const state = committedSources.get(v.spec.id);
+          return { id: v.spec.id, position: state.position, velocity: state.velocity, radius: v.radius };
+        });
         for (const v of vehicles)
           if (v.spec.setup.collisionPrevention.enabled)
             v.sim.setCollisionPreventionPeers(committedPeers.filter(peer => peer.id !== v.spec.id));
       }
-      const before = vehicles.map((v) => v.sim.snapshot().position);
+      const before = vehicles.map(v => committedSources.get(v.spec.id).position);
       for (const v of vehicles) {
         try {
           v.sim.step(dt);
@@ -489,7 +513,18 @@ export function createWorld(input) {
         gust: "gust",
         clearFaults: "clearFaults",
       };
-      if (Object.hasOwn(setters, type)) v.sim[setters[type]](value);
+      if (type === "follow") {
+        if (value === undefined) throw Error("Follow requires complete settings");
+        const next = validateFollowSettings(value);
+        validateFollowRoster(vehicles.map(actor => ({id:actor.spec.id, setup:{follow:actor === v ? next : actor.spec.setup.follow}})));
+        supplyFollowSource(v, frozenSources(), next.leaderId);
+        v.sim.setFollowSettings(next);
+        v.spec.setup.follow = next;
+      } else if (type === "startFollow" || (type === "mode" && value === "follow")) {
+        supplyFollowSource(v);
+        v.sim.startFollow();
+      } else if (type === "stopFollow") v.sim.stopFollow();
+      else if (Object.hasOwn(setters, type)) v.sim[setters[type]](value);
       else if (Object.hasOwn(actions, type)) v.sim[actions[type]]();
       else if (type === "fault") v.sim.injectFault(fault, value);
       else if (type === "sensorConfig") {
