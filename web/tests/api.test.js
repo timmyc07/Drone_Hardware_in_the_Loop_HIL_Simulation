@@ -11,7 +11,7 @@ test("vehicle operations require and preserve explicit vehicle IDs", async () =>
     },
     () => () => {},
   );
-  assert.equal(api.version, "2.9");
+  assert.equal(api.version, "2.10");
   await api.getState("one");
   const target = { altitude: 3 };
   await api.setTargets("two", target);
@@ -151,4 +151,17 @@ test('collision prevention reads and writes explicit vehicles with isolated sett
   assert.equal(result.settings.enabled, false);
   assert.throws(() => api.setCollisionPrevention(undefined, settings), /vehicleId/);
   assert.throws(() => api.getCollisionPrevention('bad id'), /vehicleId/);
+});
+
+test('geofence API uses explicit vehicles and isolates nested settings in both directions', async () => {
+  const calls=[],settings={enabled:true,zones:[{id:'allowed',shape:'circle',kind:'inclusion',center:[0,0],radiusM:10}]};
+  const api=createFlightApi(async command=>{calls.push(command);return settings;},()=>()=>{});
+  await api.setGeofenceZones('B.2',settings);
+  settings.zones[0].center[0]=5;
+  const result=await api.getGeofenceZones('B.2');result.zones[0].center[0]=9;
+  assert.equal(calls[0].value.zones[0].center[0],0);
+  assert.deepEqual(calls[1],{type:'inspectGeofenceZones',vehicleId:'B.2'});
+  assert.equal(settings.zones[0].center[0],5);
+  assert.throws(()=>api.setGeofenceZones(undefined,settings),/vehicleId/);
+  assert.throws(()=>api.getGeofenceZones('bad id'),/vehicleId/);
 });

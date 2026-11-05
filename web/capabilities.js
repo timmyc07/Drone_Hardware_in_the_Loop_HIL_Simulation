@@ -395,9 +395,11 @@ export const CAPABILITIES = [
     id: "geofence",
     category: "控制與航行",
     title: "飛行範圍",
-    description: "提供半徑及高度圍欄與簡化返航處置。",
+    description: "每機可設定圓形或簡單多邊形的允許區聯集及禁入區，配合家點半徑與高度上限；以真值中心點與每步線段偵測越界並簡化返航，不提供繞路或實機精度。",
     status: "partial",
     sources: [
+      "https://github.com/PX4/PX4-Autopilot/blob/v1.17.0/docs/en/flying/geofence.md",
+      "https://ardupilot.org/copter/docs/common-polygon_fence.html",
       "https://www.easa.europa.eu/en/document-library/easy-access-rules/online-publications/easy-access-rules-unmanned-aircraft-systems?page=5",
     ],
   },

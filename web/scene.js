@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { zonePoints } from "./geofence-zones-panel.js";
 import { createTerrain } from "./terrain.js";
 import { inspectionPanel } from "./inspection.js";
 import { createNistLaneGroup, NIST_LANE } from "./nist-geometry.js";
@@ -392,8 +393,10 @@ export function createScene(container) {
   const environment = new THREE.Group();
   const obstacles = new THREE.Group();
   const mission = new THREE.Group();
+  const geofenceZones = new THREE.Group();
+  geofenceZones.userData.cameraExclude = true;
   const gates = new THREE.Group();
-  scene.add(environment, obstacles, mission, gates);
+  scene.add(environment, obstacles, mission, gates, geofenceZones);
   obstacles.userData.cameraClass = 5;
   gates.userData.cameraClass = 6;
   const clear = (group) => {
@@ -544,6 +547,18 @@ export function createScene(container) {
           .addScaledVector(down, v * target.height);
         obstacles.add(mesh);
       }
+    }
+  }
+  function setGeofenceZones(settings) {
+    clear(geofenceZones);
+    if (!settings?.enabled) return;
+    for (const zone of settings.zones) {
+      const points = zonePoints(zone).map(([north, east]) =>
+        new THREE.Vector3(east, (terrain.contains(north, east) ? terrain.sample(north, east).heightM : 0) + 0.15, -north));
+      geofenceZones.add(new THREE.LineLoop(
+        new THREE.BufferGeometry().setFromPoints(points),
+        new THREE.LineBasicMaterial({ color: zone.kind === "inclusion" ? 0x63e0ce : 0xff6e6e }),
+      ));
     }
   }
   function setMission(waypoints) {
@@ -931,6 +946,7 @@ export function createScene(container) {
     setObstacles,
     setNistLane,
     setMission,
+    setGeofenceZones,
     setGates,
     dispose() {
       cameraRenderer.dispose();

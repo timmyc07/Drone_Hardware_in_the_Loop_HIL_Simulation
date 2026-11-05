@@ -1703,3 +1703,8 @@ select:disabled {
 .operator-background input { flex: 0 0 auto; }
 #operator-workspace .feature-actions { align-items: center; }
 #operator-host-status { overflow-wrap: anywhere; }
+
+.zone-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin: 10px 0; }
+.zone-row label { display: grid; gap: 4px; }
+.zone-row input, .zone-row select { width: 120px; }
+.zone-row textarea { width: 180px; min-height: 70px; }

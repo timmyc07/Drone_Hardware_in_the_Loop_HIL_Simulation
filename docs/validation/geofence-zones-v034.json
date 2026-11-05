@@ -1,0 +1,442 @@
+{
+  "version": "0.34.0",
+  "scope": "Per-vehicle known horizontal geometric inclusion/exclusion fences with direct RTL; full market-wide goal remains active.",
+  "formats": {
+    "recording": 21,
+    "model": "0.15.0",
+    "api": "2.10",
+    "csvColumns": 215,
+    "scene": 7,
+    "cameraDataset": 5,
+    "nativeRecording": 1,
+    "nativeModelMarkerRequired": "0.15.0"
+  },
+  "tests": {
+    "passed": 586,
+    "failed": 0,
+    "durationMs": 97832.159416,
+    "log": "full-tests.log",
+    "initialFailure": "Existing loopback UDP test used a fixed 10 ms sleep; replaced with bounded receipt of the actual socket message, then all 586 tests passed."
+  },
+  "browser": {
+    "passed": true,
+    "format": 21,
+    "modelVersion": "0.15.0",
+    "frames": 759,
+    "ticks": 7565,
+    "seconds": 37.8250000000009,
+    "settings": {
+      "enabled": true,
+      "zones": [
+        {
+          "id": "zone-1",
+          "shape": "circle",
+          "kind": "inclusion",
+          "center": [
+            0,
+            0
+          ],
+          "radiusM": 8
+        },
+        {
+          "id": "zone-2",
+          "shape": "circle",
+          "kind": "exclusion",
+          "center": [
+            12,
+            0
+          ],
+          "radiusM": 2
+        },
+        {
+          "id": "zone-3",
+          "shape": "polygon",
+          "kind": "inclusion",
+          "vertices": [
+            [
+              5,
+              -8
+            ],
+            [
+              25,
+              -8
+            ],
+            [
+              25,
+              8
+            ],
+            [
+              5,
+              8
+            ]
+          ]
+        }
+      ]
+    },
+    "geofenceCommandTick": 0,
+    "targetCommand": {
+      "time": 1.1049999999999984,
+      "type": "position",
+      "value": {
+        "north": 20,
+        "east": 0,
+        "altitude": 3,
+        "altitudeReference": "datum"
+      },
+      "tick": 221,
+      "vehicleId": "drone-1"
+    },
+    "firstBreach": {
+      "tick": 1100,
+      "time": 5.499999999999905,
+      "positionNed": [
+        10.038171796858832,
+        1.1783685288030877e-16,
+        -3.001445360803497
+      ],
+      "mode": "rtl",
+      "reason": "geofence",
+      "armed": true
+    },
+    "final": {
+      "tick": 7565,
+      "positionNed": [
+        0.0008052155601050136,
+        -2.8522841270900504e-16,
+        0
+      ],
+      "status": "landed",
+      "armed": false,
+      "fenceBreached": true
+    },
+    "overlappingInclusionFlightVerified": true,
+    "endpointLegalButPathBreachVerified": true,
+    "replay": {
+      "passed": true,
+      "vehicles": 1,
+      "frames": 759,
+      "ticks": 7565,
+      "simSeconds": 37.8250000000009,
+      "maximum": {
+        "positionM": 5.329070518200751e-15,
+        "quaternion": 1.0269562977782698e-15,
+        "motors": 4.440892098500626e-16,
+        "allState": 1.5916157281026244e-12,
+        "sensors": 8.128608897095546e-12
+      }
+    }
+  },
+  "browserRoundtrip": {
+    "jsonDeepEqual": true,
+    "original": "browser-flight.json",
+    "reexport": "browser-reexported.json"
+  },
+  "csv": {
+    "columns": 215,
+    "rows": 759,
+    "allRowsMatch": true
+  },
+  "mobile": {
+    "bodyWidth": 390,
+    "dialogWidth": 360,
+    "documentWidth": 390,
+    "readonlyStatus": "重播中的區域設定為唯讀。",
+    "viewport": 390,
+    "zoneRows": [
+      {
+        "scrollWidth": 316,
+        "width": 316
+      },
+      {
+        "scrollWidth": 316,
+        "width": 316
+      },
+      {
+        "scrollWidth": 316,
+        "width": 316
+      }
+    ]
+  },
+  "replayReadOnly": {
+    "status": "重播中的區域設定為唯讀。",
+    "controls": [
+      {
+        "disabled": true,
+        "value": "zone-1"
+      },
+      {
+        "disabled": true,
+        "value": "inclusion"
+      },
+      {
+        "disabled": true,
+        "value": "0"
+      },
+      {
+        "disabled": true,
+        "value": "0"
+      },
+      {
+        "disabled": true,
+        "value": "8"
+      },
+      {
+        "disabled": true,
+        "value": "zone-2"
+      },
+      {
+        "disabled": true,
+        "value": "exclusion"
+      },
+      {
+        "disabled": true,
+        "value": "12"
+      },
+      {
+        "disabled": true,
+        "value": "0"
+      },
+      {
+        "disabled": true,
+        "value": "2"
+      },
+      {
+        "disabled": true,
+        "value": "zone-3"
+      },
+      {
+        "disabled": true,
+        "value": "inclusion"
+      },
+      {
+        "disabled": true,
+        "value": "5,-8\n25,-8\n25,8\n5,8"
+      }
+    ],
+    "applyDisabled": true
+  },
+  "native": {
+    "px4": {
+      "simSeconds": 91.37600000001974,
+      "hoverSeconds": 60.01200000000763,
+      "altitudeRmseM": 0.00661342170196077,
+      "maxHorizontalM": 0.3634637536397257,
+      "replay": {
+        "passed": true,
+        "bootstrapTicks": 24,
+        "acceptedActuators": 22820,
+        "checkedSamples": 1828,
+        "simSeconds": 91.37600000001974,
+        "maxPositionErrorM": 0,
+        "maxQuaternionError": 0,
+        "maxMotorError": 0,
+        "maxBatteryError": 0,
+        "maxPropulsionError": 0
+      }
+    },
+    "ardupilot": {
+      "simSeconds": 126.08400000023798,
+      "hoverSeconds": 60.011000000237644,
+      "altitudeRmseM": 0.0019302680713673879,
+      "maxHorizontalM": 0.29522851481077583,
+      "replay": {
+        "passed": true,
+        "bootstrapTicks": 1007,
+        "acceptedActuators": 126084,
+        "checkedSamples": 2523,
+        "simSeconds": 126.08400000023798,
+        "maxPositionErrorM": 0,
+        "maxQuaternionError": 0,
+        "maxMotorError": 0,
+        "maxBatteryError": 0,
+        "maxPropulsionError": 0
+      }
+    }
+  },
+  "research": {
+    "checkedAt": "2026-11-05T13:37:55.306505+00:00",
+    "githubFirst": true,
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/PX4/PX4-Autopilot/v1.17.0/docs/en/flying/geofence.md",
+        "path": "local/downloads/geofence-research/px4-v1.17.0-geofence.md",
+        "status": 200,
+        "bytes": 3180,
+        "sha256": "b0de36b9b9a5562b3216f1db7f29cd14e80afb413e5abe6f7cf394440e720480"
+      },
+      {
+        "url": "https://ardupilot.org/copter/docs/common-polygon_fence.html",
+        "path": "local/downloads/geofence-research/ardupilot-inclusion-exclusion.html",
+        "status": 200,
+        "bytes": 25425,
+        "sha256": "b93a4b6984680184d3e0647f1cb38e0b5b6617e69c6e113c4b7f7551d04b4fb4"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/mrdoob/three.js/r187/src/objects/LineLoop.js",
+        "path": "local/downloads/geofence-research/three-r187-LineLoop.js",
+        "status": 200,
+        "bytes": 730,
+        "sha256": "e6e6d8ae980f800feeced9ba349645376f3236745aef863fb53f6158ba221e87"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/mrdoob/three.js/r187/src/materials/LineBasicMaterial.js",
+        "path": "local/downloads/geofence-research/three-r187-LineBasicMaterial.js",
+        "status": 200,
+        "bytes": 2583,
+        "sha256": "fbc541d620fa64943ca967e58ac918e4543472890521db09889bcfe8caa1942b"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/mrdoob/three.js/r187/src/core/BufferGeometry.js",
+        "path": "local/downloads/geofence-research/three-r187-BufferGeometry.js",
+        "status": 200,
+        "bytes": 34311,
+        "sha256": "cceef6122cb36ceec880d460730134327b59c3baa0e73a062531ffcead8e8ec1"
+      }
+    ],
+    "context7": {
+      "library": "Three.js",
+      "installed": "0.187.0",
+      "indexUsed": "/mrdoob/three.js/r186",
+      "gap": "r187 not indexed; exact r187 source verified separately"
+    }
+  },
+  "limits": [
+    "Center-point, known geometry in local N/E metres; no body envelope or real-aircraft calibration.",
+    "Every 0.005 s step checks its endpoint chord; not a continuous RK curve guarantee.",
+    "Direct RTL can pass through a restricted zone; no fence-aware path planning or stopping guarantee.",
+    "Internal five-airframe simulation only; no external firmware fence upload.",
+    "Settings survive experiment resets and recording; page reload initializes disabled.",
+    "Production publication is verified through native Sites; no separate production browser smoke test."
+  ],
+  "sourceSha256": {
+    "web/radar.js": "edc738c70a8f6299380cfc922bbda89d08871c5de728b19bc97c1d9e7b43e290",
+    "web/proximity-panel.js": "128f7f4441b3ab3395b254fca045dd3e0eb13d2900e651dc8f3ca856f8c3f2c7",
+    "web/aerodynamics.js": "690d41e0080d030d7bfa9510dd5d49d9e50d33b47f41227e5ed6cbdd6be28e89",
+    "web/collision-prevention-panel.js": "a9f172bd3b682d5cb18368582b0a4266f286c62512ac34904854355667467648",
+    "web/nist-panel.js": "76fa043e05d3331fdaa70cdfe1966524961b70cda0f33e86fa1a2cda16287e86",
+    "web/battery.js": "b32534e26a3c00d1b42c47d34774c22c88ee21543e4f838f2de37479b0e39c33",
+    "web/survey-editor.js": "998a01737bbcdfb47b3db692bcbce2bf1c410b7783cc3cb4736fbf7795a10064",
+    "web/hil-client.js": "0405497a8dd0fba3b44a6b5f56e1e8dceeae8746b263e3d73a7c673174bb1353",
+    "web/nist-geometry.js": "9670f86cbeabde81b87f5e6aeca734ddf6415bfb0ecdcb52d35653423d08ddb3",
+    "web/instructor.js": "f22db3295ef1a0b1e758be117eb9224330cb7ca4917c7cdfa484f9b34188e3a5",
+    "web/scene.js": "8320f089a38ab8a94b5c53632d308df656e3b51431d9e53d6c6fac26919e77dd",
+    "web/operator.js": "e6ef6460c39ea043fee2a2f4bd18fc2c57301961bf9a08235c18ca9bef666d8f",
+    "web/terrain.js": "3d66e238a464dba35ff7b4ffca6b4ea67ffb9275675842487bc6cd4eb9e2677b",
+    "web/automatic-camera.js": "1276b26c3796373e2c885fa19b2c2ad42bc9aea806abbb930079f814e3873e38",
+    "web/world.js": "d623e86de438b917c0daff02ea921d13857a5179def454b784abea3a5bb66396",
+    "web/sim.js": "0a75157650ab4f16b4da62bf4480baf6b93156171cc57c3b5fe80b6ca28a8817",
+    "web/worker.js": "040fd51eb80b5b6d52daf179cf7af8f1684aaac8ec78bf82b7a9c5e9e227ecd8",
+    "web/survey.js": "93738768650635fb1d24d66f3c2710f16066a71586b72673b07e534569a38d42",
+    "web/camera-renderer.js": "b1b472f6a8f780c5ea0f6f1fbbacb069c051394fae9583b42767a3406dbb1931",
+    "web/nist-setup.js": "be764c6538707b126becc3f4dff5dc59311c3fcd1b13e2767fab0e9b87c6873d",
+    "web/geofence-zones.js": "3392a97fcf593815d48418dea769ef035bb6ebd64074111b7c42c72cdd6a5d50",
+    "web/obstacle-geometry.js": "1a5699f36c49017afb1e2d9987d15134966912c3769da4076455da0f99c4f8d9",
+    "web/collision-prevention.js": "ef8ec166ae98d6017ef6060945ad45073150a5d41009d6f156bd0f01973a0b97",
+    "web/recording.js": "fb9d454404fc561784633c3a727fb3b271fd5a66bd40955d02d2d8255cf608de",
+    "web/nist-evidence.js": "8e9172f1d8b878453abb2092407493403ce82a79867ebee112971ae9e36f9beb",
+    "web/geography.js": "06f753f7605ff3ed190274d24880d3f760e2a55f8644f23c58b17c09bcc64887",
+    "web/nist.js": "89ae5790bb8521f919752810ce0081e4fb7b01995cbe94dff691048c7c65362b",
+    "web/rotor-geometry.js": "857bb0f6f5d4f3d03722c5d86d2345075c12e99e23d61f313549568fef97d889",
+    "web/sensors.js": "b4a017cc613ca91770b19bd7b03885476da388c0a7ea584ab696b41c5fc4208d",
+    "web/dem-editor.js": "a571234fb4224f93d18d55c9f976746e1cc24e77aa7116d6c7463cc6a290eb27",
+    "web/battery-panel.js": "ef4748ab8eaa66ef91d395b73ef39ede41cbb48473ce9f3a9dfe45ca6034b832",
+    "web/survey-camera.js": "db2976608ac6d5d4a39c77a0c619aa8aa0cdf0fcb9b392f9f86afa467d382cb3",
+    "web/main.js": "0b277bdd0259c00271693c55d0e538604a5c3d7f6df4d57c3e304a0f6748d60c",
+    "web/gimbal.js": "aa48e51c8ae4de336d241df7a19ed091968cc8b1d23638e550009306f685abd8",
+    "web/instructor-panel.js": "f5e7a4a13cc14281b8598106162e00a2445070dc31f5b58494ed425d19c8d71e",
+    "web/dem-import.js": "7ce50679a80201b829e202f2a47bb819afce997cbc7c23cc8b3bb0bfd1bd0cc1",
+    "web/dem-worker.js": "01d49ca4229b0ecc01c0364cc598cc126f4eeaf5a3be7a517aa08bffda157b86",
+    "web/operator-channel.js": "770522cbcff729243f97f5092b899b4476c31663b81c9930ac3d9e0809e11445",
+    "web/scene-editor.js": "ae4e82fbd8b938b4013035ce39574ed0e43a38d180f241c888919577715f49db",
+    "web/training.js": "a0233ed86f0135c9466e32203440dfa5bd65ea46480f41477da7c995314869bd",
+    "web/proximity.js": "d1c08bc661cf78c93a92a56b2a875e5220f8849a429c9312e21d27dcf79d6f5c",
+    "web/geofence-zones-panel.js": "b490e269daa3389c90140569042e6f5c1d0cd4ecb0534cce21e1b5aa5eb2e92e",
+    "web/capabilities.js": "1ce7e9d4788138dd0d12b17c191788b64d8c93654e8dd67a426b9876b49de7ff",
+    "web/camera.js": "2412884617d53b5bd67c748ce1e85b3393dba4d204c27dc92419b3ad581c749b",
+    "web/replay.js": "84fdfc092a40f1d40f92e68ee4fcc530feb95767a0594159c3542fc67216fb61",
+    "web/replay-controls.js": "bfe2bffa73373d8595280faee0fb208e124b1e33b37d6071cdc2d016518a9b63",
+    "web/api.js": "4c46d54659e9fa55e55d8b11f241e3d1595af1cbfe0ad7252d5666c5537218da",
+    "web/inspection.js": "a0f9f8cb4cee44bf8e37d3e30baeb6fe0fab3fdc163f789622eb596a925d1a57",
+    "web/peer-geometry.js": "9431fa928209fd4d8004fd62b6e7cfe09386da3ca571b5f357585f020d146e82",
+    "web/scene-data.js": "92e9b8580c51df0a56ce39b580ed508d79a82b7fa02d239c655ac74ffcf33fb5",
+    "web/automatic-camera-controls.js": "4fff746c8b0baae52ff4367684f5e152a8432488837a6ae01f22a3ebe81ff54f",
+    "web/input.js": "2329e5a20b84a1ea10a7b0b7d1fd6679a1a75319acfc46a66f6747e5a7cb02cf",
+    "web/pointcloud.js": "18d9004a66bcfd7478e03c5e2fd203408c308aa75d5cd6664a5eeb9292b5870c",
+    "companion/ardupilot-protocol.js": "26f8ed3d33a1564cb8e63dbed88bad31f525e7392372dcc72b213da3dfa1a81b",
+    "companion/px4-mission.js": "8fdb79fd85519044638717ce1d7276391e48050230ee31b1d1b13a0e6d4bf656",
+    "companion/mavlink.js": "284ad76718cb95d6fadaffd72023df8d08b07f48f542afe60fef953ec8173d09",
+    "companion/server.js": "5e5bc5173339086bf59f91ffbb9e56ac5da3ea5d17b2c353d93824a3a33acf80",
+    "companion/gcs-bridge.js": "812c6692902cc5904f1158180f84ebba8ad355424ceb7625d9150c5039374db2",
+    "companion/controller-health.js": "d5059d983643bb40694e8c168b5ca808069559929d2f4fab53e01419743f7bf8",
+    "companion/ardupilot-session.js": "6d05612dd46a89eb869819508f1155b50bdb2503f14fac8916a7ac6e48634354",
+    "companion/px4-gcs.js": "39bd3a97d26576b63281557bdb40697376f28f21f045e1e4d19240d404b52eb8",
+    "companion/mission-transfer.js": "d9a3f4d955e7cbe7a3284693d22b7ad9fea3d1927431fcb774fae5af506dbc61",
+    "companion/local-directory.js": "f91c33ba8fa224f58a728265b54489718da672c105ee067005742e7f4e5281f0",
+    "companion/px4-protocol.js": "74f8fcc79d4d38145189a3bb3628bcb81bdfe0ac6a8252a57000b635a70e13a2",
+    "companion/ardupilot-mission.js": "3a4ecf73aec1303154326563449ec5384907e791bc3a75c0987b57c4c0211bbf",
+    "companion/replay.js": "bec9ae91872431b513ada1363f335fbaacab31bce203168eb9b6d525f164ac7b",
+    "companion/px4-session.js": "be511f2177b586fd5759e22772417ef907129ec53a37eac70e2548f90af40851",
+    "companion/px4-wmm.js": "1168036de32e27781203d187e81ae4843f71a56ca5adb0eaef81e6304371d4e3",
+    "tools/replay-world.mjs": "cd7952e2d37196234f09d252c2659caec4e1ab092152a99f251adbe77a19ab66",
+    "package.json": "25e917d3b3998853ba09f6536947f15986ca8769ed8b7d02bb9d1ce4b3e490e6",
+    "package-lock.json": "686b5af550e4b6899655391c35a9efe4e8ed3d14409fd157c49c2c4e5006282e"
+  },
+  "artifacts": {
+    "browser-flight.json": {
+      "bytes": 9147252,
+      "sha256": "92fb044be5e65a1f40e9cc307cbde345a99416ad97abd1f07cb26340fdd94e2b"
+    },
+    "browser-flight.csv": {
+      "bytes": 1356453,
+      "sha256": "81b75aa46290ac834811975a656030eaff68bf415185840fc1951634d3f139de"
+    },
+    "browser-reexported.json": {
+      "bytes": 9147252,
+      "sha256": "92fb044be5e65a1f40e9cc307cbde345a99416ad97abd1f07cb26340fdd94e2b"
+    },
+    "geofence-release-preview.png": {
+      "bytes": 84868,
+      "sha256": "76e3209d151738ef01462a265bbdb4737b5cb577fe4005075983113961330c82"
+    },
+    "geofence-mobile.png": {
+      "bytes": 35012,
+      "sha256": "5aea6df65234db9891b9aea2570efc54aa413f3cd877a547b6f3e5dc0d9e9c74"
+    },
+    "full-tests.log": {
+      "bytes": 61346,
+      "sha256": "c092a4f84a3aeb990afa1f22df70291922da93caa0b9b1206133af4bad369853"
+    },
+    "build.log": {
+      "bytes": 1180,
+      "sha256": "c19cb5b6b3f8d1d605622d26576b045683b5b1595b8dec641ef31060649b6804"
+    }
+  },
+  "catalog": {
+    "total": 73,
+    "implemented": 8,
+    "partial": 57,
+    "planned": 0,
+    "external": 8
+  },
+  "fileLocations": {
+    "allWorktreesInsideRoot": true,
+    "worktrees": 19,
+    "evidence": "local/evidence/geofence-zones-v034",
+    "downloads": "local/downloads/geofence-research"
+  },
+  "libraryDocumentation": {
+    "three": {
+      "installed": "0.187.0",
+      "context7Index": "/mrdoob/three.js/r186",
+      "exactReference": "https://github.com/mrdoob/three.js/tree/r187",
+      "gap": "r187 not indexed; official r187 files fetched and hashed."
+    },
+    "node": {
+      "installed": "24.20.0",
+      "context7Index": "/websites/nodejs_latest-v24_x_api",
+      "exactReference": "https://nodejs.org/download/release/v24.20.0/docs/api/events.html#eventsonceemitter-name-options",
+      "gap": "No 24.20.0-specific index; exact official documentation verified."
+    }
+  },
+  "date": "2026-11-05"
+}

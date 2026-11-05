@@ -1,3 +1,4 @@
+import { DEFAULT_GEOFENCE_ZONES, validateGeofenceZones } from "./geofence-zones.js";
 import { DEFAULT_COLLISION_PREVENTION, validateCollisionPreventionSettings, validateCollisionPreventionState } from "./collision-prevention.js";
 import { NIST_EVENT_TYPES, createNistSession, validateNistEventValue } from './nist.js';
 import { createSimulation, validateConfig, bodyToNedAngles } from "./sim.js";
@@ -33,8 +34,8 @@ import {
   validateGimbalState,
 } from "./gimbal.js";
 
-export const RECORDING_VERSION = 20;
-export const MODEL_VERSION = "0.14.0";
+export const RECORDING_VERSION = 21;
+export const MODEL_VERSION = "0.15.0";
 const BATTERY_FIELDS = [
   "soc", "voltage", "current", "power", "usedWh", "remainingSeconds", "low", "critical",
   "openCircuitVoltage", "motorSpeedScale", "powerLimited",
@@ -73,6 +74,7 @@ export const DEFAULT_SETUP = Object.freeze({
   sensors: DEFAULT_SENSOR_CONFIG,
   gimbal: DEFAULT_GIMBAL_SETTINGS,
   collisionPrevention: DEFAULT_COLLISION_PREVENTION,
+  geofenceZones: DEFAULT_GEOFENCE_ZONES,
   mode: "attitude",
   mission: Object.freeze([]),
   scene: DEFAULT_SCENE,
@@ -538,6 +540,9 @@ function event(input, sim, initialScene) {
       result.receipt = structuredClone(object(input.receipt));
       break;
     }
+    case "geofenceZones":
+      result.value = validateGeofenceZones(object(input.value));
+      break;
     case "collisionPrevention":
       result.value = validateCollisionPreventionSettings(input.value);
       sim.setCollisionPrevention(result.value);
@@ -881,6 +886,7 @@ const VEHICLE_EVENTS = [
   "gimbal",
   "operatorGimbal",
   "collisionPrevention",
+  "geofenceZones",
   "transition",
   "position",
   "mission",
@@ -1060,7 +1066,7 @@ export function validateRecording(value) {
   object(value);
   if (value.version !== RECORDING_VERSION)
     throw new Error(
-      "Unsupported recording version: version 20 required; legacy recordings are not supported",
+      "Unsupported recording version: version 21 required; legacy recordings are not supported",
     );
   exactKeys(
     value,
@@ -1223,7 +1229,7 @@ export function validateRecording(value) {
           c.trainingEpochTime = e.time;
           c.previousTutorial = undefined;
         }
-        if (["mission", "gimbal", "operatorGimbal", "mode", "collisionPrevention"].includes(e.type))
+        if (["mission", "gimbal", "operatorGimbal", "mode", "collisionPrevention", "geofenceZones"].includes(e.type))
           c.setup[e.type === "operatorGimbal" ? "gimbal" : e.type] = e.value;
         if (e.type === "mission") c.routeText = JSON.stringify(e.value);
         if (e.type === "sensorConfig") {
@@ -1483,7 +1489,7 @@ export function recordingWorldAt(record, index) {
     }
     if (e.vehicleId) {
       const v = config.vehicles.find((v) => v.id === e.vehicleId);
-      if (["mission", "gimbal", "operatorGimbal", "mode", "training", "collisionPrevention"].includes(e.type))
+      if (["mission", "gimbal", "operatorGimbal", "mode", "training", "collisionPrevention", "geofenceZones"].includes(e.type))
         v.setup[e.type === "operatorGimbal" ? "gimbal" : e.type] = e.value;
       if (e.type === "sensorConfig") v.setup.sensors = e.value;
     }

@@ -15,6 +15,7 @@ const eventLabels = {
   gimbal: "雲台設定",
   operatorGimbal: "操作員雲台設定",
   collisionPrevention: "幾何防撞設定",
+  geofenceZones: "區域圍欄設定",
   transition: "飛行狀態轉換",
   position: "位置目標",
   mission: "任務航線",

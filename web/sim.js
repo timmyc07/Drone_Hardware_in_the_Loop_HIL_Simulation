@@ -1,4 +1,5 @@
 import { validateCollisionPreventionSettings, collisionPreventionInactive, constrainHorizontalMotion } from "./collision-prevention.js";
+import { validateGeofenceZones, geofenceContains, geofenceSegmentAllowed } from "./geofence-zones.js";
 import { batterySupply } from "./battery.js";
 import { createNistLaneCollider } from "./nist-geometry.js";
 import {
@@ -209,11 +210,11 @@ export function createSimulation(configuration = {}, options = {}) {
     Object.getPrototypeOf(options) !== Object.prototype ||
     Object.keys(options).some(
       (key) =>
-        !["controlSource", "gimbal", "terrain", "spawn", "home", "collisionPrevention"].includes(key),
+        !["controlSource", "gimbal", "terrain", "spawn", "home", "collisionPrevention", "geofenceZones"].includes(key),
     )
   )
     throw new Error(
-      "Simulation options must contain only controlSource, gimbal, terrain, spawn, home and collisionPrevention",
+      "Simulation options must contain only controlSource, gimbal, terrain, spawn, home, collisionPrevention and geofenceZones",
     );
   const controlSource = options.controlSource ?? "internal";
   if (!["internal", "external"].includes(controlSource))
@@ -267,6 +268,9 @@ export function createSimulation(configuration = {}, options = {}) {
       "Invalid physical spawn; altitude is AGL and must match ground/air start",
     );
   const initialCollisionPrevention = validateCollisionPreventionSettings(options.collisionPrevention);
+  const initialGeofenceZones = validateGeofenceZones(options.geofenceZones);
+  if (external && initialGeofenceZones.enabled) throw Error("External control does not support enabled geofence zones");
+  let geofenceZones = structuredClone(initialGeofenceZones);
   if (initialCollisionPrevention.enabled && (config.airframe === "fixedwing" || external)) throw Error("Collision prevention requires an internal multirotor or hovering VTOL");
   let collisionPreventionSettings = initialCollisionPrevention, collisionPreventionState = null, collisionPreventionPeers = [];
   const initialGimbal = validateGimbalSettings(options.gimbal);
@@ -428,6 +432,7 @@ export function createSimulation(configuration = {}, options = {}) {
         Math.sqrt(-2 * Math.log(random())) *
         Math.cos(2 * Math.PI * random());
   function reset() {
+    geofenceZones = structuredClone(initialGeofenceZones);
     collisionPreventionSettings = { ...initialCollisionPrevention };
     collisionPreventionState = collisionPreventionInactive(collisionPreventionSettings);
     collisionPreventionPeers = [];
@@ -638,6 +643,10 @@ export function createSimulation(configuration = {}, options = {}) {
       pusherCommand = state[pusherIndex];
     }
     battery = batterySnapshot();
+    if (geofenceZones.enabled) {
+      if (!geofenceContains(geofenceZones, home)) throw Error("Home is outside the geofence zones");
+      if (!positionInsideGeofence(state, geofenceZones)) throw Error("Initial spawn is outside the geofence");
+    }
     return snapshot();
   }
   function derivative(s) {
@@ -1347,7 +1356,7 @@ export function createSimulation(configuration = {}, options = {}) {
     }
     return { ...value };
   }
-  function validatePoint(point, hold = false, reference = "datum") {
+  function validatePoint(point, hold = false, reference = "datum", zones = geofenceZones) {
     const fields = {
       north: [-500, 500],
       east: [-500, 500],
@@ -1366,7 +1375,8 @@ export function createSimulation(configuration = {}, options = {}) {
     if (
       Math.hypot(value.north - home[0], value.east - home[1]) >
         config.geofenceRadius ||
-      value.altitude > (reference === "agl" ? config.geofenceHeight : ceiling())
+      value.altitude > (reference === "agl" ? config.geofenceHeight : ceiling()) ||
+      !geofenceContains(zones, [value.north, value.east])
     )
       throw new Error("Waypoint is outside the geofence");
     return value;
@@ -1875,7 +1885,12 @@ export function createSimulation(configuration = {}, options = {}) {
     };
   }
   function safetyMode(mode, reason) {
-    if (safetyReason === reason) return;
+    if (safetyReason === reason && navigation.mode === mode) return;
+    if (takeoffActive()) {
+      takeoffPhase = "aborted";
+      takeoffAbortReason = "safety";
+      runwayBrake = groundRolling ? 1 : 0;
+    }
     safetyReason = reason;
     enterMode(mode, reason);
   }
@@ -1896,6 +1911,35 @@ export function createSimulation(configuration = {}, options = {}) {
     refreshCollisionPreventionState();
     return { ...next };
   }
+  function positionInsideGeofence(position, zones = geofenceZones) {
+    return Math.hypot(position[0] - home[0], position[1] - home[1]) <= config.geofenceRadius &&
+      -position[2] <= ceiling() && geofenceContains(zones, position.slice(0, 2));
+  }
+  function setGeofenceZones(value) {
+    if (value === undefined) throw Error("Geofence zones require complete settings");
+    const next = validateGeofenceZones(value);
+    if (external && next.enabled) throw Error("External control does not support enabled geofence zones");
+    if (next.enabled) {
+      if (!geofenceContains(next, home)) throw Error("Home is outside the geofence zones");
+      const spawn = initialSpawn ?? { north: 0, east: 0, altitude: config.startOnGround ? 0 : fixedWing ? 30 : 2 };
+      const spawnHeight = createTerrain(initialTerrain).sample(spawn.north, spawn.east).heightM + spawn.altitude;
+      if (!positionInsideGeofence([spawn.north, spawn.east, -spawnHeight], next)) throw Error("Initial spawn is outside the geofence");
+      if (!positionInsideGeofence(state, next)) throw Error("Current position is outside the geofence");
+      if (explicitPosition || ["position", "mission", "rtl", "land"].includes(navigation.mode))
+        validatePoint(positionTarget, Object.hasOwn(positionTarget, "hold"), altitudeReference, next);
+      for (const point of navigation.waypoints) validatePoint(point, true, "datum", next);
+    }
+    geofenceZones = next;
+    return structuredClone(next);
+  }
+  function checkGeofence(from = state, to = state) {
+    if (external || !armed || crashed || failed || (!launchAuthorized && state[2] >= groundDown() - .001)) return;
+    if (positionInsideGeofence(from) && positionInsideGeofence(to) &&
+      geofenceSegmentAllowed(geofenceZones, from.slice(0, 2), to.slice(0, 2))) return;
+    navigation.fenceBreached = true;
+    // The fence requests the existing direct RTL; it does not clamp physics or plan a route around exclusions.
+    if (!battery.critical && safetyReason !== "critical-battery" && navigation.mode !== "land") safetyMode("rtl", "geofence");
+  }
   function navigate(dt) {
     refreshCollisionPreventionState();
     if (
@@ -1905,24 +1949,16 @@ export function createSimulation(configuration = {}, options = {}) {
       (!launchAuthorized && state[2] >= groundDown() - 0.001)
     )
       return;
-    if (fixedWing && navigation.mode === "takeoff") {
-      if (takeoffActive()) navigateTakeoff(dt);
-      return;
-    }
+    checkGeofence();
     if (battery.critical) safetyMode("land", "critical-battery");
     else if (safetyReason !== "critical-battery") {
       if (faults.linkLost && !safetyReason) safetyMode("rtl", "link-loss");
-      if (
-        (Math.hypot(state[0] - home[0], state[1] - home[1]) >
-          config.geofenceRadius ||
-          -state[2] > ceiling()) &&
-        !navigation.fenceBreached
-      ) {
-        navigation.fenceBreached = true;
-        if (navigation.mode !== "land") safetyMode("rtl", "geofence");
-      }
       if (battery.low && !safetyReason && navigation.mode !== "land")
         safetyMode("rtl", "low-battery");
+    }
+    if (fixedWing && navigation.mode === "takeoff") {
+      if (takeoffActive()) navigateTakeoff(dt);
+      return;
     }
     if (hasWing && (fixedWing || transition === "cruise")) {
       if (config.airframe === "vtol" && transitionPhase === "accelerating") {
@@ -2152,6 +2188,7 @@ export function createSimulation(configuration = {}, options = {}) {
     const nistGeometry = nistCollider;
     const restoreGimbal = gimbal.checkpoint();
     const saved = structuredClone({
+      geofenceZones,
       collisionPreventionSettings,
       collisionPreventionState,
       collisionPreventionPeers,
@@ -2223,6 +2260,7 @@ export function createSimulation(configuration = {}, options = {}) {
       nistCollider = nistGeometry;
       restoreGimbal();
       ({
+        geofenceZones,
         collisionPreventionSettings,
         collisionPreventionState,
         collisionPreventionPeers,
@@ -2538,6 +2576,7 @@ export function createSimulation(configuration = {}, options = {}) {
         previousWh + ((startingPower + supply().power) * dt) / 7200,
       );
     battery = batterySnapshot();
+    checkGeofence(previousPosition, state);
     if (battery.soc <= 0) disarm();
     time += dt;
     gimbal.update(dt, state.slice(6, 10));
@@ -2680,6 +2719,8 @@ export function createSimulation(configuration = {}, options = {}) {
   reset();
   return {
     checkpoint,
+    getGeofenceZones: () => structuredClone(geofenceZones),
+    setGeofenceZones,
     setCollisionPrevention,
     setCollisionPreventionPeers: peers => { collisionPreventionPeers = structuredClone(peers); },
     crash: internalCommand(crash),

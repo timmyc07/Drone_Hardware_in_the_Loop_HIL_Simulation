@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import dgram from "node:dgram";
+import { once } from "node:events";
 import {
   common,
   minimal,
@@ -117,12 +118,14 @@ test("real loopback UDP monitor preserves complete telemetry and rejects control
   const f = await monitored(t);
   const { bridge, peer, port, s, sent } = f;
   const raw = f.wire(heartbeat());
-  await new Promise((resolve, reject) =>
-    peer.send(raw, bridge.snapshot().localPort, "127.0.0.1", (error) =>
-      error ? reject(error) : resolve(),
+  await Promise.all([
+    once(bridge.socket, "message", { signal: AbortSignal.timeout(2000) }),
+    new Promise((resolve, reject) =>
+      peer.send(raw, bridge.snapshot().localPort, "127.0.0.1", (error) =>
+        error ? reject(error) : resolve(),
+      ),
     ),
-  );
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  ]);
   assert.equal(bridge.snapshot().connected, true);
   assert.deepEqual(sent[0], raw);
   f.receive(command(400, [1, 0]));

@@ -18,6 +18,7 @@ import { createProximityPanel } from "./proximity-panel.js";
 import { formatCollisionPrevention } from "./collision-prevention-panel.js";
 import { DEFAULT_COLLISION_PREVENTION, validateCollisionPreventionSettings } from "./collision-prevention.js";
 import { formatBattery } from "./battery-panel.js";
+import { createGeofenceZonesPanel, zonePoints } from "./geofence-zones-panel.js";
 import { createInstructorPanel } from "./instructor-panel.js";
 import { createNistPanel } from "./nist-panel.js";
 import { createOperatorHost } from "./operator-channel.js";
@@ -784,10 +785,17 @@ function populateConfig(values) {
     $(`config-${key}`).value = Number((values[key] * factor).toFixed(8));
   $("settings-error").textContent = "";
 }
+const geofencePanel = createGeofenceZonesPanel({
+  async apply(vehicleId, value) {
+    if (replay || externalActive || vehicleId !== activeVehicleId) throw new Error("載具或模式已變更，請重新開啟參數。");
+    await requestApi({ type: "geofenceZones", vehicleId, value });
+  },
+});
 let settingsVehicleId;
 $("settings-open").onclick = () => {
   if (!latest?.gimbal) return toast("模型正在初始化，請稍候再開啟參數。");
   settingsVehicleId = activeVehicleId;
+  geofencePanel.open(settingsVehicleId, worldState.vehicles.find((vehicle) => vehicle.id === settingsVehicleId).setup.geofenceZones, !!replay || externalActive);
   const cp = worldConfig.vehicles.find((vehicle) => vehicle.id === settingsVehicleId).setup.collisionPrevention;
   $("cp-enabled").checked = cp.enabled;
   for (const key of ["clearanceM", "responseDelaySeconds", "brakeAccelerationMps2"]) $(`cp-${key}`).value = cp[key];
@@ -1205,6 +1213,8 @@ worker.onmessage = ({ data }) => {
   }
   worldState = data.world;
   worldConfig = data.worldConfig;
+  geofencePanel.retain(worldConfig.vehicles.map((vehicle) => vehicle.id));
+  if ($("settings-dialog").open && !worldConfig.vehicles.some((vehicle) => vehicle.id === settingsVehicleId)) $("settings-dialog").close();
   instructorState = data.instructor;
   nistState = data.nist;
   if (data.message === "reset") nistEpoch++;
@@ -1568,7 +1578,7 @@ function updateTelemetry() {
   $("flight-details").textContent = externalActive
     ? `${hilControllerName()} 控制；植物模型真值。飛控估測及圍欄狀態未提供。`
     : nav
-      ? `模式：${modeLabels[nav.mode] || "未知"} · 航點 ${Math.min(nav.index + 1, nav.waypoints?.length || 0)}/${nav.waypoints?.length || 0}${nav.completed && nav.mode === "mission" ? "（任務完成）" : ""} · ${nav.fenceBreached ? "超出圍欄" : "圍欄內"} ${reasons[nav.reason] || ""} · ${s.armed ? "已解鎖" : "已上鎖"} · ${stateLabels[s.status] || "未知"}`
+      ? `模式：${modeLabels[nav.mode] || "未知"} · 航點 ${Math.min(nav.index + 1, nav.waypoints?.length || 0)}/${nav.waypoints?.length || 0}${nav.completed && nav.mode === "mission" ? "（任務完成）" : ""} · ${nav.fenceBreached ? "曾越界" : "尚未越界"} ${reasons[nav.reason] || ""} · ${s.armed ? "已解鎖" : "已上鎖"} · ${stateLabels[s.status] || "未知"}`
       : `狀態：${stateLabels[s.status] || "未知"}`;
   if (s.status === "crashed") {
     $("runtime-status").textContent = "碰撞停機";
@@ -1717,6 +1727,11 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
+function activeGeofenceZones() {
+  if (externalActive) return null;
+  return worldState?.vehicles.find((vehicle) => vehicle.id === activeVehicleId)?.setup.geofenceZones;
+}
+let renderedGeofenceKey = "";
 const mapExtent = () => {
   const radius = externalActive && hilState?.mission?.limits
     ? hilState.mission.limits.radius
@@ -1726,8 +1741,11 @@ const mapExtent = () => {
     !externalActive && MULTIROTOR_AIRFRAMES.includes(config.airframe) ? 50 : 500,
   );
   const areaExtent = surveyEditor?.extent() || 0;
-  return Math.min(500, Math.max(
+  const fence = activeGeofenceZones();
+  const fenceExtent = fence?.enabled ? Math.max(0, ...fence.zones.flatMap((zone) => zonePoints(zone).flatMap(([north, east]) => [Math.abs(north), Math.abs(east)]))) : 0;
+  return Math.min(1100, Math.max(
     areaExtent ? Math.max(5, areaExtent * 1.15) : base,
+    fenceExtent * 1.1,
     ...waypoints.map((p) => Math.max(Math.abs(p.north), Math.abs(p.east)) * 1.1),
   ));
 };
@@ -1804,6 +1822,23 @@ function drawMission() {
     ctx.moveTo(0, (i * h) / 10);
     ctx.lineTo(w, (i * h) / 10);
     ctx.stroke();
+  }
+  const fence = activeGeofenceZones();
+  if (fence?.enabled) for (const zone of fence.zones) {
+    ctx.strokeStyle = zone.kind === "inclusion" ? "#63e0ce" : "#ff6e6e";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    zonePoints(zone).forEach(([north, east], i) => {
+      const x = ((east + extent) / (2 * extent)) * w;
+      const y = ((extent - north) / (2 * extent)) * h;
+      if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+    });
+    ctx.closePath(); ctx.stroke();
+  }
+  const fenceKey = JSON.stringify(fence);
+  if (fenceKey !== renderedGeofenceKey && scene) {
+    scene.setGeofenceZones(fence);
+    renderedGeofenceKey = fenceKey;
   }
   surveyEditor?.draw(ctx, w, h, extent);
   ctx.strokeStyle = "#ffbf78";
@@ -1974,6 +2009,7 @@ map.onclick = (event) => {
         ((event.clientX - rect.left) / rect.width - 0.5) * 2 * mapExtent() * 10,
       ) / 10,
   };
+  if (Math.abs(point.north) > 500 || Math.abs(point.east) > 500) return toast("航點與測繪頂點須在世界座標 ±500 m 內。");
   if (surveyEditor.mapClick(point)) return;
   if (waypoints.length >= 50) return;
   waypoints.push({
@@ -2700,6 +2736,7 @@ function renderScene(value, viewOnly) {
   lastRenderedSceneKey = key;
   lastRenderedSceneReadonly = viewOnly;
   missionTerrain = createTerrain(value.terrain);
+  renderedGeofenceKey = "";
   runwayCompatible = missionTerrain.runwayCompatible;
   sceneEditor?.setScene(value, viewOnly);
   demEditor?.setScene(value);

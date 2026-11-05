@@ -201,10 +201,10 @@ const geographicSensors = {
   originVerticalDatum: "orthometric",
 };
 
-test("World20 round trip keeps parallel vehicle frames and 215 stable CSV columns", () => {
+test("World21 round trip keeps parallel vehicle frames and 215 stable CSV columns", () => {
   const input = shortRecord({ vehicles: [{ id: "alpha" }, { id: "beta" }] });
   const clean = roundTrip(input);
-  assert.equal(RECORDING_VERSION, 20);
+  assert.equal(RECORDING_VERSION, 21);
   assert.deepEqual(
     clean.samples[0].vehicles.map((v) => v.id),
     ["alpha", "beta"],
@@ -1261,7 +1261,7 @@ test("radar acquisitions survive configuration epochs, packed faults and full-wo
   assert.throws(() => validateRecording(stale), /after/);
   const prior = clone(compact);
   prior.version = 12;
-  assert.throws(() => validateRecording(prior), /version 20/);
+  assert.throws(() => validateRecording(prior), /version 21/);
   const rows = recordingToCsv(f.record)
     .split("\n")
     .map((r) => r.split(","));
@@ -1414,7 +1414,7 @@ test("compact proximity empty ranges and exact identity poses expand without los
 });
 
 
-test('battery supply metadata survives schema20 JSON and CSV with strict new field validation', () => {
+test('battery supply metadata survives schema21 JSON and CSV with strict new field validation', () => {
   const input = shortRecord(), clean = roundTrip(input);
   const battery = stateAt(clean).battery;
   assert.deepEqual(battery, stateAt(validateRecording(input)).battery);
@@ -1432,7 +1432,7 @@ test('battery supply metadata survives schema20 JSON and CSV with strict new fie
 });
 
 
-test('schema20 battery packs eleven lossless fields and rejects malformed packed boundaries', () => {
+test('schema21 battery packs eleven lossless fields and rejects malformed packed boundaries', () => {
   const input = shortRecord(), clean = validateRecording(input), packed = stateAt(input).battery;
   const fields = ['soc','voltage','current','power','usedWh','remainingSeconds','low','critical','openCircuitVoltage','motorSpeedScale','powerLimited'];
   assert.equal(packed.length, 11);
@@ -1499,4 +1499,41 @@ test('collision prevention epochs preserve per-vehicle settings and lossless pac
   assert.equal(stateAt(disabled,-1).collisionPrevention, null);
   assert.equal(recordingWorldAt(disabled,disabled.samples.length-1).vehicles[0].setup.collisionPrevention.enabled,false);
   assert.equal(replayWorldRecording(disabled).passed, true);
+});
+
+test('geofence epochs preserve nested per-vehicle settings through JSON, frame restoration and independent replay', () => {
+  const f=fixture({scene:{...clone(DEFAULT_SCENE),obstacles:[]},vehicles:[{id:'alpha'},{id:'beta'}]});
+  const settings={enabled:true,zones:[{id:'allowed',shape:'polygon',kind:'inclusion',vertices:[[-10,-10],[10,-10],[10,10],[-10,10]]},{id:'blocked',shape:'circle',kind:'exclusion',center:[5,5],radiusM:1}]};
+  f.step(7);f.command('geofenceZones',settings,'alpha');f.command('mode','position','alpha');
+  f.command('position',{north:3,east:0,altitude:2},'alpha');f.step(200,10);
+  const clean=roundTrip(f.record),last=clean.samples.length-1;
+  assert.deepEqual(clean.world.vehicles[0].setup.geofenceZones,{enabled:false,zones:[]});
+  assert.deepEqual(recordingWorldAt(clean,last).vehicles[0].setup.geofenceZones,settings);
+  assert.equal(recordingWorldAt(clean,last).vehicles[1].setup.geofenceZones.enabled,false);
+  assert.equal(replayWorldRecording(clean).passed,true);
+  assert.equal(recordingToCsv(clean).split('\n')[0].split(',').length,215);
+  rejects(f.record,[
+    r=>{r.version=20;},r=>{r.modelVersion='0.14.0';},
+    r=>{delete r.events.find(e=>e.type==='geofenceZones').value;},
+    r=>{r.events.find(e=>e.type==='geofenceZones').value.extra=true;},
+    r=>{r.events.find(e=>e.type==='geofenceZones').value.zones[0].vertices[0][0]=NaN;},
+    r=>{r.events.find(e=>e.type==='geofenceZones').value.zones[1].id='bad id';},
+  ]);
+  f.command('geofenceZones',{enabled:false,zones:settings.zones},'alpha');
+  const disabled=roundTrip(f.record);
+  assert.deepEqual(recordingWorldAt(disabled,disabled.samples.length-1).vehicles[0].setup.geofenceZones,{enabled:false,zones:settings.zones});
+  assert.equal(replayWorldRecording(disabled).passed,true);
+});
+
+test('initial geofence headers and later disable events validate targets against the correct epoch', () => {
+  const settings={enabled:true,zones:[{id:'allowed',shape:'circle',kind:'inclusion',center:[0,0],radiusM:5}]};
+  const f=fixture({scene:{...clone(DEFAULT_SCENE),obstacles:[]},setup:{mode:'position',geofenceZones:settings}});
+  f.command('position',{north:3,east:0,altitude:2});f.step(10);
+  f.command('geofenceZones',{enabled:false,zones:settings.zones});
+  f.command('position',{north:15,east:0,altitude:2});f.step(10);
+  const clean=roundTrip(f.record);
+  assert.deepEqual(clean.world.vehicles[0].setup.geofenceZones,settings);
+  assert.equal(recordingWorldAt(clean,clean.samples.length-1).vehicles[0].setup.geofenceZones.enabled,false);
+  assert.equal(replayWorldRecording(clean).passed,true);
+  rejects(f.record,[r=>{r.world.vehicles[0].setup.geofenceZones.zones[0].center=[50,0];}]);
 });

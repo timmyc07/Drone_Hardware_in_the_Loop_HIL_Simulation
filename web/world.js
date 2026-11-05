@@ -1,3 +1,4 @@
+import { validateGeofenceZones } from "./geofence-zones.js";
 import { validateCollisionPreventionSettings } from "./collision-prevention.js";
 import { createNistLaneCollider } from "./nist-geometry.js";
 import { obstacleContainsVehicle } from "./obstacle-geometry.js";
@@ -56,6 +57,7 @@ function simulation(config, setup, scene, spawn, home) {
     terrain: scene.terrain,
     gimbal: setup.gimbal,
     collisionPrevention: setup.collisionPrevention,
+    geofenceZones: setup.geofenceZones,
     ...(spawn === undefined ? {} : { spawn }),
     ...(home === undefined ? {} : { home }),
   });
@@ -67,12 +69,13 @@ export function validateVehicleSetup(
   spawn,
   home,
 ) {
-  fields(value, ["mode", "mission", "sensors", "gimbal", "training", "collisionPrevention"], []);
+  fields(value, ["mode", "mission", "sensors", "gimbal", "training", "collisionPrevention", "geofenceZones"], []);
   const config = validateConfig(configuration),
     surface = createTerrain(scene.terrain);
   const sensors = validateSensorConfig(value.sensors ?? {}),
     gimbal = validateGimbalSettings(value.gimbal),
-    collisionPrevention = validateCollisionPreventionSettings(value.collisionPrevention);
+    collisionPrevention = validateCollisionPreventionSettings(value.collisionPrevention),
+    geofenceZones = validateGeofenceZones(value.geofenceZones);
   assertGeographicSensors(scene, sensors);
   const training = value.training ?? "free",
     mode = value.mode ?? "attitude";
@@ -80,7 +83,7 @@ export function validateVehicleSetup(
     throw new Error("Training course is not supported by this airframe");
   if (training === "runway" && !surface.runwayCompatible)
     throw new Error("Runway training requires covered flat runway terrain");
-  const sim = simulation(config, { gimbal, collisionPrevention }, scene, spawn, home);
+  const sim = simulation(config, { gimbal, collisionPrevention, geofenceZones }, scene, spawn, home);
   if (value.mission !== undefined && !Array.isArray(value.mission))
     throw new Error("Mission must be an array");
   const mission = copy(value.mission ?? []);
@@ -94,7 +97,7 @@ export function validateVehicleSetup(
     home ?? [0, 0],
     groundHeight,
   ).update(sim.snapshot());
-  return { mode, mission, sensors, gimbal, training, collisionPrevention };
+  return { mode, mission, sensors, gimbal, training, collisionPrevention, geofenceZones };
 }
 export function defaultWorldConfig(
   configuration = {},
@@ -474,6 +477,7 @@ export function createWorld(input) {
         mission: "setMission",
         gimbal: "setGimbal",
         collisionPrevention: "setCollisionPrevention",
+        geofenceZones: "setGeofenceZones",
         transition: "setTransition",
         scenario: "setScenario",
       };
@@ -577,6 +581,7 @@ export function createWorld(input) {
       if (type === "gimbal")
         v.spec.setup.gimbal = validateGimbalSettings(value);
       if (type === "collisionPrevention") v.spec.setup.collisionPrevention = validateCollisionPreventionSettings(value);
+      if (type === "geofenceZones") v.spec.setup.geofenceZones = v.sim.getGeofenceZones();
       if (type === "scenario") v.spec.scenario = value;
       updateSensors();
       return snapshot();

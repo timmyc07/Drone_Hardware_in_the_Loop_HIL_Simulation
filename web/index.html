@@ -121,6 +121,7 @@
           <p>圖例：青色實線為測繪航段，紫色虛線為連接路線，淡黃色矩形為理想第一張照片範圍。</p>
           <p id="survey-status" aria-live="polite"></p>
         </details>
+        <p>區域圍欄圖例：青綠為允許區，紅色為禁入區；僅顯示已啟用設定。</p>
         <canvas
           id="mission-map"
           width="500"
@@ -1282,6 +1283,15 @@
           從地面靜止、未解鎖狀態開始</label
         >
         <div id="settings-fields"></div>
+        <section class="settings-group">
+          <h3>區域圍欄</h3>
+          <p>目前載具的水平區域，以世界座標北、東（公尺）設定。原家點半徑與高度上限仍然生效；允許區取聯集，再扣除禁入區。沒有允許區時，僅扣除禁入區。</p>
+          <p>航點端點需合法；航段不會自動繞路。實際越界將觸發返航。套用前會檢查家點、起點、目前位置與任務航點。</p>
+          <label><input id="zones-enabled" type="checkbox"> 啟用區域圍欄</label>
+          <div id="zones-rows"></div>
+          <div class="feature-actions"><button id="zones-add-circle" type="button">新增圓形</button><button id="zones-add-polygon" type="button">新增多邊形</button><button id="zones-apply" type="button">套用區域圍欄</button></div>
+          <p id="zones-status" role="status"></p>
+        </section>
         <section class="settings-group">
           <h3>幾何碰撞預防</h3>
           <label><input id="cp-enabled" type="checkbox"> 啟用位置控制水平煞停</label>
