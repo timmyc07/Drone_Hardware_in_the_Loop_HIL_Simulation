@@ -19,11 +19,12 @@ npm run companion
 
 ## 在 macOS Apple Silicon 建置已驗證版本
 
-以下頂層套件版本曾在 macOS ARM64、Python 3.9.6 與 Apple Clang 21 測試；其他平台尚未驗證。先安裝 Xcode Command Line Tools、Git 與 Python，使用自己的快取路徑；這不是完整的 Python 傳遞依賴鎖定檔。
+以下頂層套件版本曾在 macOS ARM64、Python 3.9.6 與 Apple Clang 21 測試；其他平台尚未驗證。先安裝 Xcode Command Line Tools、Git 與 Python，在專案根目錄執行；工具來源與 Python 環境集中於 `local/tools/`。這不是完整的 Python 傳遞依賴鎖定檔。已收納的本機編譯品可直接使用，以下指令供全新建置使用。
 
 ```sh
-PX4_DIR="$HOME/Library/Caches/drone-flight-lab/px4-v1.17.0"
-PX4_ENV="$HOME/Library/Caches/drone-flight-lab/px4-tools"
+mkdir -p "$PWD/local/tools"
+PX4_DIR="$PWD/local/tools/px4-v1.17.0"
+PX4_ENV="$PWD/local/tools/px4-python"
 git clone --branch v1.17.0 --depth 1 https://github.com/PX4/PX4-Autopilot.git "$PX4_DIR"
 python3 -m venv "$PX4_ENV"
 "$PX4_ENV/bin/python" -m pip install cmake==3.31.10 ninja==1.13.2 empy==3.3.4 jinja2==3.1.6 kconfiglib==14.1.0 pyyaml==6.0.3 packaging==26.3 toml==0.10.2 jsonschema==4.25.1 numpy==2.0.2 pyros-genmsg==0.5.8 pymavlink==2.4.50
