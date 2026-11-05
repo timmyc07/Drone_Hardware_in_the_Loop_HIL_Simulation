@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { aerodynamicForces, wingTrim, stallSpeed } from "../aerodynamics.js";
-import { AIRFRAME_PRESETS } from "../sim.js";
+import { AIRFRAME_PRESETS, createSimulation } from "../sim.js";
 const config = AIRFRAME_PRESETS.fixedwing;
 const near = (a, b, t = 1e-7) =>
   assert.ok(Math.abs(a - b) < t, `${a} differs from ${b}`);
@@ -75,4 +75,68 @@ test("pure spanwise wind has no fictitious chordwise lift or alpha discontinuity
     left.forceBody[1] > 0 && right.forceBody[1] > 0,
     "drag opposes the lateral relative velocity",
   );
+});
+
+test("sub-millimetre-per-second airflow has no resolved direction despite roundoff", () => {
+  const velocity = [
+    5.296836005976857e-8, -1.8105805148785488e-10, -2.4933150901456834e-13,
+  ];
+  for (const speed of [0, Math.hypot(...velocity), 0.000999, 0.001]) {
+    const flow = aerodynamicForces(config, [
+      -speed / Math.sqrt(2),
+      speed / Math.sqrt(2),
+      0,
+    ]);
+    assert.equal(flow.alphaRad, 0);
+    assert.equal(flow.betaRad, 0);
+    near(flow.airspeedMps, speed, 1e-15);
+    near(flow.dynamicPressurePa, 0.6125 * speed ** 2, 1e-15);
+  }
+  for (const perturbation of [-1e-15, 0, 1e-15]) {
+    const flow = aerodynamicForces(
+      config,
+      velocity.map((v) => v + perturbation),
+    );
+    assert.equal(flow.alphaRad, 0);
+    assert.equal(flow.betaRad, 0);
+    assert.ok([...flow.forceBody, ...flow.momentBody].every(Number.isFinite));
+  }
+});
+
+test("resolved airflow retains geometric angles in forward, reverse, vertical and spanwise flight", () => {
+  for (const velocity of [
+    [0.002, 0.001, -0.001],
+    [14, 3, 2],
+    [-10, 2, 1],
+    [0, 2, 10],
+    [0, -6, 0],
+  ]) {
+    const flow = aerodynamicForces(config, velocity);
+    const [u, v, w] = velocity;
+    near(flow.alphaRad, Math.hypot(u, w) > 0 ? Math.atan2(w, u) : 0, 1e-15);
+    near(flow.betaRad, Math.asin(v / Math.hypot(...velocity)), 1e-15);
+  }
+});
+
+test("near-spanwise sideslip retains the small angle to the span without asin cancellation", () => {
+  for (const lateral of [-6, 6]) {
+    const flow = aerodynamicForces(config, [1e-7, lateral, 1e-7]);
+    const spanAngle = Math.atan2(Math.SQRT2 * 1e-7, Math.abs(lateral));
+    near(Math.PI / 2 - Math.abs(flow.betaRad), spanAngle, 1e-15);
+  }
+});
+
+test("all five airframes share the near-static and resolved airflow angle convention", () => {
+  for (const preset of Object.values(AIRFRAME_PRESETS)) {
+    const sim = createSimulation({ ...preset, startOnGround: true });
+    for (const speed of [
+      0, 5.2968669508507203e-8, 0.000999, 0.001, 0.001001, 5,
+    ]) {
+      sim.setWind({ speed, direction: 45 });
+      const flight = sim.snapshot().flight;
+      near(flight.airspeedMps, speed, 1e-15);
+      near(flight.alphaRad, speed > 0.001 ? Math.PI : 0, 1e-15);
+      near(flight.betaRad, speed > 0.001 ? -Math.PI / 4 : 0, 1e-15);
+    }
+  }
 });

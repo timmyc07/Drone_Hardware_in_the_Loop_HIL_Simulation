@@ -1,6 +1,12 @@
 import { rayPeerSphere } from "./peer-geometry.js";
+import {
+  validateObstacles,
+  obstacleBounds,
+  rayAabb,
+} from "./obstacle-geometry.js";
 
 export const MAX_INSPECTION_TARGETS = 16;
+export const INSPECTION_REPORT_VERSION = 2;
 export const INSPECTION_REASONS = Object.freeze([
   "range",
   "angle",
@@ -30,6 +36,7 @@ const FACES = Object.freeze({
   east: { normal: [0, 1, 0], right: [1, 0, 0], down: [0, 0, 1] },
   west: { normal: [0, -1, 0], right: [-1, 0, 0], down: [0, 0, 1] },
   top: { normal: [0, 0, -1], right: [0, 1, 0], down: [-1, 0, 0] },
+  bottom: { normal: [0, 0, 1], right: [0, 1, 0], down: [1, 0, 0] },
 });
 function plain(value) {
   if (
@@ -75,37 +82,19 @@ const vector = (value, length, label) =>
   dense(value, length, length, label).map((v) => number(v, -1e9, 1e9, label));
 const dot = (a, b) => a.reduce((sum, v, i) => sum + v * b[i], 0);
 const difference = (a, b) => a.map((v, i) => v - b[i]);
-function checkedObstacles(value) {
-  const limits = {
-    north: [-500, 500],
-    east: [-500, 500],
-    width: [0.01, 100],
-    depth: [0.01, 100],
-    height: [0.01, 500],
-  };
-  return dense(value, 0, 50, "obstacles").map((box) => {
-    exact(box, Object.keys(limits));
-    return Object.fromEntries(
-      Object.entries(limits).map(([key, bounds]) => [
-        key,
-        number(box[key], ...bounds, `obstacle ${key}`),
-      ]),
-    );
-  });
-}
 function faceGeometry(face, box) {
   const basis = FACES[face];
-  const center = [box.north, box.east, -box.height / 2];
+  const center = [box.north, box.east, -(box.baseAltitude + box.height / 2)];
   if (face === "north" || face === "south")
     center[0] += (basis.normal[0] * box.width) / 2;
   else if (face === "east" || face === "west")
     center[1] += (basis.normal[1] * box.depth) / 2;
-  else center[2] = -box.height;
+  else center[2] = -(box.baseAltitude + (face === "top" ? box.height : 0));
   return {
     ...basis,
     center,
     width: face === "east" || face === "west" ? box.width : box.depth,
-    height: face === "top" ? box.width : box.height,
+    height: face === "top" || face === "bottom" ? box.width : box.height,
   };
 }
 function checkedTarget(value, obstacles) {
@@ -159,7 +148,7 @@ function checkedTarget(value, obstacles) {
   return result;
 }
 export function validateInspectionTargets(value, obstacles) {
-  const boxes = checkedObstacles(obstacles),
+  const boxes = validateObstacles(obstacles),
     ids = new Set();
   return dense(value, 0, MAX_INSPECTION_TARGETS, "targets").map((raw) => {
     const target = checkedTarget(raw, boxes);
@@ -195,11 +184,11 @@ function panel(target, obstacles) {
   };
 }
 export function inspectionPanel(target, obstacles) {
-  const boxes = checkedObstacles(obstacles);
+  const boxes = validateObstacles(obstacles);
   return panel(checkedTarget(target, boxes), boxes);
 }
 export function inspectionTemplate(kind = "tower") {
-  if (!["tower", "facade"].includes(kind))
+  if (!["tower", "facade", "bridge"].includes(kind))
     throw new Error("Unknown inspection template");
   const obstacles = [
     {
@@ -208,6 +197,7 @@ export function inspectionTemplate(kind = "tower") {
       width: kind === "tower" ? 4 : 2,
       depth: kind === "tower" ? 4 : 18,
       height: 10,
+      baseAltitude: 0,
     },
   ];
   const make = (id, name, face, u = 0) => ({
@@ -225,6 +215,32 @@ export function inspectionTemplate(kind = "tower") {
     minPixels: 12,
     maxSpeedMps: 1,
   });
+  if (kind === "bridge") {
+    obstacles.splice(
+      0,
+      1,
+      { north: 20, east: 0, width: 8, depth: 18, height: 1, baseAltitude: 8 },
+      { north: 20, east: -7, width: 4, depth: 2, height: 8, baseAltitude: 0 },
+      { north: 20, east: 7, width: 4, depth: 2, height: 8, baseAltitude: 0 },
+    );
+    const targets = [
+      { ...make("bridge-under-south", "橋底南段", "bottom"), v: -2 },
+      { ...make("bridge-under-north", "橋底北段", "bottom"), v: 2 },
+      {
+        ...make("bridge-pier-west", "西側橋柱南面", "south"),
+        obstacleIndex: 1,
+      },
+      {
+        ...make("bridge-pier-east", "東側橋柱南面", "south"),
+        obstacleIndex: 2,
+      },
+    ];
+    return {
+      name: "通用橋梁巡檢",
+      obstacles,
+      inspectionTargets: validateInspectionTargets(targets, obstacles),
+    };
+  }
   const targets =
     kind === "tower"
       ? ["south", "east", "north", "west", "top"].map((face) =>
@@ -278,27 +294,11 @@ function checkedMetadata(metadata) {
   number(cy, 0, height - 1, "cy");
   return { position, columns, width, height, near, far, fx, fy, cx, cy };
 }
-function rayBox(origin, direction, box, maximum) {
-  const low = [
-      box.north - box.width / 2,
-      box.east - box.depth / 2,
-      -box.height,
-    ],
-    high = [box.north + box.width / 2, box.east + box.depth / 2, 0];
-  let enter = -Infinity,
-    exit = Infinity;
-  for (let i = 0; i < 3; i++) {
-    if (Math.abs(direction[i]) < 1e-12) {
-      if (origin[i] < low[i] || origin[i] > high[i]) return null;
-    } else {
-      const a = (low[i] - origin[i]) / direction[i],
-        b = (high[i] - origin[i]) / direction[i];
-      enter = Math.max(enter, Math.min(a, b));
-      exit = Math.min(exit, Math.max(a, b));
-    }
-  }
-  const distance = Math.max(0, enter);
-  return exit >= distance && distance <= maximum ? distance : null;
+function rayBox(origin, direction, bounds, maximum) {
+  const interval = rayAabb(origin, direction, bounds);
+  if (interval === null) return null;
+  const distance = Math.max(0, interval.enter);
+  return interval.exit >= distance && distance <= maximum ? distance : null;
 }
 export function assessInspection(
   target,
@@ -308,7 +308,8 @@ export function assessInspection(
   peers = [],
   sourceVelocityNed = [0, 0, 0],
 ) {
-  const boxes = checkedObstacles(obstacles),
+  const boxes = validateObstacles(obstacles),
+    bounds = boxes.map((box) => obstacleBounds(box)),
     checked = checkedTarget(target, boxes),
     geometry = panel(checked, boxes),
     camera = checkedMetadata(metadata);
@@ -387,17 +388,17 @@ export function assessInspection(
       const host = rayBox(
         camera.position,
         direction,
-        boxes[checked.obstacleIndex],
+        bounds[checked.obstacleIndex],
         maximum,
       );
       if (host === null || Math.abs(host - distance) > tolerance) continue;
       if (terrain.raycast(camera.position, direction, 0, maximum) !== null)
         continue;
       if (
-        boxes.some(
-          (box, i) =>
+        bounds.some(
+          (boxBounds, i) =>
             i !== checked.obstacleIndex &&
-            rayBox(camera.position, direction, box, maximum) !== null,
+            rayBox(camera.position, direction, boxBounds, maximum) !== null,
         )
       )
         continue;

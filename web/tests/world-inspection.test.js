@@ -20,7 +20,9 @@ const value = (n = 1, overrides = {}) => ({
 });
 function fixture(peer = null) {
   const scene = structuredClone(DEFAULT_SCENE);
-  scene.obstacles = [{ north: 10, east: 0, width: 2, depth: 4, height: 4 }];
+  scene.obstacles = [
+    { north: 10, east: 0, width: 2, depth: 4, height: 4, baseAltitude: 0 },
+  ];
   scene.inspectionTargets = [
     {
       id: "panel",
@@ -94,7 +96,7 @@ test("world derives per-vehicle inspection receipts from current actual camera p
   assert.equal(summary(world).complete, true);
   const report = world.inspectionReport("drone-1");
   assert.equal(report.format, "flight-lab-inspection");
-  assert.equal(report.version, 1);
+  assert.equal(report.version, 2);
   assert.deepEqual(report.summary, {
     passed: 1,
     total: 1,

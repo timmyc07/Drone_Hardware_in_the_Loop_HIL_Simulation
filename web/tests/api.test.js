@@ -11,7 +11,7 @@ test("vehicle operations require and preserve explicit vehicle IDs", async () =>
     },
     () => () => {},
   );
-  assert.equal(api.version, "2.2");
+  assert.equal(api.version, "2.3");
   await api.getState("one");
   const target = { altitude: 3 };
   await api.setTargets("two", target);

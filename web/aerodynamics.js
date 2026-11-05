@@ -16,6 +16,21 @@ export const WING = Object.freeze({
   surfaceLimit: 0.45,
 });
 const clamp = (v, low, high) => Math.max(low, Math.min(high, v));
+export function airflowAngles([u, v, w]) {
+  const chordwiseSpeed = Math.hypot(u, w),
+    airspeedMps = Math.hypot(u, v, w);
+  // Like JSBSim's low-speed convention, direction is unresolved at <= 1 mm/s.
+  // https://github.com/JSBSim-Team/jsbsim/blob/911b2d48ce934da183556983ec60b2069faa46fb/src/models/FGAuxiliary.cpp
+  const resolved = airspeedMps > 0.001;
+  return {
+    airspeedMps,
+    alphaRad:
+      resolved && chordwiseSpeed > 1e-8 * Math.max(1, airspeedMps)
+        ? Math.atan2(w, u)
+        : 0,
+    betaRad: resolved ? Math.atan2(v, chordwiseSpeed) : 0,
+  };
+}
 export function aerodynamicForces(
   config,
   velocityBody,
@@ -23,12 +38,8 @@ export function aerodynamicForces(
   surfaces = [0, 0, 0],
   altitude = 0,
 ) {
-  const [u, v, w] = velocityBody,
-    airspeedMps = Math.hypot(u, v, w);
-  const alphaRad =
-    Math.hypot(u, w) > 1e-8 * Math.max(1, airspeedMps) ? Math.atan2(w, u) : 0;
-  const betaRad =
-    airspeedMps > 1e-8 ? Math.asin(clamp(v / airspeedMps, -1, 1)) : 0;
+  const [u] = velocityBody;
+  const { airspeedMps, alphaRad, betaRad } = airflowAngles(velocityBody);
   const density = 1.225 * Math.exp(-clamp(altitude, -500, 11000) / 8500);
   const dynamicPressurePa = 0.5 * density * airspeedMps ** 2;
   const aspect = config.wingSpan ** 2 / config.wingArea;

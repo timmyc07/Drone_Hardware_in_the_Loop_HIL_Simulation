@@ -1,10 +1,10 @@
 import { validateInspectionTargets, inspectionPanel } from "./inspection.js";
-import { createSimulation } from "./sim.js";
+import { validateObstacles } from "./obstacle-geometry.js";
 import { validateCustomGates } from "./training.js";
 import { DEFAULT_TERRAIN, validateTerrain, createTerrain } from "./terrain.js";
 import { validateGeography } from "./geography.js";
 export const SCENE_MAX_IMPORT_BYTES = 512 * 1024;
-export const SCENE_VERSION = 5;
+export const SCENE_VERSION = 6;
 const freeze = (value) => {
   Object.freeze(value);
   for (const child of Object.values(value))
@@ -82,16 +82,15 @@ export function validateScene(value = DEFAULT_SCENE) {
     );
   const environment = validateEnvironment(value.environment),
     customGates = validateCustomGates(value.customGates);
-  const sim = createSimulation();
-  sim.setObstacles(value.obstacles);
+  const obstacles = validateObstacles(value.obstacles);
   const inspectionTargets = validateInspectionTargets(
     value.inspectionTargets,
-    value.obstacles,
+    obstacles,
   );
   if (
     terrain.kind === "dem" &&
     inspectionTargets.some((target) =>
-      inspectionPanel(target, value.obstacles).cornersNed.some(
+      inspectionPanel(target, obstacles).cornersNed.some(
         (point) => !surface.contains(point[0], point[1]),
       ),
     )
@@ -102,7 +101,7 @@ export function validateScene(value = DEFAULT_SCENE) {
     environment,
     terrain,
     geography,
-    obstacles: Array.from(value.obstacles, (box) => ({ ...box })),
+    obstacles,
     customGates,
     inspectionTargets,
   };

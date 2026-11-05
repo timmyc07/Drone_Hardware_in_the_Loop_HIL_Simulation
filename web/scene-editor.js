@@ -9,10 +9,10 @@ import { validateTerrain } from "./terrain.js";
 import { inspectionTemplate } from "./inspection.js";
 
 const warehouse = [
-  { north: 12, east: 3, width: 2, depth: 3, height: 3 },
-  { north: 12, east: -5, width: 3, depth: 2, height: 2 },
-  { north: -8, east: 7, width: 3, depth: 2, height: 2.5 },
-  { north: -8, east: -7, width: 2, depth: 3, height: 3 },
+  { north: 12, east: 3, width: 2, depth: 3, height: 3, baseAltitude: 0 },
+  { north: 12, east: -5, width: 3, depth: 2, height: 2, baseAltitude: 0 },
+  { north: -8, east: 7, width: 3, depth: 2, height: 2.5, baseAltitude: 0 },
+  { north: -8, east: -7, width: 2, depth: 3, height: 3, baseAltitude: 0 },
 ];
 export function createSceneEditor({ apply, confirm, download, notify }) {
   const $ = (id) => document.getElementById(id);
@@ -92,6 +92,12 @@ export function createSceneEditor({ apply, confirm, download, notify }) {
         (box.depth * w) / (2 * extent),
         (box.width * h) / (2 * extent),
       );
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(
+        `${box.baseAltitude}–${box.baseAltitude + box.height} m`,
+        x(box.east),
+        y(box.north),
+      );
     });
     draft.customGates.forEach((gate, i) => {
       ctx.fillStyle =
@@ -138,7 +144,10 @@ export function createSceneEditor({ apply, confirm, download, notify }) {
       items(kind).forEach((item, index) => {
         const button = document.createElement("button");
         button.type = "button";
-        button.textContent = `${label} ${index + 1}`;
+        button.textContent =
+          kind === "obstacle"
+            ? `${label} ${index + 1} · ${item.baseAltitude}–${item.baseAltitude + item.height} m`
+            : `${label} ${index + 1}`;
         button.classList.toggle(
           "active",
           selected?.kind === kind && selected.index === index,
@@ -159,7 +168,8 @@ export function createSceneEditor({ apply, confirm, download, notify }) {
             ["east", "東 (m)", -500, 500],
             ["width", "南北寬 (m)", 0.01, 100],
             ["depth", "東西深 (m)", 0.01, 100],
-            ["height", "高度 (m)", 0.01, 500],
+            ["height", "厚度／高度 (m)", 0.01, 500],
+            ["baseAltitude", "底部基準高度 (m)", -1000, 1500],
           ]
         : [
             ["north", "北 (m)", -500, 500],
@@ -185,7 +195,12 @@ export function createSceneEditor({ apply, confirm, download, notify }) {
           return input.value !== "" &&
             Number.isFinite(n) &&
             n >= min &&
-            n <= max
+            n <= max &&
+            !(
+              selected.kind === "obstacle" &&
+              ((key === "baseAltitude" && n + object.height > 1500) ||
+                (key === "height" && n + object.baseAltitude > 1500))
+            )
             ? n
             : null;
         };
@@ -195,6 +210,9 @@ export function createSceneEditor({ apply, confirm, download, notify }) {
           else {
             invalidInputs.delete(input);
             object[key] = key === "yaw" ? (n * Math.PI) / 180 : n;
+            if (selected.kind === "obstacle")
+              list.children[selected.index].textContent =
+                `障礙 ${selected.index + 1} · ${object.baseAltitude}–${object.baseAltitude + object.height} m`;
             draw();
           }
           updateStatus();
@@ -230,7 +248,7 @@ export function createSceneEditor({ apply, confirm, download, notify }) {
     if (list.length >= 50) return notify("每種物件最多 50 個。");
     list.push(
       kind === "obstacle"
-        ? { north, east, width: 2, depth: 2, height: 3 }
+        ? { north, east, width: 2, depth: 2, height: 3, baseAltitude: 0 }
         : { north, east, altitude: 2, yaw: 0, radius: 2 },
     );
     selected = { kind, index: list.length - 1 };

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   MAX_INSPECTION_TARGETS,
+  INSPECTION_REPORT_VERSION,
   INSPECTION_REASONS,
   validateInspectionTargets,
   inspectionPanel,
@@ -9,6 +10,7 @@ import {
   assessInspection,
 } from "../inspection.js";
 import { createTerrain } from "../terrain.js";
+import { obstacleBounds, rayAabb } from "../obstacle-geometry.js";
 import {
   DEFAULT_SCENE,
   SCENE_VERSION,
@@ -18,7 +20,9 @@ import {
 } from "../scene-data.js";
 
 const clone = structuredClone;
-const boxes = [{ north: 10, east: 0, width: 2, depth: 4, height: 4 }];
+const boxes = [
+  { north: 10, east: 0, width: 2, depth: 4, height: 4, baseAltitude: 0 },
+];
 const target = {
   id: "panel-1",
   name: "Panel",
@@ -106,7 +110,7 @@ test("inspection targets are strict canonical face attachments with unique IDs a
       t.obstacleIndex = 0.5;
     },
     (t) => {
-      t.face = "bottom";
+      t.face = "inside";
     },
     (t) => {
       t.face = ["south"];
@@ -164,8 +168,10 @@ test("inspection targets are strict canonical face attachments with unique IDs a
   assert.equal(validateInspectionTargets([edge], boxes)[0].u, 1.5);
 });
 
-test("all five panel bases preserve viewer right/down and return isolated TL/TR/BR/BL corners", () => {
-  const host = [{ north: 20, east: 30, width: 6, depth: 8, height: 10 }];
+test("all six panel bases preserve viewer right/down and return isolated TL/TR/BR/BL corners", () => {
+  const host = [
+    { north: 20, east: 30, width: 6, depth: 8, height: 10, baseAltitude: 0 },
+  ];
   const expected = {
     north: [
       [23, 29, -4],
@@ -186,6 +192,10 @@ test("all five panel bases preserve viewer right/down and return isolated TL/TR/
     top: [
       [19, 31, -10],
       [0, 0, -1],
+    ],
+    bottom: [
+      [21, 31, 0],
+      [0, 0, 1],
     ],
   };
   for (const [face, [center, normal]] of Object.entries(expected)) {
@@ -212,6 +222,18 @@ test("all five panel bases preserve viewer right/down and return isolated TL/TR/
       ).centerNed,
       center,
     );
+    for (const baseAltitude of [-100, 8]) {
+      const moved = inspectionPanel(
+        { ...target, face, u: 1, v: 1, width: 2, height: 2 },
+        [{ ...host[0], baseAltitude }],
+      );
+      assert.deepEqual(moved.centerNed, [
+        center[0],
+        center[1],
+        center[2] - baseAltitude,
+      ]);
+      assert.deepEqual(moved.normalNed, normal);
+    }
   }
 });
 
@@ -300,7 +322,14 @@ test("host faces remain occluders and zero-range or rear-facing views never earn
 });
 
 test("a near-clipped box or a retained peer blocks targets and a thin peer exposes the explicit 25-point policy", () => {
-  const wall = { north: 0.025, east: 0, width: 0.01, depth: 2, height: 4 };
+  const wall = {
+    north: 0.025,
+    east: 0,
+    width: 0.01,
+    depth: 2,
+    height: 4,
+    baseAltitude: 0,
+  };
   const blocked = assess(target, [...boxes, wall]);
   assert.equal(blocked.visibleSamples, 0);
   assert.deepEqual(blocked.reasons, ["occluded"]);
@@ -406,7 +435,7 @@ test("assessment validates camera transforms, dense velocities and peers without
   ]);
 });
 
-test("tower and facade templates are viable physical boxes with matching schema-5 face panels", () => {
+test("tower and facade templates are viable physical boxes with matching schema-6 face panels", () => {
   for (const kind of ["tower", "facade"]) {
     const template = inspectionTemplate(kind),
       cam = clone(camera);
@@ -422,7 +451,7 @@ test("tower and facade templates are viable physical boxes with matching schema-
       ),
     );
     const scene = { ...clone(DEFAULT_SCENE), ...template };
-    assert.equal(SCENE_VERSION, 5);
+    assert.equal(SCENE_VERSION, 6);
     assert.deepEqual(validateScene(scene), scene);
     assert.deepEqual(parseSceneJson(sceneToJson(scene)), scene);
     const artifact = JSON.parse(sceneToJson(scene));
@@ -435,7 +464,7 @@ test("tower and facade templates are viable physical boxes with matching schema-
     returned.obstacles[0].north = 0;
     assert.equal(inspectionTemplate(kind).obstacles[0].north, 20);
   }
-  assert.throws(() => inspectionTemplate("bridge"));
+  assert.throws(() => inspectionTemplate("unknown"));
   assert.ok(Object.isFrozen(DEFAULT_SCENE.inspectionTargets));
 });
 
@@ -491,4 +520,135 @@ test("unknown DEM coverage cannot be scored as an unobstructed inspection", () =
     () => validateScene({ ...scene, inspectionTargets: [target] }),
     /covered/,
   );
+});
+
+test("bridge has a real open center corridor, opaque deck and supports, and four schema-6 targets", () => {
+  const template = inspectionTemplate("bridge"),
+    bounds = template.obstacles.map((box) => obstacleBounds(box));
+  assert.equal(INSPECTION_REPORT_VERSION, 2);
+  assert.equal(template.obstacles.length, 3);
+  assert.equal(template.inspectionTargets.length, 4);
+  assert.deepEqual(
+    template.inspectionTargets.map((t) => t.face),
+    ["bottom", "bottom", "south", "south"],
+  );
+  assert.deepEqual(
+    template.inspectionTargets
+      .slice(0, 2)
+      .map((t) => inspectionPanel(t, template.obstacles).centerNed),
+    [
+      [18, 0, -8],
+      [22, 0, -8],
+    ],
+  );
+  assert.deepEqual(
+    parseSceneJson(sceneToJson({ ...DEFAULT_SCENE, ...template })),
+    { ...DEFAULT_SCENE, ...template },
+  );
+  for (const n of [0, 16, 20, 24, 40])
+    assert.ok(
+      bounds.every((b) =>
+        [n, 0, -4].some((v, i) => v < b.low[i] - 1 || v > b.high[i] + 1),
+      ),
+    );
+  assert.ok(bounds.every((b) => rayAabb([0, 0, -4], [1, 0, 0], b) === null));
+  assert.deepEqual(rayAabb([20, 0, -4], [0, 0, -1], bounds[0]), {
+    enter: 4,
+    exit: 5,
+  });
+  assert.deepEqual(rayAabb([0, -7, -4], [1, 0, 0], bounds[1]), {
+    enter: 18,
+    exit: 22,
+  });
+  assert.equal(bounds[0].high[2], -8);
+});
+
+test("upward bridge inspections require actual bottom view and retain deck, near and peer occlusion", () => {
+  const { obstacles, inspectionTargets } = inspectionTemplate("bridge");
+  const upward = (n) => ({
+    ...clone(camera),
+    pose: {
+      positionNed: [n, 0, -4],
+      opticalToNed: [0, 1, 0, 1, 0, 0, 0, 0, -1],
+    },
+  });
+  for (const t of inspectionTargets.slice(0, 2)) {
+    const n = inspectionPanel(t, obstacles).centerNed[0],
+      cam = upward(n);
+    const result = assess(t, obstacles, createTerrain(), cam);
+    assert.equal(result.passed, true);
+    assert.equal(result.visibleSamples, 25);
+    assert.equal(result.rangeM, 4);
+    assert.equal(result.angleDeg, 0);
+    near(result.minPixels, 80);
+    const peer = { position: [n, 0, -6], radius: 1 };
+    assert.equal(
+      assess(t, obstacles, createTerrain(), cam, [peer]).visibleSamples,
+      0,
+    );
+    const nearBox = {
+      north: n,
+      east: 0,
+      width: 3,
+      depth: 3,
+      height: 0.01,
+      baseAltitude: 4.02,
+    };
+    assert.equal(
+      assess(t, [...obstacles, nearBox], createTerrain(), cam).visibleSamples,
+      0,
+    );
+    const insideBox = { ...nearBox, baseAltitude: 3.99, height: 0.02 };
+    assert.equal(
+      assess(t, [...obstacles, insideBox], createTerrain(), cam).visibleSamples,
+      0,
+    );
+    const above = {
+      ...clone(camera),
+      pose: {
+        positionNed: [n, 0, -12],
+        opticalToNed: [0, -1, 0, 1, 0, 0, 0, 0, 1],
+      },
+    };
+    const wrongSide = assess(t, obstacles, createTerrain(), above);
+    assert.equal(wrongSide.passed, false);
+    assert.ok(wrongSide.reasons.includes("angle"));
+    assert.equal(wrongSide.visibleSamples, 0);
+  }
+  for (const t of inspectionTargets.slice(2)) {
+    const east = obstacles[t.obstacleIndex].east;
+    const cam = {
+      ...clone(camera),
+      pose: { ...clone(camera.pose), positionNed: [0, east, -4] },
+    };
+    assert.equal(assess(t, obstacles, createTerrain(), cam).passed, true);
+  }
+});
+
+test("bottom panels preserve negative DEM datum and fail closed outside coverage", () => {
+  const obstacles = [
+    { north: 10, east: 0, width: 4, depth: 4, baseAltitude: -8, height: 1 },
+  ];
+  const t = { ...target, face: "bottom", width: 2, height: 2 };
+  const cam = {
+    ...clone(camera),
+    pose: {
+      positionNed: [10, 0, 12],
+      opticalToNed: [0, 1, 0, 1, 0, 0, 0, 0, -1],
+    },
+  };
+  const grid = {
+    kind: "dem",
+    north: -5,
+    east: -5,
+    cellSize: 5,
+    rows: 5,
+    cols: 3,
+    heights: Array(15).fill(-20),
+  };
+  const terrain = createTerrain(grid);
+  assert.deepEqual(inspectionPanel(t, obstacles).centerNed, [10, 0, 8]);
+  assert.equal(assess(t, obstacles, terrain, cam).passed, true);
+  const edge = [{ ...obstacles[0], north: 15 }];
+  assert.throws(() => assess(t, edge, terrain, cam), /covered/);
 });

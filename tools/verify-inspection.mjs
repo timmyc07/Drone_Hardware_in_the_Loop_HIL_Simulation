@@ -8,7 +8,10 @@ import {
   hashCameraFrame,
   CAMERA_DATASET_MAX_IMPORT_BYTES,
 } from "../web/camera.js";
-import { INSPECTION_REASONS } from "../web/inspection.js";
+import {
+  INSPECTION_REASONS,
+  INSPECTION_REPORT_VERSION,
+} from "../web/inspection.js";
 
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -93,7 +96,7 @@ function validateReport(report) {
   );
   if (
     report.format !== "flight-lab-inspection" ||
-    report.version !== 1 ||
+    report.version !== INSPECTION_REPORT_VERSION ||
     typeof report.sourceVehicleId !== "string" ||
     !ID.test(report.sourceVehicleId)
   )

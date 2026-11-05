@@ -44,7 +44,9 @@ function pixelFrame(metadata, marker = 1) {
 function fixture(peerPosition = [0, 5]) {
   const scene = {
     ...clone(DEFAULT_SCENE),
-    obstacles: [{ north: 10, east: 0, width: 2, depth: 4, height: 4 }],
+    obstacles: [
+      { baseAltitude: 0, north: 10, east: 0, width: 2, depth: 4, height: 4 },
+    ],
     inspectionTargets: [
       {
         id: "panel",
@@ -183,7 +185,7 @@ const state = (record, frame = -1, actor = 0) =>
 test("inspection receipts retain the exact off-cadence exposure tick and independently replay every world state", async () => {
   const f = await observedFixture(),
     clean = validateRecording(f.record);
-  assert.equal(RECORDING_VERSION, 14);
+  assert.equal(RECORDING_VERSION, 15);
   assert.deepEqual(
     clean.samples.map((frame) => frame.tick),
     [0, 7, 10, 20],
@@ -341,7 +343,7 @@ test("standalone inspection report schemas reject bad identities, hashes, captur
     text = cameraDatasetToJson(f.frames);
   for (const mutate of [
     (r) => {
-      r.version = 2;
+      r.version = 1;
     },
     (r) => {
       r.extra = true;

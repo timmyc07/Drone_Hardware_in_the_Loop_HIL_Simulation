@@ -23,7 +23,9 @@ function scan() {
     lidarVerticalMaxDeg: 45,
     lidarNoiseM: 0,
   });
-  suite.setObstacles([{ north: 8, east: -2, width: 2, depth: 10, height: 10 }]);
+  suite.setObstacles([
+    { baseAltitude: 0, north: 8, east: -2, width: 2, depth: 10, height: 10 },
+  ]);
   return suite.update(input).lidar;
 }
 

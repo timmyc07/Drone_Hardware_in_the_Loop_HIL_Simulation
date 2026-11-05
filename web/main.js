@@ -3242,10 +3242,14 @@ function renderInspection() {
     !targets.length;
   $("inspection-export").disabled =
     externalActive || inspectionBusy || !targets.length;
-  for (const id of ["inspection-template-tower", "inspection-template-facade"])
+  for (const id of [
+    "inspection-template-tower",
+    "inspection-template-facade",
+    "inspection-template-bridge",
+  ])
     $(id).disabled = !!replay || externalActive || inspectionBusy;
 }
-for (const kind of ["tower", "facade"])
+for (const kind of ["tower", "facade", "bridge"])
   $("inspection-template-" + kind).onclick = () => {
     try {
       sceneEditor.loadInspectionTemplate(kind);

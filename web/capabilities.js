@@ -697,7 +697,7 @@ export const CAPABILITIES = [
     category: "訓練與評估",
     title: "設施巡檢",
     description:
-      "以通用高塔與立面範本拍攝，檢查構圖、距離及遮擋；不辨識缺陷或提供認證。",
+      "以通用高塔、立面及橋梁範本拍攝，檢查構圖、距離及遮擋；不辨識缺陷或提供認證。",
     status: "partial",
     sources: ["https://zephyr-sim.com/features?question=1"],
   },
@@ -867,7 +867,7 @@ export const CAPABILITIES = [
     category: "資料與整合",
     title: "程式控制 API",
     description:
-      "同頁 API 2.2 明確指定載具 ID，共用世界時鐘、場景與風；外部 SITL 使用獨立本機服務。",
+      "同頁 API 2.3 明確指定載具 ID，共用世界時鐘、場景與風；外部 SITL 使用獨立本機服務。",
     status: "partial",
     sources: ["https://github.com/microsoft/AirSim/blob/main/docs/apis.md"],
   },

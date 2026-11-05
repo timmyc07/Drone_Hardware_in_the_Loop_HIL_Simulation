@@ -103,6 +103,16 @@ test("numeric input updates exported draft, retains subsequent edits and support
     editor.loadInspectionTemplate("facade");
     elements["scene-export"].onclick();
     assert.equal(exported.inspectionTargets.length, 3);
+    editor.loadInspectionTemplate("bridge");
+    elements["scene-export"].onclick();
+    assert.equal(exported.obstacles[0].baseAltitude, 8);
+    assert.equal(exported.obstacles[0].height, 1);
+    assert.equal(
+      exported.inspectionTargets.filter((target) => target.face === "bottom")
+        .length,
+      2,
+    );
+    editor.loadInspectionTemplate("facade");
     elements["terrain-hill"].onclick();
     elements["scene-export"].onclick();
     assert.equal(exported.terrain.kind, "heightfield");
@@ -118,9 +128,18 @@ test("numeric input updates exported draft, retains subsequent edits and support
     let field = elements["scene-object-fields"].children[0].children[0];
     field.value = "10";
     field.oninput();
+    const base = elements["scene-object-fields"].children[5].children[0];
+    base.value = "8";
+    base.oninput();
     assert.equal(elements["scene-dirty"].textContent, "草稿尚未套用");
     elements["scene-export"].onclick();
     assert.equal(exported.obstacles.at(-1).north, 10);
+    assert.equal(exported.obstacles.at(-1).baseAltitude, 8);
+    base.value = "1500";
+    base.oninput();
+    assert.equal(elements["scene-export"].disabled, true);
+    base.onblur();
+    assert.equal(Number(base.value), 8);
     field.value = "";
     field.oninput();
     assert.equal(elements["scene-export"].disabled, true);

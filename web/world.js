@@ -1,3 +1,4 @@
+import { obstacleContainsVehicle } from "./obstacle-geometry.js";
 import { createSimulation, validateConfig, DEFAULT_CONFIG } from "./sim.js";
 import { DEFAULT_SCENE, validateScene } from "./scene-data.js";
 import {
@@ -15,7 +16,7 @@ import {
 import { createTerrain } from "./terrain.js";
 import { getVehicleEnvelope, relativeSweep } from "./peer-geometry.js";
 import { cameraMetadata, validateCameraConfig } from "./camera.js";
-import { assessInspection } from "./inspection.js";
+import { assessInspection, INSPECTION_REPORT_VERSION } from "./inspection.js";
 
 const DT = 0.005;
 const plain = (value) =>
@@ -196,20 +197,7 @@ export function validateWorldConfig(input) {
       -surface.sample(spawn.north, spawn.east).heightM - spawn.altitude,
     ];
     for (const box of scene.obstacles) {
-      const low = [
-          box.north - box.width / 2,
-          box.east - box.depth / 2,
-          -box.height,
-        ],
-        high = [box.north + box.width / 2, box.east + box.depth / 2, 0];
-      if (
-        position.reduce(
-          (sum, v, i) =>
-            sum + (v - Math.max(low[i], Math.min(high[i], v))) ** 2,
-          0,
-        ) <=
-        radius ** 2
-      )
+      if (obstacleContainsVehicle(box, position, radius))
         throw new Error("Initial vehicle envelope intersects an obstacle");
     }
     return {
@@ -585,6 +573,19 @@ export function createWorld(input) {
       JSON.stringify(next.terrain) !== JSON.stringify(scene.terrain)
     )
       throw new Error("Geography or terrain changes require a world reset");
+    if (JSON.stringify(next.obstacles) !== JSON.stringify(scene.obstacles)) {
+      for (const v of vehicles) {
+        const position = v.sim.snapshot().position;
+        if (
+          next.obstacles.some((box) =>
+            obstacleContainsVehicle(box, position, v.radius),
+          )
+        )
+          throw new Error(
+            `Scene obstacle would intersect vehicle ${v.spec.id}`,
+          );
+      }
+    }
     return transaction(() => {
       for (const v of vehicles) {
         const args = [
@@ -646,7 +647,7 @@ export function createWorld(input) {
       const summary = inspectionSummary(v.receipts, scene.inspectionTargets);
       return {
         format: "flight-lab-inspection",
-        version: 1,
+        version: INSPECTION_REPORT_VERSION,
         sourceVehicleId: v.spec.id,
         scene: copy(scene),
         receipts: copy(v.receipts),

@@ -119,7 +119,7 @@ function fleet(count, { ground = false, sensors = lowRays } = {}) {
   return input;
 }
 function assertFinalWorld(record, stopped) {
-  assert.equal(record.version, 14);
+  assert.equal(record.version, 15);
   assert.equal(record.samples.at(-1).tick, stopped.world.tick);
   assert.equal(record.samples.at(-1).time, stopped.world.time);
   assert.equal(record.sensorFrames.at(-1).tick, stopped.world.tick);
@@ -196,10 +196,24 @@ test(
     input.scene.obstacles = input.vehicles.flatMap((v) => {
       const east = v.spawn.east;
       return [
-        { north: 4, east, width: 0.1, depth: 8, height: 6 },
-        { north: -4, east, width: 0.1, depth: 8, height: 6 },
-        { north: 0, east: east + 4, width: 8, depth: 0.1, height: 6 },
-        { north: 0, east: east - 4, width: 8, depth: 0.1, height: 6 },
+        { baseAltitude: 0, north: 4, east, width: 0.1, depth: 8, height: 6 },
+        { baseAltitude: 0, north: -4, east, width: 0.1, depth: 8, height: 6 },
+        {
+          baseAltitude: 0,
+          north: 0,
+          east: east + 4,
+          width: 8,
+          depth: 0.1,
+          height: 6,
+        },
+        {
+          baseAltitude: 0,
+          north: 0,
+          east: east - 4,
+          width: 8,
+          depth: 0.1,
+          height: 6,
+        },
       ];
     });
     await h.call({ type: "resetWorld", value: input });

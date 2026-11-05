@@ -379,14 +379,14 @@ test("radar exports identify the requested vehicle and retain delayed acquisitio
     "number",
   );
   const record = validateRecording(raw);
-  assert.equal(record.version, 14);
+  assert.equal(record.version, 15);
   replay(record);
 });
 
 function inspectionFleet() {
   const input = fleet(2, false);
   input.scene.obstacles = [
-    { north: 10, east: 0, width: 2, depth: 4, height: 4 },
+    { baseAltitude: 0, north: 10, east: 0, width: 2, depth: 4, height: 4 },
   ];
   input.scene.inspectionTargets = [
     {
@@ -513,7 +513,7 @@ test("inspection lease freezes the whole fleet, rejects mutations and mismatched
   );
 });
 
-test("successful inspection submissions hash actual buffers and retain replayable schema14 receipts without resuming an explicit pause", async (t) => {
+test("successful inspection submissions hash actual buffers and retain replayable schema15 receipts without resuming an explicit pause", async (t) => {
   const h = await harness(t);
   await h.call({ type: "resetWorld", value: inspectionFleet() });
   await h.call({ type: "play" });
@@ -541,7 +541,7 @@ test("successful inspection submissions hash actual buffers and retain replayabl
   assert.equal(inspected.world.vehicles[1].snapshot.inspection.attempts, 0);
   assert.equal((await submitInspection(h, lease, frame)).ok, false);
   const record = validateRecording(await h.call({ type: "apiExport" }));
-  assert.equal(record.version, 14);
+  assert.equal(record.version, 15);
   const event = record.events.find((event) => event.type === "inspection");
   assert.equal(event.tick, lease.world.tick);
   assert.equal(event.value.sha256, expectedHash);

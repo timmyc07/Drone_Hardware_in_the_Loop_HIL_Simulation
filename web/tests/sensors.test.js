@@ -175,7 +175,9 @@ test("rangefinder tilted body-down ray hits ground at slant distance and nearest
       .distanceM,
     4,
   );
-  suite.setObstacles([{ north: 0, east: 0, width: 2, depth: 2, height: 1 }]);
+  suite.setObstacles([
+    { north: 0, east: 0, width: 2, depth: 2, height: 1, baseAltitude: 0 },
+  ]);
   near(suite.update(state(0.05)).rangefinder.distanceM, 1);
   let reading = suite.update(
     state(0.1, { quaternion: roll(Math.PI) }),
@@ -183,7 +185,9 @@ test("rangefinder tilted body-down ray hits ground at slant distance and nearest
   assert.equal(reading.valid, false);
   assert.equal(reading.reason, "no-return");
   assert.equal(reading.distanceM, null);
-  suite.setObstacles([{ north: 0, east: 0, width: 2, depth: 2, height: 1.95 }]);
+  suite.setObstacles([
+    { north: 0, east: 0, width: 2, depth: 2, height: 1.95, baseAltitude: 0 },
+  ]);
   assert.equal(
     suite.update(state(0.15)).rangefinder.distanceM,
     null,
@@ -199,7 +203,9 @@ test("lidar returns sparse body-plane ranges and transforms points to absolute N
     assert.equal(reading.rangesM.length, count);
     assert.ok(reading.rangesM.every((v) => v === null));
     assert.deepEqual(lidarPoints(reading), []);
-    suite.setObstacles([{ north: 5, east: 0, width: 2, depth: 2, height: 4 }]);
+    suite.setObstacles([
+      { north: 5, east: 0, width: 2, depth: 2, height: 4, baseAltitude: 0 },
+    ]);
     reading = suite.update(state(0.1)).lidar;
     near(reading.rangesM[count / 2], 4);
     assert.ok(reading.rangesM.some((v) => v === null));
@@ -335,7 +341,9 @@ test("configuration and input trust boundaries reject invalid data without parti
   ])
     assert.throws(() => suite.update(snapshot));
   assert.throws(() =>
-    suite.setObstacles([{ north: 0, east: 0, width: -1, depth: 1, height: 1 }]),
+    suite.setObstacles([
+      { north: 0, east: 0, width: -1, depth: 1, height: 1, baseAltitude: 0 },
+    ]),
   );
   assert.throws(() => suite.setObstacles(Array(1)));
   assert.throws(() => suite.setFault("unknown", true));
@@ -362,7 +370,9 @@ test("maximum rate/latency queues stay bounded while latest readings keep their 
 });
 test("lidarPoints uses acquisition translation and rotation rather than current vehicle pose", () => {
   const suite = createSensorSuite({ ...quiet, ...planar, lidarRays: 36 });
-  suite.setObstacles([{ north: 10, east: 25, width: 2, depth: 2, height: 4 }]);
+  suite.setObstacles([
+    { north: 10, east: 25, width: 2, depth: 2, height: 4, baseAltitude: 0 },
+  ]);
   const sample = suite.update(
     state(0, { position: [10, 20, -2], quaternion: yaw(Math.PI / 2) }),
   );
@@ -392,7 +402,9 @@ test("three channel geometry is channel-major with analytic ground and wall inte
   for (let i = 0; i < 12; i++) near(reading.rangesM[i], 4);
   assert.ok(reading.rangesM.slice(12).every((value) => value === null));
   for (const point of lidarPoints(reading)) near(point[2], 0);
-  suite.setObstacles([{ north: 5, east: 0, width: 2, depth: 2, height: 6 }]);
+  suite.setObstacles([
+    { north: 5, east: 0, width: 2, depth: 2, height: 6, baseAltitude: 0 },
+  ]);
   reading = suite.update(state(0.1)).lidar;
   near(reading.rangesM[6], 4); // Down ray reaches ground before the wall.
   near(reading.rangesM[12 + 6], 4);
@@ -406,7 +418,7 @@ test("three channel geometry is channel-major with analytic ground and wall inte
     ),
   );
   suite.setObstacles([
-    { north: 0.1, east: 0, width: 0.1, depth: 1, height: 6 },
+    { north: 0.1, east: 0, width: 0.1, depth: 1, height: 6, baseAltitude: 0 },
   ]);
   reading = suite.update(state(0.2)).lidar;
   for (let channel = 0; channel < 3; channel++)
@@ -734,7 +746,7 @@ test("sensor checkpoint restores RNG, delayed acquisitions, faults and all scene
   for (const suite of [a, b]) {
     suite.setTerrain(terrain);
     suite.setObstacles([
-      { north: 60, east: 60, width: 2, depth: 2, height: 1 },
+      { north: 60, east: 60, width: 2, depth: 2, height: 1, baseAltitude: 0 },
     ]);
     suite.setPeers(
       [
@@ -771,7 +783,14 @@ const radarQuiet = {
   radarAzimuthRays: 1,
   radarElevationRays: 1,
 };
-const radarWall = { north: 10, east: 0, width: 2, depth: 100, height: 100 };
+const radarWall = {
+  north: 10,
+  east: 0,
+  width: 2,
+  depth: 100,
+  height: 100,
+  baseAltitude: 0,
+};
 const peer = (id, position, velocity = [0, 0, 0], radius = 1) => ({
   id,
   position,

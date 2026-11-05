@@ -348,7 +348,16 @@ test("a late vehicle rejecting a shared course edit rolls back earlier vehicle s
       world.setScene({
         ...scene,
         customGates: [],
-        obstacles: [{ north: 0, east: 1, width: 0.1, depth: 0.1, height: 3 }],
+        obstacles: [
+          {
+            north: 0,
+            east: 1,
+            width: 0.1,
+            depth: 0.1,
+            height: 3,
+            baseAltitude: 0,
+          },
+        ],
       }),
     /gate/,
   );

@@ -1,0 +1,319 @@
+{
+  "release": "0.23.0",
+  "model": "0.10.0",
+  "scope": "Elevated solid obstacles and generic bridge underside inspection; educational, uncalibrated",
+  "formats": {
+    "app": "0.23.0",
+    "model": "0.10.0",
+    "record": 15,
+    "scene": 6,
+    "camera": 5,
+    "inspectionReport": 2,
+    "api": "2.3",
+    "native": 1
+  },
+  "tests": {
+    "passed": 360,
+    "failed": 0,
+    "durationMs": 43194.607792,
+    "fullLimitsPreserved": true
+  },
+  "browser": {
+    "summary": {
+      "passed": 4,
+      "total": 4,
+      "attempts": 5,
+      "complete": true
+    },
+    "images": {
+      "passed": true,
+      "sourceVehicleId": "drone-1",
+      "receipts": 5,
+      "matched": 5,
+      "missingCaptureIds": [],
+      "mismatchedCaptureIds": []
+    },
+    "underpass": {
+      "sampleCount": 1105,
+      "maximumNorthM": 35.374018425784705,
+      "minimumDeckClearanceAboveEnvelopeM": 3.6182654629454793,
+      "envelopeRadiusM": 0.38
+    },
+    "collision": {
+      "firstTick": 94470,
+      "time": 472.34999999964293,
+      "positionNed": [
+        20.000000001458233,
+        -2.961288350138673e-14,
+        -7.62784379486721
+      ],
+      "reason": "obstacle-collision",
+      "armed": false,
+      "postImpactSampleCount": 1298,
+      "maxPostImpactMotionM": 0
+    },
+    "pixels": [
+      {
+        "captureId": "885e31cb-b7b1-411a-88e5-f8823a4027ae",
+        "targetId": "bridge-pier-west",
+        "tick": 13470,
+        "positionNed": [
+          10.001906427762759,
+          -7.001331025692263,
+          -4.000000000000198
+        ],
+        "gimbalActual": {
+          "yaw": 0,
+          "pitch": 0,
+          "roll": 0
+        },
+        "assessment": {
+          "targetId": "bridge-pier-west",
+          "passed": true,
+          "reasons": [],
+          "rangeM": 7.998093682990471,
+          "angleDeg": 0.009535041486867143,
+          "minPixels": 39.99070238427939,
+          "speedMps": 0.00020889985035314553,
+          "visibleSamples": 25,
+          "totalSamples": 25
+        },
+        "centerPixel": [
+          159,
+          120
+        ],
+        "classId": 5,
+        "depthM": 7.995999813079834,
+        "targetPlaneCameraZM": 7.998040311234424,
+        "absoluteDepthDifferenceM": 0.0020404981545896206
+      },
+      {
+        "captureId": "d508067c-1635-4850-a669-f46c16bee886",
+        "targetId": "bridge-pier-east",
+        "tick": 41489,
+        "positionNed": [
+          9.999999999567686,
+          7.000003370213477,
+          -4.000000000000009
+        ],
+        "gimbalActual": {
+          "yaw": 0,
+          "pitch": 0,
+          "roll": 0
+        },
+        "assessment": {
+          "targetId": "bridge-pier-east",
+          "passed": true,
+          "reasons": [],
+          "rangeM": 8.000000000433023,
+          "angleDeg": 2.4118161048241937e-05,
+          "minPixels": 39.98087702826476,
+          "speedMps": 3.0372571460664584e-07,
+          "visibleSamples": 25,
+          "totalSamples": 25
+        },
+        "centerPixel": [
+          159,
+          119
+        ],
+        "classId": 5,
+        "depthM": 7.998000144958496,
+        "targetPlaneCameraZM": 7.999939556148218,
+        "absoluteDepthDifferenceM": 0.0019394111897215183
+      },
+      {
+        "captureId": "da7a9198-8b85-44a7-a921-f3c4d1567210",
+        "targetId": "bridge-under-south",
+        "tick": 66766,
+        "positionNed": [
+          19.993456156108255,
+          1.3754336938961686e-07,
+          -3.9999999999968656
+        ],
+        "gimbalActual": {
+          "yaw": 0,
+          "pitch": -1.5707963267948966,
+          "roll": 0
+        },
+        "assessment": {
+          "targetId": "bridge-under-south",
+          "passed": false,
+          "reasons": [
+            "frustum"
+          ],
+          "rangeM": 4.469213291660065,
+          "angleDeg": 26.49001519019427,
+          "minPixels": 80.00013498566362,
+          "speedMps": 0.0006052599642396659,
+          "visibleSamples": 25,
+          "totalSamples": 25
+        },
+        "centerPixel": [
+          160,
+          40
+        ],
+        "classId": 5,
+        "depthM": 3.997999906539917,
+        "targetPlaneCameraZM": 3.9999864570890806,
+        "absoluteDepthDifferenceM": 0.001986550549163635
+      },
+      {
+        "captureId": "e8a0743b-c822-4d15-8d75-82c63fc3412e",
+        "targetId": "bridge-under-south",
+        "tick": 94228,
+        "positionNed": [
+          20.000000004987516,
+          -1.0548509547683409e-13,
+          -3.4999999999999996
+        ],
+        "gimbalActual": {
+          "yaw": 0,
+          "pitch": -1.5707963267948966,
+          "roll": 0
+        },
+        "assessment": {
+          "targetId": "bridge-under-south",
+          "passed": true,
+          "reasons": [],
+          "rangeM": 4.924428902923675,
+          "angleDeg": 23.9624890276065,
+          "minPixels": 71.11111111076892,
+          "speedMps": 4.4952348927687106e-10,
+          "visibleSamples": 25,
+          "totalSamples": 25
+        },
+        "centerPixel": [
+          160,
+          48
+        ],
+        "classId": 5,
+        "depthM": 4.498000144958496,
+        "targetPlaneCameraZM": 4.500000000010827,
+        "absoluteDepthDifferenceM": 0.001999855052330801
+      },
+      {
+        "captureId": "d7f8939a-bc3e-42d6-9965-2ff6a10b3e7c",
+        "targetId": "bridge-under-north",
+        "tick": 94228,
+        "positionNed": [
+          20.000000004987516,
+          -1.0548509547683409e-13,
+          -3.4999999999999996
+        ],
+        "gimbalActual": {
+          "yaw": 0,
+          "pitch": -1.5707963267948966,
+          "roll": 0
+        },
+        "assessment": {
+          "targetId": "bridge-under-north",
+          "passed": true,
+          "reasons": [],
+          "rangeM": 4.9244288988724305,
+          "angleDeg": 23.962488921549895,
+          "minPixels": 71.11111111119668,
+          "speedMps": 4.4952348927687106e-10,
+          "visibleSamples": 25,
+          "totalSamples": 25
+        },
+        "centerPixel": [
+          159,
+          191
+        ],
+        "classId": 5,
+        "depthM": 4.498000144958496,
+        "targetPlaneCameraZM": 4.499999999989173,
+        "absoluteDepthDifferenceM": 0.0019998550306770113
+      }
+    ],
+    "replay": {
+      "passed": true,
+      "vehicles": 1,
+      "frames": 10750,
+      "ticks": 107438,
+      "simSeconds": 537.189999999584,
+      "maximum": {
+        "positionM": 1.4210854715202004e-14,
+        "quaternion": 1.1969591984239969e-15,
+        "motors": 4.440892098500626e-16,
+        "allState": 1.495914503379936e-10,
+        "sensors": 5.186961971048731e-12
+      }
+    },
+    "artifacts": {
+      "bridge-world.json": {
+        "bytes": 44847950,
+        "sha256": "d18309f98dc73f5ec4e0711274baec3041d44134469e118df9883f169c6546a4"
+      },
+      "bridge-collision-world.json": {
+        "bytes": 50830106,
+        "sha256": "c7f1e3e4c69fc98061e2c20112c6030966c5e690bb3bca339dfc1354c1f9451c"
+      },
+      "bridge-report.json": {
+        "bytes": 9918,
+        "sha256": "958337656c107c7fd8336b146645f80ddb783e1e940d1a7b6b87c4a48860665a"
+      },
+      "camera-dataset.json": {
+        "bytes": 4615047,
+        "sha256": "cfb71dcc76137ff7a546403a3e6e1798e593805f9c331f3f6cd2f7ec40c00a9c"
+      }
+    }
+  },
+  "nativeRegression": {
+    "scope": "Offline plant replay; position, quaternion and motors are compared. Full snapshot equality, including near-static alpha/beta, is not checked.",
+    "results": {
+      "px4": {
+        "source": "local/evidence/session/gcs-proof-v017/px4-mavproxy-6/recording.json",
+        "sha256Before": "6c107c01f36c676640230835e40d33792045625f2b8fed5d12136e5262e7a515",
+        "sha256After": "6c107c01f36c676640230835e40d33792045625f2b8fed5d12136e5262e7a515",
+        "expectedSha256": "6c107c01f36c676640230835e40d33792045625f2b8fed5d12136e5262e7a515",
+        "hashMatchesExpected": true,
+        "exitCode": 0,
+        "replay": {
+          "passed": true,
+          "bootstrapTicks": 17,
+          "acceptedActuators": 23212,
+          "checkedSamples": 1859,
+          "simSeconds": 92.91600000002163,
+          "maxPositionErrorM": 0,
+          "maxQuaternionError": 0,
+          "maxMotorError": 0
+        }
+      },
+      "ardupilot": {
+        "source": "local/evidence/session/gcs-proof-v017/ardupilot-mavproxy-4/recording.json",
+        "sha256Before": "a166106b16aad525454452e4db517e6f49b728409a2343f6f93e75560b2f6a25",
+        "sha256After": "a166106b16aad525454452e4db517e6f49b728409a2343f6f93e75560b2f6a25",
+        "expectedSha256": "a166106b16aad525454452e4db517e6f49b728409a2343f6f93e75560b2f6a25",
+        "hashMatchesExpected": true,
+        "exitCode": 0,
+        "replay": {
+          "passed": true,
+          "bootstrapTicks": 1007,
+          "acceptedActuators": 148442,
+          "checkedSamples": 2970,
+          "simSeconds": 148.44200000034473,
+          "maxPositionErrorM": 0,
+          "maxQuaternionError": 0,
+          "maxMotorError": 0
+        }
+      }
+    }
+  },
+  "numericalCorrection": {
+    "airspeedThresholdMps": 0.001,
+    "belowThresholdAngles": "alphaRad=betaRad=0; true airspeed/dynamic pressure unchanged",
+    "sideslip": "atan2(v,hypot(u,w))",
+    "reference": "https://github.com/JSBSim-Team/jsbsim/blob/911b2d48ce934da183556983ec60b2069faa46fb/src/models/FGAuxiliary.cpp",
+    "referenceThresholdFps": 0.001,
+    "replayToleranceUnchanged": 1e-09
+  },
+  "collisionContract": "Vehicle center against obstacle AABB expanded once by configured envelope radius, inclusive bounds; same spawn, scene mutation and recording preflight. Conservative at corners, not exact mesh or sphere sweep.",
+  "limits": [
+    "25-point visibility approximation; GPU image hashes establish buffer/metadata match, not external attestation or defect recognition",
+    "Native SITL has no bridge obstacles and was only independently replayed, not flown again",
+    "Scene 6 / recording 15 / inspection report 2 reject previous versions; camera and native formats unchanged",
+    "Historic failing candidate evidence remains archived locally; not counted as passing",
+    "Raw browser data and downloaded tools remain under ignored project-local local/; no raw data published"
+  ]
+}

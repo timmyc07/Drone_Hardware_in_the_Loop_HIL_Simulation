@@ -13,7 +13,9 @@ test("scene artifacts round trip all geometry with isolated clones and frozen de
     ...DEFAULT_SCENE,
     name: "自訂場景",
     customGates: [gate],
-    obstacles: [{ north: 8, east: 0, width: 2, depth: 2, height: 4 }],
+    obstacles: [
+      { north: 8, east: 0, width: 2, depth: 2, height: 4, baseAltitude: 0 },
+    ],
   };
   const parsed = parseSceneJson(sceneToJson(scene));
   assert.deepEqual(parsed, scene);
@@ -42,7 +44,9 @@ test("scene boundary rejects unknown, missing, sparse and invalid geometry and a
     { ...DEFAULT_SCENE, obstacles: Array(1) },
     {
       ...DEFAULT_SCENE,
-      obstacles: [{ north: 0, east: 0, width: -1, depth: 1, height: 1 }],
+      obstacles: [
+        { north: 0, east: 0, width: -1, depth: 1, height: 1, baseAltitude: 0 },
+      ],
     },
   ])
     assert.throws(() => validateScene(scene));
@@ -55,6 +59,7 @@ test("scene boundary rejects unknown, missing, sparse and invalid geometry and a
     { version: 1 },
     { version: 2 },
     { version: 4 },
+    { version: 5 },
     { frame: "ENU" },
     { units: "cm" },
     { format: "other" },
@@ -65,6 +70,36 @@ test("scene boundary rejects unknown, missing, sparse and invalid geometry and a
     );
   assert.throws(() => parseSceneJson(" ".repeat(SCENE_MAX_IMPORT_BYTES + 1)));
   assert.throws(() => parseSceneJson("中".repeat(SCENE_MAX_IMPORT_BYTES / 2)));
+});
+
+test("scene 6 requires explicit obstacle datum and preserves negative and elevated heights", () => {
+  const box = {
+    north: 20,
+    east: 0,
+    width: 4,
+    depth: 8,
+    height: 2,
+    baseAltitude: -100,
+  };
+  const scene = {
+    ...DEFAULT_SCENE,
+    obstacles: [box, { ...box, east: 20, baseAltitude: 8 }],
+  };
+  assert.deepEqual(parseSceneJson(sceneToJson(scene)), scene);
+  for (const bad of [
+    { north: 20, east: 0, width: 4, depth: 8, height: 2 },
+    { ...box, baseAltitude: -1001 },
+    { ...box, baseAltitude: NaN },
+    { ...box, baseAltitude: 1499 },
+    { ...box, baseAltitude: 1501 },
+    { ...box, bottom: -100 },
+    { ...box, [Symbol("extra")]: 0 },
+  ])
+    assert.throws(() => validateScene({ ...DEFAULT_SCENE, obstacles: [bad] }));
+  assert.deepEqual(
+    Object.keys(validateScene(scene).obstacles[0]),
+    Object.keys(box),
+  );
 });
 
 test("DEM scene round trips its full grid and provenance and enforces covered zero home", () => {
@@ -104,7 +139,7 @@ test("DEM scene round trips its full grid and provenance and enforces covered ze
   };
   const scene = { ...DEFAULT_SCENE, terrain, geography };
   const text = sceneToJson(scene);
-  assert.equal(JSON.parse(text).version, 5);
+  assert.equal(JSON.parse(text).version, 6);
   assert.deepEqual(parseSceneJson(text), scene);
   assert.ok(new TextEncoder().encode(text).length <= SCENE_MAX_IMPORT_BYTES);
   for (const invalid of [

@@ -416,7 +416,9 @@ test("motor efficiency fault changes physical forces; link loss returns and clea
 
 test("static box collision crashes and disarms; only reset releases crash latch", () => {
   const sim = createSimulation();
-  sim.setObstacles([{ north: 2, east: 0, width: 1, depth: 2, height: 5 }]);
+  sim.setObstacles([
+    { north: 2, east: 0, width: 1, depth: 2, height: 5, baseAltitude: 0 },
+  ]);
   sim.setPositionTarget({ north: 5, east: 0, altitude: 2 });
   sim.setMode("position");
   const s = advance(sim, 10);
@@ -493,7 +495,7 @@ test("new navigation/fault/obstacle/config inputs validate atomically, including
     assert.throws(() => sim.setMission(value));
   for (const value of [
     Array(1),
-    [{ north: 0, east: 0, width: 0, depth: 1, height: 1 }],
+    [{ north: 0, east: 0, width: 0, depth: 1, height: 1, baseAltitude: 0 }],
   ])
     assert.throws(() => sim.setObstacles(value));
   assert.throws(() => sim.setMode("mission"));

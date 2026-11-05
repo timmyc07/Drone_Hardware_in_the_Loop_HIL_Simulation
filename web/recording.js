@@ -18,7 +18,8 @@ import {
   inspectionSummary,
 } from "./world.js";
 import { validateCameraConfig, validateCameraMetadata } from "./camera.js";
-import { assessInspection } from "./inspection.js";
+import { assessInspection, INSPECTION_REPORT_VERSION } from "./inspection.js";
+import { obstacleContainsVehicle } from "./obstacle-geometry.js";
 import { getVehicleEnvelope } from "./peer-geometry.js";
 import { validateRadarReading, compactRadarReading } from "./radar.js";
 import { AIRFRAMES, rotorCount } from "./rotor-geometry.js";
@@ -29,8 +30,8 @@ import {
   validateGimbalState,
 } from "./gimbal.js";
 
-export const RECORDING_VERSION = 14;
-export const MODEL_VERSION = "0.9.0";
+export const RECORDING_VERSION = 15;
+export const MODEL_VERSION = "0.10.0";
 const MODES = ["attitude", "position", "mission", "rtl", "land", "takeoff"];
 const TAKEOFF_PHASES = [
   "idle",
@@ -967,7 +968,7 @@ export function validateRecording(value) {
   object(value);
   if (value.version !== RECORDING_VERSION)
     throw new Error(
-      "Unsupported recording version: version 14 required; legacy recordings are not supported",
+      "Unsupported recording version: version 15 required; legacy recordings are not supported",
     );
   exactKeys(
     value,
@@ -1094,9 +1095,15 @@ export function validateRecording(value) {
     if (tick <= lastTick || (index === 0 && tick !== 0))
       throw new Error("Samples out of order or missing initial tick");
     const inspectionActions = [];
+    const geometryChanges = [];
     while (eventIndex < events.length && events[eventIndex].tick <= tick) {
       const e = events[eventIndex++];
       if (e.type === "scene") {
+        if (
+          JSON.stringify(activeScene.obstacles) !==
+          JSON.stringify(e.value.obstacles)
+        )
+          geometryChanges.push(e);
         inspectionActions.push({ clear: true });
         const changed =
           JSON.stringify(activeScene.customGates) !==
@@ -1197,6 +1204,23 @@ export function validateRecording(value) {
       sensorVehicles.push({ id: entry.id, sensors });
       return { id: entry.id, snapshot: state };
     });
+    for (const change of geometryChanges) {
+      if (change.tick !== tick)
+        throw new Error("Obstacle changes require their retained world tick");
+      for (const vehicle of vehicles) {
+        const radius = getVehicleEnvelope(
+          contexts.get(vehicle.id).vehicle.config,
+        ).radius;
+        if (
+          change.value.obstacles.some((box) =>
+            obstacleContainsVehicle(box, vehicle.snapshot.position, radius),
+          )
+        )
+          throw new Error(
+            "Obstacle scene change intersects a retained vehicle envelope",
+          );
+      }
+    }
     for (const action of inspectionActions) {
       if (action.clear) {
         for (const context of contexts.values())
@@ -1370,7 +1394,7 @@ export function recordingInspectionReport(record, index, vehicleId) {
   );
   return structuredClone({
     format: "flight-lab-inspection",
-    version: 1,
+    version: INSPECTION_REPORT_VERSION,
     sourceVehicleId: vehicleId,
     scene: state.scene,
     receipts,

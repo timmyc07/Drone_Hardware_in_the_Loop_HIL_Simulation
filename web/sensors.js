@@ -1,3 +1,8 @@
+import {
+  validateObstacles,
+  obstacleBounds,
+  rayAabb,
+} from "./obstacle-geometry.js";
 import { bodyToNedMatrix } from "./sim.js";
 import { rayPeerSphere } from "./peer-geometry.js";
 import { createTerrain } from "./terrain.js";
@@ -169,25 +174,10 @@ function nearestHit(origin, direction, obstacles, terrain, min, max, peers) {
   let nearest =
     terrain.raycast(origin, direction, 0, max)?.distanceM ?? Infinity;
   let velocityNed = STATIC_VELOCITY;
-  for (const box of obstacles) {
-    const { low, high } = box;
-    let enter = -Infinity,
-      exit = Infinity;
-    for (let axis = 0; axis < 3; axis++) {
-      if (Math.abs(direction[axis]) < 1e-12) {
-        if (origin[axis] < low[axis] || origin[axis] > high[axis]) {
-          exit = -Infinity;
-          break;
-        }
-      } else {
-        const a = (low[axis] - origin[axis]) / direction[axis],
-          b = (high[axis] - origin[axis]) / direction[axis];
-        enter = Math.max(enter, Math.min(a, b));
-        exit = Math.min(exit, Math.max(a, b));
-      }
-    }
-    if (exit >= Math.max(0, enter)) {
-      const distance = enter >= 0 ? enter : exit;
+  for (const bounds of obstacles) {
+    const interval = rayAabb(origin, direction, bounds);
+    if (interval !== null && interval.exit >= Math.max(0, interval.enter)) {
+      const distance = Math.max(0, interval.enter);
       if (distance < nearest) {
         nearest = distance;
         velocityNed = STATIC_VELOCITY;
@@ -635,38 +625,7 @@ export function createSensorSuite(configuration = {}, seed = 42) {
     return snapshot();
   }
   function setObstacles(value) {
-    if (!Array.isArray(value) || value.length > 50)
-      throw new Error("Sensor obstacles must contain at most 50 boxes");
-    const limits = {
-      north: [-500, 500],
-      east: [-500, 500],
-      width: [0.01, 100],
-      depth: [0.01, 100],
-      height: [0.01, 500],
-    };
-    obstacles = Array.from(value, (box) => {
-      object(box);
-      if (Object.keys(box).some((key) => !Object.hasOwn(limits, key)))
-        throw new Error("Unknown sensor obstacle field");
-      const checked = Object.fromEntries(
-        Object.entries(limits).map(([key, range]) => [
-          key,
-          number(box[key], ...range, `Obstacle ${key}`),
-        ]),
-      );
-      return {
-        low: [
-          checked.north - checked.width / 2,
-          checked.east - checked.depth / 2,
-          -checked.height,
-        ],
-        high: [
-          checked.north + checked.width / 2,
-          checked.east + checked.depth / 2,
-          0,
-        ],
-      };
-    });
+    obstacles = validateObstacles(value).map((box) => obstacleBounds(box));
   }
   function setPeers(value, sourceVehicleId) {
     const validId = (id) =>

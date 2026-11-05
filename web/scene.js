@@ -7,6 +7,13 @@ import { AIRFRAME_PRESETS, RUNWAY } from "./sim.js";
 import { createCameraRenderer } from "./camera-renderer.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
+export function obstacleVisualPlacement(item) {
+  return {
+    size: [item.depth, item.height, item.width],
+    center: [item.east, item.baseAltitude + item.height / 2, -item.north],
+  };
+}
+
 export function createScene(container) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color("#101c2d");
@@ -450,10 +457,11 @@ export function createScene(container) {
   function setObstacles(items, targets = []) {
     clear(obstacles);
     for (const item of items.slice(0, 100)) {
+      const placement = obstacleVisualPlacement(item);
       box(
         obstacles,
-        [item.depth, item.height, item.width],
-        [item.east, item.height / 2, -item.north],
+        placement.size,
+        placement.center,
         material(0x9b765b, 0.2, 0.75),
       );
     }

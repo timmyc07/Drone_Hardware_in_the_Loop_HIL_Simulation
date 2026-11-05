@@ -199,10 +199,10 @@ const geographicSensors = {
   originVerticalDatum: "orthometric",
 };
 
-test("World14 round trip keeps parallel vehicle frames and 174 stable CSV columns", () => {
+test("World15 round trip keeps parallel vehicle frames and 174 stable CSV columns", () => {
   const input = shortRecord({ vehicles: [{ id: "alpha" }, { id: "beta" }] });
   const clean = roundTrip(input);
-  assert.equal(RECORDING_VERSION, 14);
+  assert.equal(RECORDING_VERSION, 15);
   assert.deepEqual(
     clean.samples[0].vehicles.map((v) => v.id),
     ["alpha", "beta"],
@@ -1215,7 +1215,7 @@ test("radar acquisitions survive configuration epochs, packed faults and full-wo
   assert.throws(() => validateRecording(stale), /after/);
   const prior = clone(compact);
   prior.version = 12;
-  assert.throws(() => validateRecording(prior), /version 14/);
+  assert.throws(() => validateRecording(prior), /version 15/);
   const rows = recordingToCsv(f.record)
     .split("\n")
     .map((r) => r.split(","));

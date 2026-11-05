@@ -1,4 +1,10 @@
 import {
+  validateObstacles,
+  obstacleBounds,
+  rayAabb,
+} from "./obstacle-geometry.js";
+import { getVehicleEnvelope } from "./peer-geometry.js";
+import {
   createTerrain,
   TerrainCoverageError,
   RUNWAY_FLAT_TOLERANCE_M,
@@ -6,6 +12,7 @@ import {
 import { getRotorLayout, rotorCount } from "./rotor-geometry.js";
 import { createGimbal, validateGimbalSettings } from "./gimbal.js";
 import {
+  airflowAngles,
   aerodynamicForces,
   wingTrim,
   stallSpeed,
@@ -193,6 +200,7 @@ function angles(q) {
 export { angles as bodyToNedAngles };
 export function createSimulation(configuration = {}, options = {}) {
   const config = validateConfig(configuration);
+  const collisionRadius = getVehicleEnvelope(config).radius;
   if (
     !options ||
     Object.getPrototypeOf(options) !== Object.prototype ||
@@ -373,17 +381,13 @@ export function createSimulation(configuration = {}, options = {}) {
         rotation(s.slice(6, 10)),
         s.slice(3, 6).map((v, i) => v - wind[i]),
       );
-      const airspeedMps = Math.hypot(...bodyVelocity);
+      const { airspeedMps, alphaRad, betaRad } = airflowAngles(bodyVelocity);
       return {
         forceBody: [0, 0, 0],
         momentBody: [0, 0, 0],
         airspeedMps,
-        alphaRad:
-          airspeedMps > 1e-8 ? Math.atan2(bodyVelocity[2], bodyVelocity[0]) : 0,
-        betaRad:
-          airspeedMps > 1e-8
-            ? Math.asin(clamp(bodyVelocity[1] / airspeedMps, -1, 1))
-            : 0,
+        alphaRad,
+        betaRad,
         dynamicPressurePa: 0.6125 * Math.exp(s[2] / 8500) * airspeedMps ** 2,
         liftN: 0,
         dragN: 0,
@@ -1795,49 +1799,21 @@ export function createSimulation(configuration = {}, options = {}) {
     terrain = next;
   }
   function setObstacles(boxes) {
-    if (!Array.isArray(boxes) || boxes.length > 50)
-      throw new Error("Obstacles must be an array of at most 50 boxes");
-    obstacles = Array.from(boxes, (box) =>
-      validateFields(
-        box,
-        {
-          north: [-500, 500],
-          east: [-500, 500],
-          width: [0.01, 100],
-          depth: [0.01, 100],
-          height: [0.01, 500],
-        },
-        "Obstacle",
-      ),
+    obstacles = validateObstacles(boxes).map((box) =>
+      obstacleBounds(box, collisionRadius),
     );
   }
-  function intersectsBox(from, to, box) {
-    // shortcut: swept .25m collision envelope is conservative at box corners; use mesh contact for precise landing research.
-    const min = [
-      box.north - box.width / 2 - 0.25,
-      box.east - box.depth / 2 - 0.25,
-      -box.height - 0.25,
-    ];
-    const max = [
-      box.north + box.width / 2 + 0.25,
-      box.east + box.depth / 2 + 0.25,
-      0.25,
-    ];
-    let first = 0,
-      last = 1;
-    for (let axis = 0; axis < 3; axis++) {
-      const delta = to[axis] - from[axis];
-      if (Math.abs(delta) < 1e-12) {
-        if (from[axis] < min[axis] || from[axis] > max[axis]) return false;
-      } else {
-        const a = (min[axis] - from[axis]) / delta,
-          b = (max[axis] - from[axis]) / delta;
-        first = Math.max(first, Math.min(a, b));
-        last = Math.min(last, Math.max(a, b));
-        if (first > last) return false;
-      }
-    }
-    return true;
+  function intersectsBox(from, to, bounds) {
+    // Conservative expanded-AABB sweep of the CG envelope, not mesh contact or elastic impact.
+    const interval = rayAabb(
+      from,
+      to.map((value, i) => value - from[i]),
+      bounds,
+    );
+    return (
+      interval !== null &&
+      Math.max(0, interval.enter) <= Math.min(1, interval.exit)
+    );
   }
   function batterySnapshot() {
     const availableWh = Math.max(
@@ -2654,7 +2630,7 @@ export function createSimulation(configuration = {}, options = {}) {
     disarm: internalCommand(disarm),
     injectFault,
     clearFaults,
-    setObstacles,
+    setObstacles: internalCommand(setObstacles),
     setTransition: internalCommand(setTransition),
     abortTakeoff: internalCommand(abortTakeoff),
   };
